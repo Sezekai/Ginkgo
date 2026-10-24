@@ -27,7 +27,7 @@ Img("Artists/A/one.jpg", 3000, 2000, SKEncodedImageFormat.Jpeg);
 Img("Artists/A/two.png", 800, 1600, SKEncodedImageFormat.Png);
 Img("Artists/NSFW/three.jpg", 400, 400, SKEncodedImageFormat.Jpeg);
 Img("Artists/NSFW/Very/four.webp", 640, 480, SKEncodedImageFormat.Webp);
-Img("Artists/five.gif", 100, 150, SKEncodedImageFormat.Gif);
+File.WriteAllBytes(Path.Combine(lib, "Artists/five.gif"), Convert.FromBase64String("R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==")); // Skia cannot write GIFs, so a tiny hand-made one
 Img("Sort/skipme.jpg", 100, 100, SKEncodedImageFormat.Jpeg);          // excluded top folder
 File.WriteAllText(Path.Combine(lib, "Artists/notes.txt"), "ignore me");   // not media
 File.WriteAllBytes(Path.Combine(lib, "Artists/broken.jpg"), new byte[] { 1, 2, 3, 4 }); // corrupt
