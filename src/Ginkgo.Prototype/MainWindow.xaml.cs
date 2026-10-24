@@ -102,6 +102,6 @@ public partial class MainWindow : Window
         double secs = (now - _lastTick) / (double)Stopwatch.Frequency;
         _fps = _frames / secs; _frames = 0; _lastTick = now;
         double mb = Process.GetCurrentProcess().WorkingSet64 / 1048576.0;
-        Stats.Text = $"{_mode} | drawn {View.LastVisibleCount} | frame draw {View.LastRenderMs:F1} ms | {_fps:F0} fps | RAM {mb:F0} MB | Ctrl+wheel = zoom {_note}";
+        Stats.Text = $"{_mode} | drawn {View.LastVisibleCount} | frame draw {View.LastRenderMs:F1} ms | {_fps:F0} fps | RAM {mb:F0} MB | Ctrl+wheel = zoom, middle-click = autoscroll {_note}";
     }
 }

@@ -19,9 +19,21 @@ public sealed class MasonryView : FrameworkElement
     private readonly List<int> _visible = new();
     private readonly Typeface _face = new("Segoe UI");
     private readonly Brush[] _palette;
-    private readonly Pen _hover = new(Brushes.White, 2);
+    private readonly Pen _hover = MakePen();
+    private static Pen MakePen() { var p = new Pen(Brushes.White, 2); p.Freeze(); return p; }
     private int _hoverIndex = -1;
     private double _lastWidth;
+    private double _target;                 // where scrolling is heading
+    private double _velocity;               // px/sec for autoscroll
+    private bool _animating;
+    private long _lastTick;
+    private bool _autoScroll;
+    private double _autoAnchorY, _autoMouseY;
+    private long _autoDownTick;
+    private bool _autoSticky;
+    private readonly Dictionary<int, FormattedText> _textCache = new();
+    private static readonly Brush Background = Freeze(new SolidColorBrush(Color.FromRgb(18, 18, 20)));
+    private static Brush Freeze(Brush b) { b.Freeze(); return b; }
 
     public event Action? ScrollChanged;
 
@@ -45,8 +57,50 @@ public sealed class MasonryView : FrameworkElement
             double max = Math.Max(0, TotalHeight - ActualHeight);
             double v = Math.Clamp(value, 0, max);
             if (Math.Abs(v - _offset) < 0.01) return;
-            _offset = v; InvalidateVisual(); ScrollChanged?.Invoke();
+            _offset = v; _target = v; InvalidateVisual(); ScrollChanged?.Invoke();
         }
+    }
+
+    private double MaxOffset => Math.Max(0, TotalHeight - ActualHeight);
+
+    private void StartAnimating()
+    {
+        if (_animating) return;
+        _animating = true; _lastTick = Stopwatch.GetTimestamp();
+        CompositionTarget.Rendering += OnFrame;
+    }
+
+    private void StopAnimating()
+    {
+        if (!_animating) return;
+        _animating = false; CompositionTarget.Rendering -= OnFrame;
+    }
+
+    private void OnFrame(object? sender, EventArgs e)
+    {
+        long now = Stopwatch.GetTimestamp();
+        double dt = Math.Min(0.05, (now - _lastTick) / (double)Stopwatch.Frequency);
+        _lastTick = now;
+        double max = MaxOffset;
+        if (_autoScroll)
+        {
+            double d = _autoMouseY - _autoAnchorY;
+            double dead = 8;
+            double speed = Math.Abs(d) <= dead ? 0 : Math.Sign(d) * (Math.Abs(d) - dead) * 14; // px/sec, grows with distance
+            _target = Math.Clamp(_target + speed * dt, 0, max);
+            _offset = _target;
+        }
+        else
+        {
+            // exponential ease toward the target, independent of frame rate
+            double k = 1 - Math.Exp(-dt * 16);
+            _target = Math.Clamp(_target, 0, max);
+            double next = _offset + (_target - _offset) * k;
+            if (Math.Abs(_target - _offset) < 0.5) { next = _target; StopAnimating(); }
+            _offset = next;
+        }
+        InvalidateVisual();
+        ScrollChanged?.Invoke();
     }
 
     public double TotalHeight => _layout?.TotalHeight ?? 0;
@@ -62,7 +116,7 @@ public sealed class MasonryView : FrameworkElement
 
     public void SetItems(ItemSpec[] items, string[]? labels)
     {
-        _items = items; _labels = labels; _offset = 0; Relayout();
+        _items = items; _labels = labels; _offset = 0; _target = 0; _hoverIndex = -1; Relayout();
     }
 
     private void Relayout()
@@ -72,7 +126,9 @@ public sealed class MasonryView : FrameworkElement
         double frac = TotalHeight > 0 ? _offset / TotalHeight : 0;
         int cols = MasonryLayout.ColumnsFor((float)ActualWidth, _tileTarget, Gap);
         _layout = MasonryLayout.Compute(_items, (float)ActualWidth, cols, Gap);
+        _textCache.Clear();
         _offset = Math.Clamp(frac * _layout.TotalHeight, 0, Math.Max(0, _layout.TotalHeight - ActualHeight));
+        _target = _offset;
         _lastWidth = ActualWidth;
         InvalidateVisual(); ScrollChanged?.Invoke();
     }
@@ -86,8 +142,45 @@ public sealed class MasonryView : FrameworkElement
     protected override void OnMouseWheel(MouseWheelEventArgs e)
     {
         if ((Keyboard.Modifiers & ModifierKeys.Control) != 0) TileTarget *= e.Delta > 0 ? 1.1f : 1 / 1.1f;
-        else Offset -= e.Delta * 1.2;
+        else
+        {
+            _target = Math.Clamp(_target - e.Delta * 2.0, 0, MaxOffset);
+            StartAnimating();
+        }
         e.Handled = true;
+    }
+
+    protected override void OnMouseDown(MouseButtonEventArgs e)
+    {
+        base.OnMouseDown(e);
+        if (e.ChangedButton != MouseButton.Middle) { if (_autoScroll && _autoSticky) EndAutoScroll(); return; }
+        if (_autoScroll) { EndAutoScroll(); return; }
+        _autoScroll = true; _autoSticky = false;
+        _autoAnchorY = e.GetPosition(this).Y; _autoMouseY = _autoAnchorY;
+        _autoDownTick = Stopwatch.GetTimestamp();
+        _target = _offset;
+        CaptureMouse(); Cursor = Cursors.ScrollAll;
+        StartAnimating();
+        e.Handled = true;
+    }
+
+    protected override void OnMouseUp(MouseButtonEventArgs e)
+    {
+        base.OnMouseUp(e);
+        if (e.ChangedButton != MouseButton.Middle || !_autoScroll) return;
+        double heldMs = (Stopwatch.GetTimestamp() - _autoDownTick) * 1000.0 / Stopwatch.Frequency;
+        double moved = Math.Abs(_autoMouseY - _autoAnchorY);
+        if (heldMs < 250 && moved < 8) { _autoSticky = true; return; } // quick click: keep scrolling until next click
+        EndAutoScroll();
+    }
+
+    private void EndAutoScroll()
+    {
+        _autoScroll = false; _autoSticky = false;
+        if (IsMouseCaptured) ReleaseMouseCapture();
+        Cursor = Cursors.Arrow;
+        _target = _offset;
+        StopAnimating();
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
@@ -95,30 +188,37 @@ public sealed class MasonryView : FrameworkElement
         base.OnMouseMove(e);
         if (_layout is null) return;
         var p = e.GetPosition(this);
+        if (_autoScroll) { _autoMouseY = p.Y; return; }
         int found = -1;
         foreach (var i in _visible)
             if (p.X >= _layout.X[i] && p.X <= _layout.X[i] + _layout.W[i] &&
-                p.Y + _offset >= _layout.Y[i] && p.Y + _offset <= _layout.Y[i] + _layout.H[i]) { found = i; break; }
+                p.Y + Math.Round(_offset) >= _layout.Y[i] && p.Y + Math.Round(_offset) <= _layout.Y[i] + _layout.H[i]) { found = i; break; }
         if (found != _hoverIndex) { _hoverIndex = found; InvalidateVisual(); }
     }
 
     protected override void OnRender(DrawingContext dc)
     {
         var sw = Stopwatch.StartNew();
-        dc.DrawRectangle(new SolidColorBrush(Color.FromRgb(18, 18, 20)), null, new Rect(0, 0, ActualWidth, ActualHeight));
+        dc.DrawRectangle(Background, null, new Rect(0, 0, ActualWidth, ActualHeight));
         if (_layout is null) return;
-        _layout.GetVisible((float)_offset - 200, (float)(_offset + ActualHeight) + 200, _visible);
+        double off = Math.Round(_offset); // whole pixels: no shimmer
+        _layout.GetVisible((float)off - 200, (float)(off + ActualHeight) + 200, _visible);
         LastVisibleCount = _visible.Count;
         double dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
         foreach (int i in _visible)
         {
-            var r = new Rect(_layout.X[i], _layout.Y[i] - _offset, _layout.W[i], _layout.H[i]);
+            var r = new Rect(_layout.X[i], _layout.Y[i] - off, _layout.W[i], _layout.H[i]);
             dc.DrawRectangle(_palette[(i * 7) % _palette.Length], i == _hoverIndex ? _hover : null, r);
             if (r.Width > 70)
             {
                 string text = _labels is not null ? _labels[i] : (i + 1).ToString(CultureInfo.InvariantCulture);
-                var ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 12,
-                    Brushes.White, dpi) { MaxTextWidth = Math.Max(10, r.Width - 8), MaxLineCount = 2, Trimming = TextTrimming.CharacterEllipsis };
+                if (!_textCache.TryGetValue(i, out var ft))
+                {
+                    if (_textCache.Count > 3000) _textCache.Clear();
+                    ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 12,
+                        Brushes.White, dpi) { MaxTextWidth = Math.Max(10, r.Width - 8), MaxLineCount = 2, Trimming = TextTrimming.CharacterEllipsis };
+                    _textCache[i] = ft;
+                }
                 dc.DrawText(ft, new Point(r.X + 4, r.Y + 4));
             }
         }
