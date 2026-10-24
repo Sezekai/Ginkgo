@@ -1,6 +1,26 @@
 <Window x:Class="Ginkgo.Prototype.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Ginkgo prototype" Height="700" Width="1100">
-    <Grid><TextBlock Text="hello"/></Grid>
+        xmlns:local="clr-namespace:Ginkgo.Prototype"
+        Title="Ginkgo prototype 1 - scrolling test" Width="1400" Height="900" Background="#121214">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <StackPanel Orientation="Horizontal" Margin="8" Background="#121214">
+            <Button x:Name="Synth200k" Content="200,000 fake tiles" Padding="10,4" Margin="0,0,6,0" Click="OnSynth200k"/>
+            <Button x:Name="Synth1m" Content="1,000,000 fake tiles" Padding="10,4" Margin="0,0,6,0" Click="OnSynth1m"/>
+            <Button x:Name="RealFiles" Content="Load real file list (E:\Pictures\IMGs)" Padding="10,4" Margin="0,0,12,0" Click="OnReal"/>
+            <TextBlock x:Name="Stats" Foreground="#D8D8D8" VerticalAlignment="Center" FontFamily="Consolas"/>
+        </StackPanel>
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <local:MasonryView x:Name="View"/>
+            <ScrollBar x:Name="Bar" Grid.Column="1" Orientation="Vertical" Width="16" ValueChanged="OnBarChanged"/>
+        </Grid>
+    </Grid>
 </Window>
