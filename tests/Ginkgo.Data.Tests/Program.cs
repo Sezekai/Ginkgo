@@ -97,6 +97,21 @@ using (var c = db.Open())
     Check(mb.Width == 112, $"micro is 112 wide (got {mb.Width})");
 }
 
+// large on demand
+{
+    var big = ThumbMaker.MakeLarge(Path.Combine(lib, "Artists/A/one.jpg"));
+    using var lb = SKBitmap.Decode(big);
+    Check(lb.Width == 960 && lb.Height == 640, $"large is 960x640 (got {lb.Width}x{lb.Height})");
+    var mid = ThumbMaker.MakeLarge(Path.Combine(lib, "Artists/NSFW/Very/four.webp"));
+    using var mb2 = SKBitmap.Decode(mid);
+    Check(mb2.Width == 640, $"smaller image keeps its size (got {mb2.Width})");
+    var loc = stores.Large.Append(big);
+    Check(stores.Large.Read(loc.pack, loc.offset, loc.length)!.Length == big.Length && stores.Large.Size >= big.Length, "large store roundtrip and size");
+    IndexUpdates.SaveLarge(db, stores, new[] { (1L, loc.pack, loc.offset, loc.length) });
+    using var c2 = db.Open();
+    Check(IndexDb.Scalar(c2, "SELECT l_len FROM files WHERE id=1") == loc.length, "large location saved in index");
+}
+
 // backfill: forget the small sizes, then rebuild them from the full thumbnails
 using (var c = db.Open()) IndexDb.Exec(c, "UPDATE files SET s_len=0, m_len=0");
 var bstats = new PipelineStats();

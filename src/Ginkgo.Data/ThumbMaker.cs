@@ -9,6 +9,7 @@ public static class ThumbMaker
     public const int MaxW = 320, MaxH = 640, Quality = 72;
     public const int SmallW = 192, SmallH = 384, SmallQuality = 70;
     public const int MicroW = 112, MicroH = 224, MicroQuality = 62;
+    public const int LargeW = 960, LargeH = 1600, LargeQuality = 78;
 
     /// <summary>Reads an image once, returns its real size and three WebP thumbnails (320, 192 and 112 px wide).</summary>
     public static ThumbResult Make(string path)
@@ -41,6 +42,21 @@ public static class ThumbMaker
                 Encode(final, MicroW, MicroH, MicroQuality));
         }
         finally { resized?.Dispose(); }
+    }
+
+    /// <summary>The sharper thumbnail (up to 960 px wide) for big tiles. Reads the original once.</summary>
+    public static byte[] MakeLarge(string path)
+    {
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16, FileOptions.SequentialScan);
+        using var codec = SKCodec.Create(fs) ?? throw new InvalidDataException("unsupported image");
+        int w = codec.Info.Width, h = codec.Info.Height;
+        if (w <= 0 || h <= 0) throw new InvalidDataException("bad size");
+        float scale = Math.Min(1f, Math.Min(LargeW / (float)w, LargeH / (float)h));
+        SKSizeI dec = scale < 1f ? codec.GetScaledDimensions(scale) : new SKSizeI(w, h);
+        using var bmp = new SKBitmap(new SKImageInfo(dec.Width, dec.Height, SKColorType.Bgra8888, SKAlphaType.Premul));
+        var res = codec.GetPixels(bmp.Info, bmp.GetPixels());
+        if (res != SKCodecResult.Success && res != SKCodecResult.IncompleteInput) throw new InvalidDataException("decode failed: " + res);
+        return Encode(bmp, LargeW, LargeH, LargeQuality);
     }
 
     /// <summary>Makes the small and micro sizes from an existing full-size thumbnail (no need to read the original picture).</summary>

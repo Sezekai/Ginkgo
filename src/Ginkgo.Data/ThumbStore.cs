@@ -13,6 +13,9 @@ public sealed class ThumbStore : IDisposable
     private readonly string _dir;
     private readonly string _prefix;
     private readonly object _lock = new();
+    private long _size = -1;
+    /// <summary>Total bytes in this store's files (kept up to date as thumbnails are added).</summary>
+    public long Size { get { if (Volatile.Read(ref _size) < 0) Interlocked.CompareExchange(ref _size, TotalBytes(), -1); return Volatile.Read(ref _size); } }
     private FileStream? _writer;
     private int _writerPack = -1;
     private readonly ConcurrentDictionary<int, SafeFileHandle> _readers = new();
@@ -51,6 +54,7 @@ public sealed class ThumbStore : IDisposable
             }
             long off = _writer.Position;
             _writer.Write(data);
+            if (Volatile.Read(ref _size) >= 0) Interlocked.Add(ref _size, data.Length);
             return (_writerPack, off, data.Length);
         }
     }
@@ -89,15 +93,17 @@ public sealed class ThumbStores : IDisposable
     public ThumbStore Micro { get; }   // ~112 px wide: for the smallest grid sizes
     public ThumbStore Small { get; }   // ~192 px wide
     public ThumbStore Full { get; }    // ~320 px wide
+    public ThumbStore Large { get; }   // up to 960 px wide, made on demand when a tile is shown big
 
     public ThumbStores(string directory)
     {
         Micro = new ThumbStore(directory, "micro");
         Small = new ThumbStore(directory, "small");
         Full = new ThumbStore(directory, "pack");
+        Large = new ThumbStore(directory, "large");
     }
 
-    public void Flush() { Micro.Flush(); Small.Flush(); Full.Flush(); }
-    public long TotalBytes() => Micro.TotalBytes() + Small.TotalBytes() + Full.TotalBytes();
-    public void Dispose() { Micro.Dispose(); Small.Dispose(); Full.Dispose(); }
+    public void Flush() { Micro.Flush(); Small.Flush(); Full.Flush(); Large.Flush(); }
+    public long TotalBytes() => Micro.TotalBytes() + Small.TotalBytes() + Full.TotalBytes() + Large.TotalBytes();
+    public void Dispose() { Micro.Dispose(); Small.Dispose(); Full.Dispose(); Large.Dispose(); }
 }

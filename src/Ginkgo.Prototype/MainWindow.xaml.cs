@@ -5,6 +5,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using Ginkgo.Core;
 using Ginkgo.Core.Layout;
+using System.Collections.Concurrent;
 using Ginkgo.Data;
 
 namespace Ginkgo.Prototype;
@@ -29,6 +30,9 @@ public partial class MainWindow : Window
     private readonly PipelineStats _pipe = new();
     private string _scanInfo = "";
     private Task? _buildTask;
+    private long[] _ids = Array.Empty<long>();
+    private readonly ConcurrentQueue<(long id, int pack, long off, int len)> _largeQueue = new();
+    private int _savingLarge;
 
     public MainWindow()
     {
@@ -38,10 +42,20 @@ public partial class MainWindow : Window
         View.HoverChanged += i => Hover.Text = i >= 0 && i < _paths.Length ? _paths[i] : " ";
         CompositionTarget.Rendering += (_, _) => _frames++;
         var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(0.5) };
-        timer.Tick += (_, _) => UpdateStats();
+        timer.Tick += (_, _) => { UpdateStats(); SaveLargeBatch(); };
         timer.Start();
         Loaded += (_, _) => Startup();
-        Closing += (_, _) => { _buildCts?.Cancel(); _loader?.Dispose(); };
+        Closing += (_, _) =>
+        {
+            _buildCts?.Cancel(); _loader?.Dispose();
+            try
+            {
+                var rest = new List<(long id, int pack, long off, int len)>();
+                while (_largeQueue.TryDequeue(out var r)) rest.Add(r);
+                if (_db is not null && _store is not null) IndexUpdates.SaveLarge(_db, _store, rest);
+            }
+            catch { }
+        };
     }
 
     private void Startup()
@@ -85,7 +99,8 @@ public partial class MainWindow : Window
     {
         if (_db is null || _store is null) return;
         var sw = Stopwatch.StartNew();
-        var specs = new List<ItemSpec>(); var paths = new List<string>();
+        var specs = new List<ItemSpec>(); var paths = new List<string>(); var ids = new List<long>(); var origW = new List<int>();
+        var lpack = new List<int>(); var loff = new List<long>(); var llen = new List<int>();
         var pack = new List<int>(); var off = new List<long>(); var len = new List<int>();
         var spack = new List<int>(); var soff = new List<long>(); var slen = new List<int>();
         var mpack = new List<int>(); var moff = new List<long>(); var mlen = new List<int>();
@@ -93,7 +108,7 @@ public partial class MainWindow : Window
         using (var cmd = c.CreateCommand())
         {
             // Home order: newest first seen, then newest file date.
-            cmd.CommandText = "SELECT path, w, h, thumb_pack, thumb_off, thumb_len, s_pack, s_off, s_len, m_pack, m_off, m_len FROM files WHERE state=1 ORDER BY first_seen DESC, mtime DESC, id";
+            cmd.CommandText = "SELECT path, w, h, thumb_pack, thumb_off, thumb_len, s_pack, s_off, s_len, m_pack, m_off, m_len, id, l_pack, l_off, l_len FROM files WHERE state=1 ORDER BY first_seen DESC, mtime DESC, id";
             using var r = cmd.ExecuteReader();
             while (r.Read())
             {
@@ -103,6 +118,8 @@ public partial class MainWindow : Window
                 pack.Add(r.GetInt32(3)); off.Add(r.GetInt64(4)); len.Add(r.GetInt32(5));
                 spack.Add(r.GetInt32(6)); soff.Add(r.GetInt64(7)); slen.Add(r.GetInt32(8));
                 mpack.Add(r.GetInt32(9)); moff.Add(r.GetInt64(10)); mlen.Add(r.GetInt32(11));
+                ids.Add(r.GetInt64(12)); origW.Add(w);
+                lpack.Add(r.GetInt32(13)); loff.Add(r.GetInt64(14)); llen.Add(r.GetInt32(15));
             }
         }
         if (specs.Count == 0) { _scanInfo = "nothing ready yet - press Scan"; return; }
@@ -113,8 +130,11 @@ public partial class MainWindow : Window
             new ThumbLoader.TierData(_store.Micro, mpack.ToArray(), moff.ToArray(), mlen.ToArray()),
             new ThumbLoader.TierData(_store.Small, spack.ToArray(), soff.ToArray(), slen.ToArray()),
             new ThumbLoader.TierData(_store.Full, pack.ToArray(), off.ToArray(), len.ToArray()),
+            new ThumbLoader.TierData(_store.Large, lpack.ToArray(), loff.ToArray(), llen.ToArray()),
         };
-        _loader = new ThumbLoader(tiers, Dispatcher, () => View.Refresh(), 200L * 1024 * 1024, 150L * 1024 * 1024);
+        _ids = ids.ToArray();
+        _loader = new ThumbLoader(tiers, _paths, origW.ToArray(), _store.Large, 6L * 1024 * 1024 * 1024,
+            (i, loc) => _largeQueue.Enqueue((_ids[i], loc.Pack, loc.Off, loc.Len)), Dispatcher, () => View.Refresh(), 200L * 1024 * 1024, 150L * 1024 * 1024);
         View.Thumbs = _loader;
         View.SetItems(specs.ToArray(), null);
         _mode = $"library: {specs.Count:N0} ready";
@@ -166,6 +186,15 @@ public partial class MainWindow : Window
         _syncing = false;
     }
 
+    private void SaveLargeBatch()
+    {
+        if (_db is null || _store is null || _largeQueue.IsEmpty || Interlocked.Exchange(ref _savingLarge, 1) == 1) return;
+        var rows = new List<(long id, int pack, long off, int len)>();
+        while (rows.Count < 2000 && _largeQueue.TryDequeue(out var r)) rows.Add(r);
+        var db = _db; var store = _store;
+        Task.Run(() => { try { IndexUpdates.SaveLarge(db, store, rows); } catch { } finally { Volatile.Write(ref _savingLarge, 0); } });
+    }
+
     private void UpdateStats()
     {
         long now = Stopwatch.GetTimestamp();
@@ -174,7 +203,7 @@ public partial class MainWindow : Window
         double mb = Process.GetCurrentProcess().WorkingSet64 / 1048576.0;
         string cache = _loader is null ? "" :
             $" | pictures in RAM {_loader.CachedCount:N0} ({_loader.CachedBytes / 1048576.0:F0} MB) + compressed {_loader.EncodedBytes / 1048576.0:F0} MB" +
-            $" | waiting {_loader.PendingCount} | disk read {_loader.AvgReadMs:F1} ms ({_loader.ThumbsPerRead:F0} thumbs/read) | decode {_loader.AvgDecodeMs:F1} ms";
+            $" | sharp versions made {_loader.LargeMade:N0} | waiting {_loader.PendingCount} | disk read {_loader.AvgReadMs:F1} ms ({_loader.ThumbsPerRead:F0} thumbs/read) | decode {_loader.AvgDecodeMs:F1} ms";
         Stats.Text = $"{_mode} | drawn {View.LastVisibleCount} | {_fps:F0} fps | RAM {mb:F0} MB{cache}";
         string pipe = _pipe.Running || _pipe.Done + _pipe.Failed + _pipe.BackfillTotal > 0
             ? $" | thumbnails {_pipe.Done:N0}/{_pipe.Total:N0} done, {_pipe.Failed:N0} failed{(_pipe.Failed > 0 ? " (last: " + _pipe.LastError + ")" : "")}{(_pipe.BackfillTotal > 0 ? $" | small sizes {_pipe.BackfillDone:N0}/{_pipe.BackfillTotal:N0}" : "")}"
