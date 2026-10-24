@@ -2,13 +2,15 @@ using SkiaSharp;
 
 namespace Ginkgo.Data;
 
-public sealed record ThumbResult(int Width, int Height, int ThumbWidth, int ThumbHeight, byte[] Bytes);
+public sealed record ThumbResult(int Width, int Height, int ThumbWidth, int ThumbHeight, byte[] Bytes, byte[] Small, byte[] Micro);
 
 public static class ThumbMaker
 {
     public const int MaxW = 320, MaxH = 640, Quality = 72;
+    public const int SmallW = 192, SmallH = 384, SmallQuality = 70;
+    public const int MicroW = 112, MicroH = 224, MicroQuality = 62;
 
-    /// <summary>Reads an image once, returns its real size and a small WebP thumbnail.</summary>
+    /// <summary>Reads an image once, returns its real size and three WebP thumbnails (320, 192 and 112 px wide).</summary>
     public static ThumbResult Make(string path)
     {
         using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16, FileOptions.SequentialScan);
@@ -33,10 +35,38 @@ public static class ThumbMaker
                 resized = bmp.Resize(new SKImageInfo(tw, th, SKColorType.Bgra8888, SKAlphaType.Premul), SKFilterQuality.Medium);
                 if (resized is not null) final = resized;
             }
-            using var img = SKImage.FromBitmap(final);
-            using var data = img.Encode(SKEncodedImageFormat.Webp, Quality);
-            return new ThumbResult(w, h, final.Width, final.Height, data.ToArray());
+            return new ThumbResult(w, h, final.Width, final.Height,
+                Encode(final, final.Width, final.Height, Quality),
+                Encode(final, SmallW, SmallH, SmallQuality),
+                Encode(final, MicroW, MicroH, MicroQuality));
         }
         finally { resized?.Dispose(); }
+    }
+
+    /// <summary>Makes the small and micro sizes from an existing full-size thumbnail (no need to read the original picture).</summary>
+    public static (byte[] small, byte[] micro) Derive(byte[] fullWebp)
+    {
+        using var src = SKBitmap.Decode(fullWebp) ?? throw new InvalidDataException("thumbnail unreadable");
+        return (Encode(src, SmallW, SmallH, SmallQuality), Encode(src, MicroW, MicroH, MicroQuality));
+    }
+
+    private static byte[] Encode(SKBitmap src, int maxW, int maxH, int quality)
+    {
+        float scale = Math.Min(1f, Math.Min(maxW / (float)src.Width, maxH / (float)src.Height));
+        SKBitmap? small = null;
+        try
+        {
+            var use = src;
+            if (scale < 1f)
+            {
+                int w = Math.Max(1, (int)Math.Round(src.Width * scale)), h = Math.Max(1, (int)Math.Round(src.Height * scale));
+                small = src.Resize(new SKImageInfo(w, h, SKColorType.Bgra8888, SKAlphaType.Premul), SKFilterQuality.Medium);
+                if (small is not null) use = small;
+            }
+            using var img = SKImage.FromBitmap(use);
+            using var data = img.Encode(SKEncodedImageFormat.Webp, quality);
+            return data.ToArray();
+        }
+        finally { small?.Dispose(); }
     }
 }

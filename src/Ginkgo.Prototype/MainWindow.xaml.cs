@@ -22,7 +22,7 @@ public partial class MainWindow : Window
     private string _mode = "nothing loaded";
 
     private IndexDb? _db;
-    private ThumbStore? _store;
+    private ThumbStores? _store;
     private ThumbLoader? _loader;
     private string[] _paths = Array.Empty<string>();
     private CancellationTokenSource? _buildCts;
@@ -49,7 +49,7 @@ public partial class MainWindow : Window
         try
         {
             _db = new IndexDb(DbPath);
-            _store = new ThumbStore(CacheDir);
+            _store = new ThumbStores(CacheDir);
             using var c = _db.Open();
             long done = IndexDb.Scalar(c, "SELECT COUNT(*) FROM files WHERE state=1");
             if (done > 0) LoadLibrary(); else LoadSynthetic(200_000);
@@ -87,11 +87,13 @@ public partial class MainWindow : Window
         var sw = Stopwatch.StartNew();
         var specs = new List<ItemSpec>(); var paths = new List<string>();
         var pack = new List<int>(); var off = new List<long>(); var len = new List<int>();
+        var spack = new List<int>(); var soff = new List<long>(); var slen = new List<int>();
+        var mpack = new List<int>(); var moff = new List<long>(); var mlen = new List<int>();
         using (var c = _db.Open())
         using (var cmd = c.CreateCommand())
         {
             // Home order: newest first seen, then newest file date.
-            cmd.CommandText = "SELECT path, w, h, thumb_pack, thumb_off, thumb_len FROM files WHERE state=1 ORDER BY first_seen DESC, mtime DESC, id";
+            cmd.CommandText = "SELECT path, w, h, thumb_pack, thumb_off, thumb_len, s_pack, s_off, s_len, m_pack, m_off, m_len FROM files WHERE state=1 ORDER BY first_seen DESC, mtime DESC, id";
             using var r = cmd.ExecuteReader();
             while (r.Read())
             {
@@ -99,12 +101,20 @@ public partial class MainWindow : Window
                 specs.Add(new ItemSpec(h > 0 ? w / (float)h : 1f));
                 paths.Add(r.GetString(0));
                 pack.Add(r.GetInt32(3)); off.Add(r.GetInt64(4)); len.Add(r.GetInt32(5));
+                spack.Add(r.GetInt32(6)); soff.Add(r.GetInt64(7)); slen.Add(r.GetInt32(8));
+                mpack.Add(r.GetInt32(9)); moff.Add(r.GetInt64(10)); mlen.Add(r.GetInt32(11));
             }
         }
         if (specs.Count == 0) { _scanInfo = "nothing ready yet - press Scan"; return; }
         DetachLoader();
         _paths = paths.ToArray();
-        _loader = new ThumbLoader(_store, pack.ToArray(), off.ToArray(), len.ToArray(), Dispatcher, () => View.Refresh(), 200L * 1024 * 1024, 150L * 1024 * 1024);
+        var tiers = new[]
+        {
+            new ThumbLoader.TierData(_store.Micro, mpack.ToArray(), moff.ToArray(), mlen.ToArray()),
+            new ThumbLoader.TierData(_store.Small, spack.ToArray(), soff.ToArray(), slen.ToArray()),
+            new ThumbLoader.TierData(_store.Full, pack.ToArray(), off.ToArray(), len.ToArray()),
+        };
+        _loader = new ThumbLoader(tiers, Dispatcher, () => View.Refresh(), 200L * 1024 * 1024, 150L * 1024 * 1024);
         View.Thumbs = _loader;
         View.SetItems(specs.ToArray(), null);
         _mode = $"library: {specs.Count:N0} ready";
@@ -128,6 +138,7 @@ public partial class MainWindow : Window
                 _scanInfo = $"scan: {res.Total:N0} files, +{res.Added:N0} new, {res.Changed:N0} changed, {res.Removed:N0} gone, {res.Seconds:F0}s";
                 int workers = Math.Clamp(Environment.ProcessorCount / 2, 2, 6);
                 await ThumbnailPipeline.RunAsync(_db, _store, _pipe, workers, ct);
+                await TierBackfill.RunAsync(_db, _store, _pipe, Math.Clamp(workers / 2, 2, 3), ct);
             }
             catch (OperationCanceledException) { }
             catch (Exception ex) { _scanInfo = "problem: " + ex.Message; }
@@ -165,8 +176,8 @@ public partial class MainWindow : Window
             $" | pictures in RAM {_loader.CachedCount:N0} ({_loader.CachedBytes / 1048576.0:F0} MB) + compressed {_loader.EncodedBytes / 1048576.0:F0} MB" +
             $" | waiting {_loader.PendingCount} | disk read {_loader.AvgReadMs:F1} ms ({_loader.ThumbsPerRead:F0} thumbs/read) | decode {_loader.AvgDecodeMs:F1} ms";
         Stats.Text = $"{_mode} | drawn {View.LastVisibleCount} | {_fps:F0} fps | RAM {mb:F0} MB{cache}";
-        string pipe = _pipe.Running || _pipe.Done + _pipe.Failed > 0
-            ? $" | thumbnails {_pipe.Done:N0}/{_pipe.Total:N0} done, {_pipe.Failed:N0} failed{(_pipe.Failed > 0 ? " (last: " + _pipe.LastError + ")" : "")}"
+        string pipe = _pipe.Running || _pipe.Done + _pipe.Failed + _pipe.BackfillTotal > 0
+            ? $" | thumbnails {_pipe.Done:N0}/{_pipe.Total:N0} done, {_pipe.Failed:N0} failed{(_pipe.Failed > 0 ? " (last: " + _pipe.LastError + ")" : "")}{(_pipe.BackfillTotal > 0 ? $" | small sizes {_pipe.BackfillDone:N0}/{_pipe.BackfillTotal:N0}" : "")}"
             : "";
         Status.Text = _scanInfo + pipe;
     }

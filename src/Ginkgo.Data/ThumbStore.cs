@@ -11,25 +11,25 @@ public sealed class ThumbStore : IDisposable
 {
     private const long PackLimit = 512L * 1024 * 1024;
     private readonly string _dir;
+    private readonly string _prefix;
     private readonly object _lock = new();
     private FileStream? _writer;
     private int _writerPack = -1;
     private readonly ConcurrentDictionary<int, SafeFileHandle> _readers = new();
 
-    public ThumbStore(string directory)
+    public ThumbStore(string directory, string prefix = "pack")
     {
-        _dir = directory;
+        _dir = directory; _prefix = prefix;
         Directory.CreateDirectory(_dir);
     }
 
-    public string Directory_ => _dir;
-    private string PackPath(int pack) => Path.Combine(_dir, $"pack-{pack:D5}.bin");
+    private string PackPath(int pack) => Path.Combine(_dir, $"{_prefix}-{pack:D5}.bin");
 
     private int LatestPack()
     {
         int best = 0;
-        foreach (var f in Directory.EnumerateFiles(_dir, "pack-*.bin"))
-            if (int.TryParse(Path.GetFileNameWithoutExtension(f).AsSpan(5), out int n) && n > best) best = n;
+        foreach (var f in Directory.EnumerateFiles(_dir, _prefix + "-*.bin"))
+            if (int.TryParse(Path.GetFileNameWithoutExtension(f).AsSpan(_prefix.Length + 1), out int n) && n > best) best = n;
         return best;
     }
 
@@ -71,7 +71,7 @@ public sealed class ThumbStore : IDisposable
     public long TotalBytes()
     {
         long t = 0;
-        foreach (var f in Directory.EnumerateFiles(_dir, "pack-*.bin")) t += new FileInfo(f).Length;
+        foreach (var f in Directory.EnumerateFiles(_dir, _prefix + "-*.bin")) t += new FileInfo(f).Length;
         return t;
     }
 
@@ -81,4 +81,23 @@ public sealed class ThumbStore : IDisposable
         foreach (var h in _readers.Values) h.Dispose();
         _readers.Clear();
     }
+}
+
+/// <summary>The three thumbnail sizes, each packed into its own set of files.</summary>
+public sealed class ThumbStores : IDisposable
+{
+    public ThumbStore Micro { get; }   // ~112 px wide: for the smallest grid sizes
+    public ThumbStore Small { get; }   // ~192 px wide
+    public ThumbStore Full { get; }    // ~320 px wide
+
+    public ThumbStores(string directory)
+    {
+        Micro = new ThumbStore(directory, "micro");
+        Small = new ThumbStore(directory, "small");
+        Full = new ThumbStore(directory, "pack");
+    }
+
+    public void Flush() { Micro.Flush(); Small.Flush(); Full.Flush(); }
+    public long TotalBytes() => Micro.TotalBytes() + Small.TotalBytes() + Full.TotalBytes();
+    public void Dispose() { Micro.Dispose(); Small.Dispose(); Full.Dispose(); }
 }

@@ -35,6 +35,16 @@ public sealed class IndexDb
             CREATE INDEX IF NOT EXISTS ix_files_state ON files(state);
             CREATE INDEX IF NOT EXISTS ix_files_seen ON files(first_seen DESC, mtime DESC);
             """);
+        // added later: the two smaller thumbnail sizes (small = 192 px, micro = 112 px)
+        var have = new HashSet<string>();
+        using (var cmd = c.CreateCommand())
+        {
+            cmd.CommandText = "PRAGMA table_info(files)";
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) have.Add(r.GetString(1));
+        }
+        foreach (var col in new[] { "s_pack", "s_off", "s_len", "m_pack", "m_off", "m_len" })
+            if (!have.Contains(col)) Exec(c, $"ALTER TABLE files ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0");
     }
 
     public SqliteConnection Open()
