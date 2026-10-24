@@ -132,7 +132,6 @@ public sealed class MasonryView : FrameworkElement
         double frac = TotalHeight > 0 ? _offset / TotalHeight : 0;
         int cols = MasonryLayout.ColumnsFor((float)ActualWidth, _tileTarget, Gap);
         _layout = MasonryLayout.Compute(_items, (float)ActualWidth, cols, Gap);
-        _textCache.Clear();
         _offset = Math.Clamp(frac * _layout.TotalHeight, 0, Math.Max(0, _layout.TotalHeight - ActualHeight));
         _target = _offset;
         _lastWidth = ActualWidth;
@@ -202,17 +201,53 @@ public sealed class MasonryView : FrameworkElement
         if (found != _hoverIndex) { _hoverIndex = found; HoverChanged?.Invoke(found); InvalidateVisual(); }
     }
 
+    private readonly List<int> _ahead = new();
+    private long _lastPrefetch;
+    private int _pfLo = int.MaxValue, _pfHi = int.MinValue;
+    private double _lastDir = 1;
+
     protected override void OnRender(DrawingContext dc)
     {
         var sw = Stopwatch.StartNew();
         dc.DrawRectangle(Background, null, new Rect(0, 0, ActualWidth, ActualHeight));
         if (_layout is null) return;
         double off = Math.Round(_offset); // whole pixels: no shimmer
-        _layout.GetVisible((float)off - 200, (float)(off + ActualHeight) + 200, _visible);
+        double H = ActualHeight;
+        _layout.GetVisible((float)off - 200, (float)(off + H) + 200, _visible);
         LastVisibleCount = _visible.Count;
-        var dpiInfo = VisualTreeHelper.GetDpi(this);
-        double dpi = dpiInfo.PixelsPerDip;
-        if (_thumbs is not null && _visible.Count > 0) _thumbs.SetWanted(_visible[0] - 600, _visible[^1] + 600);
+        double dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+
+        if (_thumbs is not null && _visible.Count > 0)
+        {
+            // Where are we heading? Warm up the tiles ahead (and where a flick will land) before they're needed.
+            double dir = _target - _offset;
+            if (Math.Abs(dir) > 1) _lastDir = Math.Sign(dir);
+            long now = Stopwatch.GetTimestamp();
+            if ((now - _lastPrefetch) * 1000 / Stopwatch.Frequency > 70)
+            {
+                _lastPrefetch = now;
+                _pfLo = int.MaxValue; _pfHi = int.MinValue;
+                int wpx = (int)Math.Round(_layout.ColumnWidth * dpi);
+                void Zone(double top, double bottom)
+                {
+                    _layout.GetVisible((float)top, (float)bottom, _ahead);
+                    // nearest to the screen first
+                    double mid = off + H / 2;
+                    _ahead.Sort((x, y) => Math.Abs(_layout.Y[x] - mid).CompareTo(Math.Abs(_layout.Y[y] - mid)));
+                    foreach (int i in _ahead)
+                    {
+                        if (i < _pfLo) _pfLo = i; if (i > _pfHi) _pfHi = i;
+                        _thumbs.Prefetch(i, wpx);
+                    }
+                }
+                if (Math.Abs(_target - _offset) > H * 0.25) Zone(_target - 100, _target + H + 100); // where a flick is landing
+                Zone(off - H * 0.5, off + H * 1.5);
+                if (_lastDir >= 0) Zone(off + H * 1.5, off + H * 3.5); else Zone(off - H * 2.5, off - H * 0.5);
+            }
+            int lo = Math.Min(_visible[0], _pfLo), hi = Math.Max(_visible[^1], _pfHi);
+            _thumbs.SetWanted(lo - 100, hi + 100);
+        }
+
         foreach (int i in _visible)
         {
             var r = new Rect(Math.Round(_layout.X[i]), Math.Round(_layout.Y[i] - off), Math.Round(_layout.W[i]), Math.Round(_layout.H[i]));
@@ -221,20 +256,8 @@ public sealed class MasonryView : FrameworkElement
             {
                 dc.DrawImage(img, r);
                 if (i == _hoverIndex) dc.DrawRectangle(null, _hover, r);
-                continue;
             }
-            dc.DrawRectangle(_palette[(i * 7) % _palette.Length], i == _hoverIndex ? _hover : null, r);
-            if (r.Width > 70 && _labels is not null)
-            {
-                if (!_textCache.TryGetValue(i, out var ft))
-                {
-                    if (_textCache.Count > 3000) _textCache.Clear();
-                    ft = new FormattedText(_labels[i], CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 12,
-                        Brushes.White, dpi) { MaxTextWidth = Math.Max(10, r.Width - 8), MaxLineCount = 2, Trimming = TextTrimming.CharacterEllipsis };
-                    _textCache[i] = ft;
-                }
-                dc.DrawText(ft, new Point(r.X + 4, r.Y + 4));
-            }
+            else dc.DrawRectangle(_palette[(i * 7) % _palette.Length], i == _hoverIndex ? _hover : null, r); // plain placeholder: cheap
         }
         LastRenderMs = sw.Elapsed.TotalMilliseconds;
     }

@@ -34,6 +34,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         View.ScrollChanged += SyncBar;
+        View.ScrollChanged += () => Interlocked.Exchange(ref _pipe.LastUiActivity, Stopwatch.GetTimestamp());
         View.HoverChanged += i => Hover.Text = i >= 0 && i < _paths.Length ? _paths[i] : " ";
         CompositionTarget.Rendering += (_, _) => _frames++;
         var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(0.5) };
@@ -103,9 +104,9 @@ public partial class MainWindow : Window
         if (specs.Count == 0) { _scanInfo = "nothing ready yet - press Scan"; return; }
         DetachLoader();
         _paths = paths.ToArray();
-        _loader = new ThumbLoader(_store, pack.ToArray(), off.ToArray(), len.ToArray(), Dispatcher, () => View.Refresh(), 200L * 1024 * 1024);
+        _loader = new ThumbLoader(_store, pack.ToArray(), off.ToArray(), len.ToArray(), Dispatcher, () => View.Refresh(), 200L * 1024 * 1024, 150L * 1024 * 1024);
         View.Thumbs = _loader;
-        View.SetItems(specs.ToArray(), Array.ConvertAll(_paths, Path.GetFileName)!);
+        View.SetItems(specs.ToArray(), null);
         _mode = $"library: {specs.Count:N0} ready";
         _scanInfo = $"view built in {sw.Elapsed.TotalSeconds:F1}s";
     }
@@ -125,7 +126,7 @@ public partial class MainWindow : Window
                 _scanInfo = "scanning folders...";
                 var res = LibraryScanner.Scan(_db, LibraryRoot, MediaTypes.DefaultExcludedTopFolders, n => _scanInfo = $"scanning... {n:N0} files seen", ct);
                 _scanInfo = $"scan: {res.Total:N0} files, +{res.Added:N0} new, {res.Changed:N0} changed, {res.Removed:N0} gone, {res.Seconds:F0}s";
-                int workers = Math.Max(2, Environment.ProcessorCount - 2);
+                int workers = Math.Clamp(Environment.ProcessorCount / 2, 2, 6);
                 await ThumbnailPipeline.RunAsync(_db, _store, _pipe, workers, ct);
             }
             catch (OperationCanceledException) { }
@@ -160,7 +161,9 @@ public partial class MainWindow : Window
         double secs = (now - _lastTick) / (double)Stopwatch.Frequency;
         _fps = _frames / secs; _frames = 0; _lastTick = now;
         double mb = Process.GetCurrentProcess().WorkingSet64 / 1048576.0;
-        string cache = _loader is null ? "" : $" | thumbs in RAM {_loader.CachedCount:N0} ({_loader.CachedBytes / 1048576.0:F0} MB)";
+        string cache = _loader is null ? "" :
+            $" | pictures in RAM {_loader.CachedCount:N0} ({_loader.CachedBytes / 1048576.0:F0} MB) + compressed {_loader.EncodedBytes / 1048576.0:F0} MB" +
+            $" | waiting {_loader.PendingCount} | disk read {_loader.AvgReadMs:F1} ms ({_loader.ThumbsPerRead:F0} thumbs/read) | decode {_loader.AvgDecodeMs:F1} ms";
         Stats.Text = $"{_mode} | drawn {View.LastVisibleCount} | {_fps:F0} fps | RAM {mb:F0} MB{cache}";
         string pipe = _pipe.Running || _pipe.Done + _pipe.Failed > 0
             ? $" | thumbnails {_pipe.Done:N0}/{_pipe.Total:N0} done, {_pipe.Failed:N0} failed{(_pipe.Failed > 0 ? " (last: " + _pipe.LastError + ")" : "")}"

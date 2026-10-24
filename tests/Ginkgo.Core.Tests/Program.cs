@@ -59,5 +59,22 @@ Check(g.VisibleRange(0, 10) == (0, 4), "grid first row");
 Check(g.VisibleRange(250, 260) == (4, 8), "grid second row");
 var (f, e) = g.VisibleRange(1e9f, 2e9f); Check(e == 1003 && f <= e, "grid clamped");
 
+// ---- ReadPlanner ----
+{
+    int n = 200; var pk = new int[n]; var of = new long[n]; var ln = new int[n];
+    long pos = 0; for (int i = 0; i < n; i++) { pk[i] = i < 100 ? 0 : 1; if (i == 100) pos = 0; of[i] = pos; ln[i] = 20000; pos += 20000; }
+    var plan = ReadPlanner.Make(pk, of, ln, 50);
+    Check(plan.Length <= 512 * 1024, "plan within size limit");
+    Check(plan.LastIndex - plan.FirstIndex + 1 >= 24 && plan.FirstIndex < 50 && plan.LastIndex > 50, $"plan covers neighbours (got {plan.FirstIndex}..{plan.LastIndex})");
+    Check(ReadPlanner.Covers(plan, pk, of, ln, 60) && !ReadPlanner.Covers(plan, pk, of, ln, 150), "covers neighbours, not other pack");
+    var edge = ReadPlanner.Make(pk, of, ln, 99);
+    Check(edge.Pack == 0 && edge.LastIndex == 99, "plan stops at pack boundary");
+    var scattered = new long[n]; for (int i = 0; i < n; i++) scattered[i] = (long)((i * 7919) % n) * 1_000_000;
+    var sp = ReadPlanner.Make(pk, scattered, ln, 50);
+    Check(sp.FirstIndex == 50 && sp.LastIndex == 50 && sp.Length == 20000, "scattered items: reads just the one");
+    var tl = ReadPlanner.Make(new[] { 0 }, new long[] { 0 }, new[] { 100 }, 0);
+    Check(tl.Length == 100, "single item list");
+}
+
 Console.WriteLine($"{pass} passed, {fail} failed");
 return fail == 0 ? 0 : 1;

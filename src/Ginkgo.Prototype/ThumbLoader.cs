@@ -1,15 +1,20 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using Ginkgo.Core;
 using Ginkgo.Data;
 using SkiaSharp;
 
 namespace Ginkgo.Prototype;
 
 /// <summary>
-/// Supplies thumbnails to the grid. The UI thread owns the cache (a byte-budgeted LRU); background threads
-/// read from the thumbnail packs and decode. Requests for tiles that have scrolled away are dropped.
+/// Supplies thumbnails to the grid.
+///  - Decoded pictures (ready to draw) live in a byte-budgeted LRU owned by the UI thread.
+///  - Compressed thumbnails live in a second, larger LRU, so scrolling back over recent tiles needs no disk read.
+///  - One disk read fetches a whole stretch of neighbouring thumbnails (hard drives are slow at jumping around).
+///  - What's on screen is loaded first; tiles ahead in the scroll direction are loaded quietly in the background.
 /// </summary>
 public sealed class ThumbLoader : IDisposable
 {
@@ -21,32 +26,49 @@ public sealed class ThumbLoader : IDisposable
     private readonly int[] _pack; private readonly long[] _off; private readonly int[] _len;
     private readonly Dispatcher _ui;
     private readonly Action _onReady;
-    private readonly long _budget;
+    private readonly long _budget, _encBudget;
 
+    // UI-thread-owned
     private readonly Dictionary<int, LinkedListNode<Entry>> _cache = new();
     private readonly LinkedList<Entry> _lru = new();
-    private readonly HashSet<int> _pending = new();
-    private readonly ConcurrentStack<Req> _requests = new();
+    private readonly Dictionary<int, bool> _pending = new(); // value: has been asked for as urgent
+    private long _bytes;
+
+    // shared with workers
+    private readonly ConcurrentStack<Req> _urgent = new();
+    private readonly ConcurrentQueue<Req> _prefetch = new();
     private readonly ConcurrentQueue<Done> _done = new();
     private readonly SemaphoreSlim _signal = new(0);
     private readonly CancellationTokenSource _cts = new();
-    private long _bytes;
     private int _lo, _hi = int.MaxValue;
     private int _drainQueued;
 
+    private readonly object _encLock = new();
+    private readonly Dictionary<int, LinkedListNode<(int idx, byte[] data)>> _enc = new();
+    private readonly LinkedList<(int idx, byte[] data)> _encLru = new();
+    private long _encBytes;
+
+    private long _reads, _readTicks, _decodes, _decodeTicks, _blockThumbs;
+
     public long CachedBytes => _bytes;
     public int CachedCount => _cache.Count;
+    public int PendingCount => _pending.Count;
+    public long EncodedBytes => Volatile.Read(ref _encBytes);
+    public double AvgReadMs => Volatile.Read(ref _reads) == 0 ? 0 : Volatile.Read(ref _readTicks) * 1000.0 / Stopwatch.Frequency / _reads;
+    public double AvgDecodeMs => Volatile.Read(ref _decodes) == 0 ? 0 : Volatile.Read(ref _decodeTicks) * 1000.0 / Stopwatch.Frequency / _decodes;
+    public double ThumbsPerRead => Volatile.Read(ref _reads) == 0 ? 0 : (double)Volatile.Read(ref _blockThumbs) / _reads;
 
-    public ThumbLoader(ThumbStore store, int[] pack, long[] off, int[] len, Dispatcher ui, Action onReady, long budgetBytes, int threads = 3)
+    public ThumbLoader(ThumbStore store, int[] pack, long[] off, int[] len, Dispatcher ui, Action onReady,
+        long decodedBudgetBytes, long encodedBudgetBytes, int threads = 3)
     {
-        _store = store; _pack = pack; _off = off; _len = len; _ui = ui; _onReady = onReady; _budget = budgetBytes;
+        _store = store; _pack = pack; _off = off; _len = len; _ui = ui; _onReady = onReady;
+        _budget = decodedBudgetBytes; _encBudget = encodedBudgetBytes;
         for (int i = 0; i < threads; i++) new Thread(Work) { IsBackground = true, Name = "thumb-decode" }.Start();
     }
 
-    /// <summary>Which item indexes are worth loading right now.</summary>
     public void SetWanted(int lo, int hi) { _lo = lo; _hi = hi; }
 
-    /// <summary>UI thread only. Returns the thumbnail if it's ready, otherwise asks for it and returns null.</summary>
+    /// <summary>UI thread only. Returns the picture if it's ready, otherwise asks for it right now and returns null.</summary>
     public BitmapSource? Get(int index, int widthPx)
     {
         if (_cache.TryGetValue(index, out var node))
@@ -54,8 +76,21 @@ public sealed class ThumbLoader : IDisposable
             _lru.Remove(node); _lru.AddFirst(node);
             return node.Value.Bitmap;
         }
-        if (_pending.Add(index)) { _requests.Push(new Req(index, widthPx)); _signal.Release(); }
+        if (_pending.TryGetValue(index, out bool urgent))
+        {
+            if (!urgent) { _pending[index] = true; _urgent.Push(new Req(index, widthPx)); _signal.Release(); }
+        }
+        else { _pending[index] = true; _urgent.Push(new Req(index, widthPx)); _signal.Release(); }
         return null;
+    }
+
+    /// <summary>UI thread only. Quietly gets a tile ready before it is needed.</summary>
+    public void Prefetch(int index, int widthPx)
+    {
+        if (_cache.ContainsKey(index) || _pending.ContainsKey(index)) return;
+        _pending[index] = false;
+        _prefetch.Enqueue(new Req(index, widthPx));
+        _signal.Release();
     }
 
     private void Work()
@@ -63,14 +98,19 @@ public sealed class ThumbLoader : IDisposable
         while (!_cts.IsCancellationRequested)
         {
             try { _signal.Wait(_cts.Token); } catch (OperationCanceledException) { return; }
-            if (!_requests.TryPop(out var req)) continue; // most recently requested = what's on screen now
+            if (!_urgent.TryPop(out var req) && !_prefetch.TryDequeue(out req)) continue;
             BitmapSource? bmp = null; long bytes = 0;
             if (req.Index >= _lo && req.Index <= _hi && _len[req.Index] > 0)
             {
                 try
                 {
-                    var data = _store.Read(_pack[req.Index], _off[req.Index], _len[req.Index]);
-                    if (data is not null) (bmp, bytes) = Decode(data, req.WidthPx);
+                    var data = GetEncoded(req.Index);
+                    if (data is not null)
+                    {
+                        long t0 = Stopwatch.GetTimestamp();
+                        (bmp, bytes) = Decode(data, req.WidthPx);
+                        Interlocked.Add(ref _decodeTicks, Stopwatch.GetTimestamp() - t0); Interlocked.Increment(ref _decodes);
+                    }
                 }
                 catch { bmp = null; }
             }
@@ -78,6 +118,38 @@ public sealed class ThumbLoader : IDisposable
             if (Interlocked.Exchange(ref _drainQueued, 1) == 0)
                 _ui.BeginInvoke(DispatcherPriority.Render, Drain);
         }
+    }
+
+    private byte[]? GetEncoded(int index)
+    {
+        lock (_encLock)
+        {
+            if (_enc.TryGetValue(index, out var n)) { _encLru.Remove(n); _encLru.AddFirst(n); return n.Value.data; }
+        }
+        var plan = ReadPlanner.Make(_pack, _off, _len, index);
+        long t0 = Stopwatch.GetTimestamp();
+        var block = _store.Read(plan.Pack, plan.Start, plan.Length);
+        Interlocked.Add(ref _readTicks, Stopwatch.GetTimestamp() - t0); Interlocked.Increment(ref _reads);
+        if (block is null) return null;
+        byte[]? mine = null;
+        lock (_encLock)
+        {
+            for (int j = plan.FirstIndex; j <= plan.LastIndex; j++)
+            {
+                if (!ReadPlanner.Covers(plan, _pack, _off, _len, j)) continue;
+                var slice = new byte[_len[j]];
+                Buffer.BlockCopy(block, (int)(_off[j] - plan.Start), slice, 0, slice.Length);
+                if (j == index) mine = slice;
+                if (_enc.ContainsKey(j)) continue;
+                _enc[j] = _encLru.AddFirst((j, slice)); _encBytes += slice.Length;
+                Interlocked.Increment(ref _blockThumbs);
+            }
+            while (_encBytes > _encBudget && _encLru.Last is { } last)
+            {
+                _encLru.RemoveLast(); _enc.Remove(last.Value.idx); _encBytes -= last.Value.data.Length;
+            }
+        }
+        return mine;
     }
 
     private static (BitmapSource?, long) Decode(byte[] data, int widthPx)

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Threading.Channels;
 using Ginkgo.Core;
 using Microsoft.Data.Sqlite;
@@ -11,6 +12,8 @@ public sealed class PipelineStats
     public long Failed;
     public string LastError = "";
     public volatile bool Running;
+    /// <summary>Stopwatch timestamp of the last time the user scrolled; thumbnail making pauses briefly after it.</summary>
+    public long LastUiActivity;
 }
 
 /// <summary>Makes a thumbnail for every image that doesn't have one yet, newest first, and records it in the index.</summary>
@@ -47,29 +50,42 @@ public static class ThumbnailPipeline
         {
             await Task.Run(() =>
             {
-                try
+                int next = -1;
+                long pauseTicks = (long)(Stopwatch.Frequency * 0.8);
+                var threads = new List<Thread>();
+                for (int w = 0; w < workers; w++)
                 {
-                    Parallel.ForEach(todo, new ParallelOptions { MaxDegreeOfParallelism = workers, CancellationToken = ct }, item =>
+                    var t = new Thread(() =>
                     {
-                        Outcome o;
-                        try
+                        while (!ct.IsCancellationRequested)
                         {
-                            var t = ThumbMaker.Make(item.path);
-                            var loc = store.Append(t.Bytes);
-                            o = new Outcome(item.id, t, loc.pack, loc.offset, loc.length);
-                            Interlocked.Increment(ref stats.Done);
+                            int idx = Interlocked.Increment(ref next);
+                            if (idx >= todo.Count) break;
+                            // while the person is scrolling, leave the drive and processor to the viewer
+                            while (!ct.IsCancellationRequested && Stopwatch.GetTimestamp() - Volatile.Read(ref stats.LastUiActivity) < pauseTicks)
+                                Thread.Sleep(40);
+                            var item = todo[idx];
+                            Outcome o;
+                            try
+                            {
+                                var th = ThumbMaker.Make(item.path);
+                                var loc = store.Append(th.Bytes);
+                                o = new Outcome(item.id, th, loc.pack, loc.offset, loc.length);
+                                Interlocked.Increment(ref stats.Done);
+                            }
+                            catch (Exception ex)
+                            {
+                                stats.LastError = Path.GetFileName(item.path) + ": " + ex.Message;
+                                o = new Outcome(item.id, null, 0, 0, 0);
+                                Interlocked.Increment(ref stats.Failed);
+                            }
+                            try { channel.Writer.WriteAsync(o, ct).AsTask().GetAwaiter().GetResult(); }
+                            catch (OperationCanceledException) { break; }
                         }
-                        catch (OperationCanceledException) { throw; }
-                        catch (Exception ex)
-                        {
-                            stats.LastError = Path.GetFileName(item.path) + ": " + ex.Message;
-                            o = new Outcome(item.id, null, 0, 0, 0);
-                            Interlocked.Increment(ref stats.Failed);
-                        }
-                        channel.Writer.WriteAsync(o, ct).AsTask().GetAwaiter().GetResult();
-                    });
+                    }) { IsBackground = true, Priority = ThreadPriority.BelowNormal, Name = "thumb-make" };
+                    threads.Add(t); t.Start();
                 }
-                catch (OperationCanceledException) { }
+                foreach (var t in threads) t.Join();
             }).ConfigureAwait(false);
         }
         finally
