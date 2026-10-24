@@ -3,83 +3,141 @@ using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Threading;
+using Ginkgo.Core;
 using Ginkgo.Core.Layout;
+using Ginkgo.Data;
 
 namespace Ginkgo.Prototype;
 
 public partial class MainWindow : Window
 {
-    private int _frames;
-    private double _fps;
-    private long _lastTick = Stopwatch.GetTimestamp();
+    // Prototype locations. Index lives with the app's data; thumbnails go to the external drive (outside the library).
+    private const string LibraryRoot = @"E:\Pictures\IMGs";
+    private static readonly string CacheDir = @"E:\GinkgoCache";
+    private static readonly string DbPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ginkgo", "index.db");
+
+    private int _frames; private double _fps; private long _lastTick = Stopwatch.GetTimestamp();
     private bool _syncing;
-    private string _mode = "none";
-    private string _note = "";
+    private string _mode = "nothing loaded";
+
+    private IndexDb? _db;
+    private ThumbStore? _store;
+    private ThumbLoader? _loader;
+    private string[] _paths = Array.Empty<string>();
+    private CancellationTokenSource? _buildCts;
+    private readonly PipelineStats _pipe = new();
+    private string _scanInfo = "";
+    private Task? _buildTask;
 
     public MainWindow()
     {
         InitializeComponent();
         View.ScrollChanged += SyncBar;
+        View.HoverChanged += i => Hover.Text = i >= 0 && i < _paths.Length ? _paths[i] : " ";
         CompositionTarget.Rendering += (_, _) => _frames++;
         var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(0.5) };
         timer.Tick += (_, _) => UpdateStats();
         timer.Start();
-        Loaded += (_, _) => LoadSynthetic(200_000);
+        Loaded += (_, _) => Startup();
+        Closing += (_, _) => { _buildCts?.Cancel(); _loader?.Dispose(); };
+    }
+
+    private void Startup()
+    {
+        try
+        {
+            _db = new IndexDb(DbPath);
+            _store = new ThumbStore(CacheDir);
+            using var c = _db.Open();
+            long done = IndexDb.Scalar(c, "SELECT COUNT(*) FROM files WHERE state=1");
+            if (done > 0) LoadLibrary(); else LoadSynthetic(200_000);
+        }
+        catch (Exception ex) { _scanInfo = "startup problem: " + ex.Message; LoadSynthetic(200_000); }
     }
 
     private void OnSynth200k(object s, RoutedEventArgs e) => LoadSynthetic(200_000);
-    private void OnSynth1m(object s, RoutedEventArgs e) => LoadSynthetic(1_000_000);
+    private void OnShow(object s, RoutedEventArgs e) => LoadLibrary();
 
     private void LoadSynthetic(int n)
     {
+        DetachLoader();
         var rnd = new Random(42);
         var items = new ItemSpec[n];
         for (int i = 0; i < n; i++)
         {
-            // mix of portrait, square and landscape like a real library
             float a = rnd.Next(10) switch { < 5 => 0.55f + (float)rnd.NextDouble() * 0.25f, < 7 => 1f, _ => 1.3f + (float)rnd.NextDouble() * 0.6f };
             items[i] = new ItemSpec(a);
         }
+        _paths = Array.Empty<string>();
         View.SetItems(items, null);
-        _mode = $"{n:N0} fake tiles"; _note = "";
+        _mode = $"{n:N0} fake tiles";
     }
 
-    private async void OnReal(object s, RoutedEventArgs e)
+    private void DetachLoader()
     {
-        const string root = @"E:\Pictures\IMGs";
-        if (!Directory.Exists(root)) { _note = "E:\\Pictures\\IMGs not found"; return; }
-        RealFiles.IsEnabled = false;
-        _note = "scanning...";
-        var sw = Stopwatch.StartNew();
-        var exts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".webm", ".jfif", ".avif" };
-        var skip = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Doujinshi", "Sort", "sfw", "Anthologies, Art Books & Collections", "Grabber" };
-        var names = await Task.Run(() =>
-        {
-            var list = new List<string>(200_000);
-            foreach (var top in Directory.EnumerateDirectories(root))
-            {
-                if (skip.Contains(Path.GetFileName(top))) continue;
-                foreach (var f in Directory.EnumerateFiles(top, "*", SearchOption.AllDirectories))
-                    if (exts.Contains(Path.GetExtension(f))) list.Add(f);
-            }
-            return list;
-        });
-        var items = new ItemSpec[names.Count];
-        var labels = new string[names.Count];
-        for (int i = 0; i < names.Count; i++)
-        {
-            // dimensions are not read yet in this prototype: use a stable fake shape from the file name
-            uint h = (uint)names[i].GetHashCode();
-            items[i] = new ItemSpec(0.6f + (h % 100) / 100f * 1.0f);
-            labels[i] = Path.GetFileName(names[i]);
-        }
-        View.SetItems(items, labels);
-        _mode = $"{names.Count:N0} real files (shapes are fake)";
-        _note = $"scan took {sw.Elapsed.TotalSeconds:F1}s";
-        RealFiles.IsEnabled = true;
+        View.Thumbs = null;
+        _loader?.Dispose(); _loader = null;
     }
 
-    private void OnBarChanged(object s, RoutedPropertyChangedEventArgs<double> e)
+    private void LoadLibrary()
+    {
+        if (_db is null || _store is null) return;
+        var sw = Stopwatch.StartNew();
+        var specs = new List<ItemSpec>(); var paths = new List<string>();
+        var pack = new List<int>(); var off = new List<long>(); var len = new List<int>();
+        using (var c = _db.Open())
+        using (var cmd = c.CreateCommand())
+        {
+            // Home order: newest first seen, then newest file date.
+            cmd.CommandText = "SELECT path, w, h, thumb_pack, thumb_off, thumb_len FROM files WHERE state=1 ORDER BY first_seen DESC, mtime DESC, id";
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                int w = r.GetInt32(1), h = r.GetInt32(2);
+                specs.Add(new ItemSpec(h > 0 ? w / (float)h : 1f));
+                paths.Add(r.GetString(0));
+                pack.Add(r.GetInt32(3)); off.Add(r.GetInt64(4)); len.Add(r.GetInt32(5));
+            }
+        }
+        if (specs.Count == 0) { _scanInfo = "nothing ready yet - press Scan"; return; }
+        DetachLoader();
+        _paths = paths.ToArray();
+        _loader = new ThumbLoader(_store, pack.ToArray(), off.ToArray(), len.ToArray(), Dispatcher, () => View.Refresh(), 200L * 1024 * 1024);
+        View.Thumbs = _loader;
+        View.SetItems(specs.ToArray(), Array.ConvertAll(_paths, Path.GetFileName)!);
+        _mode = $"library: {specs.Count:N0} ready";
+        _scanInfo = $"view built in {sw.Elapsed.TotalSeconds:F1}s";
+    }
+
+    private async void OnBuild(object s, RoutedEventArgs e)
+    {
+        if (_buildTask is { IsCompleted: false }) { _buildCts?.Cancel(); BuildBtn.IsEnabled = false; return; }
+        if (_db is null || _store is null) return;
+        if (!Directory.Exists(LibraryRoot)) { _scanInfo = LibraryRoot + " not found"; return; }
+        _buildCts = new CancellationTokenSource();
+        var ct = _buildCts.Token;
+        BuildBtn.Content = "Stop";
+        _buildTask = Task.Run(async () =>
+        {
+            try
+            {
+                _scanInfo = "scanning folders...";
+                var res = LibraryScanner.Scan(_db, LibraryRoot, MediaTypes.DefaultExcludedTopFolders, n => _scanInfo = $"scanning... {n:N0} files seen", ct);
+                _scanInfo = $"scan: {res.Total:N0} files, +{res.Added:N0} new, {res.Changed:N0} changed, {res.Removed:N0} gone, {res.Seconds:F0}s";
+                int workers = Math.Max(2, Environment.ProcessorCount - 2);
+                await ThumbnailPipeline.RunAsync(_db, _store, _pipe, workers, ct);
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { _scanInfo = "problem: " + ex.Message; }
+        });
+        await _buildTask;
+        BuildBtn.Content = "Scan library + make thumbnails";
+        BuildBtn.IsEnabled = true;
+        LoadLibrary();
+    }
+
+    private void OnBarChanged(object s, System.Windows.RoutedPropertyChangedEventArgs<double> e)
     {
         if (_syncing) return;
         _syncing = true; View.Offset = e.NewValue; _syncing = false;
@@ -102,6 +160,11 @@ public partial class MainWindow : Window
         double secs = (now - _lastTick) / (double)Stopwatch.Frequency;
         _fps = _frames / secs; _frames = 0; _lastTick = now;
         double mb = Process.GetCurrentProcess().WorkingSet64 / 1048576.0;
-        Stats.Text = $"{_mode} | drawn {View.LastVisibleCount} | frame draw {View.LastRenderMs:F1} ms | {_fps:F0} fps | RAM {mb:F0} MB | Ctrl+wheel = zoom, middle-click = autoscroll {_note}";
+        string cache = _loader is null ? "" : $" | thumbs in RAM {_loader.CachedCount:N0} ({_loader.CachedBytes / 1048576.0:F0} MB)";
+        Stats.Text = $"{_mode} | drawn {View.LastVisibleCount} | {_fps:F0} fps | RAM {mb:F0} MB{cache}";
+        string pipe = _pipe.Running || _pipe.Done + _pipe.Failed > 0
+            ? $" | thumbnails {_pipe.Done:N0}/{_pipe.Total:N0} done, {_pipe.Failed:N0} failed{(_pipe.Failed > 0 ? " (last: " + _pipe.LastError + ")" : "")}"
+            : "";
+        Status.Text = _scanInfo + pipe;
     }
 }

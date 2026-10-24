@@ -11,6 +11,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{5A9A226D
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ginkgo.Core.Tests", "tests\Ginkgo.Core.Tests\Ginkgo.Core.Tests.csproj", "{29C33E2C-66B5-4B3A-B020-80854A45B9EC}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Ginkgo.Data", "src\Ginkgo.Data\Ginkgo.Data.csproj", "{93A0D675-5EF3-4CCA-9DB4-E9EDDBD403B3}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -28,9 +30,14 @@ Global
 		{29C33E2C-66B5-4B3A-B020-80854A45B9EC}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{29C33E2C-66B5-4B3A-B020-80854A45B9EC}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{29C33E2C-66B5-4B3A-B020-80854A45B9EC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{93A0D675-5EF3-4CCA-9DB4-E9EDDBD403B3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{93A0D675-5EF3-4CCA-9DB4-E9EDDBD403B3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{93A0D675-5EF3-4CCA-9DB4-E9EDDBD403B3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{93A0D675-5EF3-4CCA-9DB4-E9EDDBD403B3}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{F3F5882F-7108-4602-87FE-E1C369C0A98C} = {24C42B20-E184-4926-9496-100C5598ED15}
 		{29C33E2C-66B5-4B3A-B020-80854A45B9EC} = {5A9A226D-4D77-4715-B621-2F52C885DCE1}
+		{93A0D675-5EF3-4CCA-9DB4-E9EDDBD403B3} = {24C42B20-E184-4926-9496-100C5598ED15}
 	EndGlobalSection
 EndGlobal

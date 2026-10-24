@@ -2,17 +2,21 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Ginkgo.Prototype"
-        Title="Ginkgo prototype 1 - scrolling test" Width="1400" Height="900" Background="#121214" UseLayoutRounding="True" SnapsToDevicePixels="True">
+        Title="Ginkgo prototype 3 - real library" Width="1400" Height="900" Background="#121214" UseLayoutRounding="True" SnapsToDevicePixels="True">
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
-        <StackPanel Orientation="Horizontal" Margin="8" Background="#121214" UseLayoutRounding="True" SnapsToDevicePixels="True">
-            <Button x:Name="Synth200k" Content="200,000 fake tiles" Padding="10,4" Margin="0,0,6,0" Click="OnSynth200k"/>
-            <Button x:Name="Synth1m" Content="1,000,000 fake tiles" Padding="10,4" Margin="0,0,6,0" Click="OnSynth1m"/>
-            <Button x:Name="RealFiles" Content="Load real file list (E:\Pictures\IMGs)" Padding="10,4" Margin="0,0,12,0" Click="OnReal"/>
-            <TextBlock x:Name="Stats" Foreground="#D8D8D8" VerticalAlignment="Center" FontFamily="Consolas"/>
+        <StackPanel Margin="8">
+            <StackPanel Orientation="Horizontal">
+                <Button x:Name="BuildBtn" Content="Scan library + make thumbnails" Padding="10,4" Margin="0,0,6,0" Click="OnBuild"/>
+                <Button x:Name="ShowBtn" Content="Show library (refresh)" Padding="10,4" Margin="0,0,6,0" Click="OnShow"/>
+                <Button Content="200,000 fake tiles" Padding="10,4" Margin="0,0,6,0" Click="OnSynth200k"/>
+                <TextBlock x:Name="Status" Foreground="#D8D8D8" VerticalAlignment="Center" Margin="8,0,0,0" FontFamily="Consolas"/>
+            </StackPanel>
+            <TextBlock x:Name="Stats" Foreground="#D8D8D8" FontFamily="Consolas" Margin="0,6,0,0"/>
+            <TextBlock x:Name="Hover" Foreground="#9AA0A6" FontFamily="Consolas" Margin="0,2,0,0" Text=" "/>
         </StackPanel>
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>

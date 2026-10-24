@@ -36,10 +36,16 @@ public sealed class MasonryView : FrameworkElement
     private static Brush Freeze(Brush b) { b.Freeze(); return b; }
 
     public event Action? ScrollChanged;
+    public event Action<int>? HoverChanged;
+
+    private ThumbLoader? _thumbs;
+    public ThumbLoader? Thumbs { get => _thumbs; set { _thumbs = value; InvalidateVisual(); } }
+    public void Refresh() => InvalidateVisual();
 
     public MasonryView()
     {
         ClipToBounds = true;
+        RenderOptions.SetBitmapScalingMode(this, BitmapScalingMode.Linear);
         Focusable = true;
         _palette = new Brush[24];
         for (int i = 0; i < _palette.Length; i++)
@@ -193,7 +199,7 @@ public sealed class MasonryView : FrameworkElement
         foreach (var i in _visible)
             if (p.X >= _layout.X[i] && p.X <= _layout.X[i] + _layout.W[i] &&
                 p.Y + Math.Round(_offset) >= _layout.Y[i] && p.Y + Math.Round(_offset) <= _layout.Y[i] + _layout.H[i]) { found = i; break; }
-        if (found != _hoverIndex) { _hoverIndex = found; InvalidateVisual(); }
+        if (found != _hoverIndex) { _hoverIndex = found; HoverChanged?.Invoke(found); InvalidateVisual(); }
     }
 
     protected override void OnRender(DrawingContext dc)
@@ -204,18 +210,26 @@ public sealed class MasonryView : FrameworkElement
         double off = Math.Round(_offset); // whole pixels: no shimmer
         _layout.GetVisible((float)off - 200, (float)(off + ActualHeight) + 200, _visible);
         LastVisibleCount = _visible.Count;
-        double dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        var dpiInfo = VisualTreeHelper.GetDpi(this);
+        double dpi = dpiInfo.PixelsPerDip;
+        if (_thumbs is not null && _visible.Count > 0) _thumbs.SetWanted(_visible[0] - 600, _visible[^1] + 600);
         foreach (int i in _visible)
         {
-            var r = new Rect(_layout.X[i], _layout.Y[i] - off, _layout.W[i], _layout.H[i]);
-            dc.DrawRectangle(_palette[(i * 7) % _palette.Length], i == _hoverIndex ? _hover : null, r);
-            if (r.Width > 70)
+            var r = new Rect(Math.Round(_layout.X[i]), Math.Round(_layout.Y[i] - off), Math.Round(_layout.W[i]), Math.Round(_layout.H[i]));
+            var img = _thumbs?.Get(i, (int)Math.Round(r.Width * dpi));
+            if (img is not null)
             {
-                string text = _labels is not null ? _labels[i] : (i + 1).ToString(CultureInfo.InvariantCulture);
+                dc.DrawImage(img, r);
+                if (i == _hoverIndex) dc.DrawRectangle(null, _hover, r);
+                continue;
+            }
+            dc.DrawRectangle(_palette[(i * 7) % _palette.Length], i == _hoverIndex ? _hover : null, r);
+            if (r.Width > 70 && _labels is not null)
+            {
                 if (!_textCache.TryGetValue(i, out var ft))
                 {
                     if (_textCache.Count > 3000) _textCache.Clear();
-                    ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 12,
+                    ft = new FormattedText(_labels[i], CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 12,
                         Brushes.White, dpi) { MaxTextWidth = Math.Max(10, r.Width - 8), MaxLineCount = 2, Trimming = TextTrimming.CharacterEllipsis };
                     _textCache[i] = ft;
                 }

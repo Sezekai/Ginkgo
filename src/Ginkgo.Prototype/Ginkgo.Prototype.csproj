@@ -5,11 +5,13 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AssemblyName>Ginkgo.Prototype</AssemblyName>
     <RootNamespace>Ginkgo.Prototype</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Ginkgo.Core\Ginkgo.Core.csproj" />
+    <ProjectReference Include="..\Ginkgo.Data\Ginkgo.Data.csproj" />
   </ItemGroup>
 </Project>
