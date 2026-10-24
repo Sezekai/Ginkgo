@@ -18,6 +18,7 @@ public sealed class ThumbStore : IDisposable
     public long Size { get { if (Volatile.Read(ref _size) < 0) Interlocked.CompareExchange(ref _size, TotalBytes(), -1); return Volatile.Read(ref _size); } }
     private FileStream? _writer;
     private int _writerPack = -1;
+    private volatile bool _dirty;   // something was written but may still be sitting in the write buffer
     private readonly ConcurrentDictionary<int, SafeFileHandle> _readers = new();
 
     public ThumbStore(string directory, string prefix = "pack")
@@ -48,23 +49,25 @@ public sealed class ThumbStore : IDisposable
             }
             else if (_writer.Position >= PackLimit)
             {
-                _writer.Flush(); _writer.Dispose();
+                _writer.Flush(); _writer.Dispose(); _dirty = false;
                 _writerPack++;
                 _writer = new FileStream(PackPath(_writerPack), FileMode.Create, FileAccess.Write, FileShare.ReadWrite, 1 << 16);
             }
             long off = _writer.Position;
             _writer.Write(data);
+            _dirty = true;
             if (Volatile.Read(ref _size) >= 0) Interlocked.Add(ref _size, data.Length);
             return (_writerPack, off, data.Length);
         }
     }
 
     /// <summary>Makes sure everything appended so far is really in the file. Call before recording locations in the index.</summary>
-    public void Flush() { lock (_lock) _writer?.Flush(); }
+    public void Flush() { lock (_lock) { _writer?.Flush(); _dirty = false; } }
 
     public byte[]? Read(int pack, long offset, int length)
     {
         if (length <= 0) return null;
+        if (_dirty) Flush(); // a thumbnail written a moment ago may not be in the file yet
         var handle = _readers.GetOrAdd(pack, p =>
             File.OpenHandle(PackPath(p), FileMode.Open, FileAccess.Read, FileShare.ReadWrite));
         var buf = new byte[length];
