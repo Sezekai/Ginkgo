@@ -3,8 +3,10 @@ using Ginkgo.Data;
 using SkiaSharp;
 
 int pass = 0, fail = 0;
-void Check(bool ok, string name) { if (ok) pass++; else { fail++; Console.WriteLine("FAIL: " + name); } }
+void Check(bool ok, string name) { if (ok) pass++; else { fail++; Console.WriteLine("::error::FAIL: " + name); } }
 
+try
+{
 var tmp = Path.Combine(Path.GetTempPath(), "ginkgo-test-" + Guid.NewGuid().ToString("N"));
 var lib = Path.Combine(tmp, "IMGs");
 void Img(string rel, int w, int h, SKEncodedImageFormat fmt)
@@ -81,5 +83,11 @@ Check(stats2.Done == 1, "only the new file is thumbnailed");
 
 store.Dispose();
 try { Directory.Delete(tmp, true); } catch { }
-Console.WriteLine($"{pass} passed, {fail} failed");
+Console.WriteLine($"::notice::{pass} passed, {fail} failed");
 return fail == 0 ? 0 : 1;
+}
+catch (Exception ex)
+{
+    Console.WriteLine("::error::EXCEPTION " + ex.GetType().Name + ": " + ex.Message.Replace("\n", " ") + " @ " + (ex.StackTrace ?? "").Replace("\r", "").Replace("\n", " | "));
+    return 2;
+}
