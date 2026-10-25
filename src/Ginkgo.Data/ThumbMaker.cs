@@ -57,7 +57,19 @@ public static class ThumbMaker
         w = codec.Info.Width; h = codec.Info.Height;
         if (w <= 0 || h <= 0) throw new InvalidDataException("bad size");
         float scale = Math.Min(1f, targetW / (float)w);
-        SKSizeI dec = scale < 1f ? codec.GetScaledDimensions(scale) : new SKSizeI(w, h);
+        SKSizeI dec = new SKSizeI(w, h);
+        if (scale < 1f)
+        {
+            // the decoder may round the scale DOWN; step up until the result is at least as wide as we want
+            float s = scale;
+            for (int i = 0; i < 10; i++)
+            {
+                dec = codec.GetScaledDimensions(s);
+                if (dec.Width >= targetW || s >= 1f) break;
+                s = Math.Min(1f, s * 1.12f);
+            }
+            if (dec.Width < targetW) dec = new SKSizeI(w, h);
+        }
         var bmp = new SKBitmap(new SKImageInfo(dec.Width, dec.Height, SKColorType.Bgra8888, SKAlphaType.Premul));
         var res = codec.GetPixels(bmp.Info, bmp.GetPixels());
         if (res != SKCodecResult.Success && res != SKCodecResult.IncompleteInput) { bmp.Dispose(); throw new InvalidDataException("decode failed: " + res); }
