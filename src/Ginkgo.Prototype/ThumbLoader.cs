@@ -46,7 +46,10 @@ public sealed class ThumbLoader : IDisposable
     private readonly ConcurrentDictionary<int, byte> _largeFailed = new();
     private readonly Dispatcher _ui;
     private readonly Action _onReady;
-    private readonly long _budget, _encBudget;
+    private long _budget, _encBudget;
+
+    /// <summary>Change the memory limits while running (takes effect as the caches next trim themselves).</summary>
+    public void SetBudgets(long decodedBytes, long encodedBytes) { Volatile.Write(ref _budget, decodedBytes); Volatile.Write(ref _encBudget, encodedBytes); }
 
     // UI-thread-owned
     private readonly Dictionary<int, LinkedListNode<Entry>> _cache = new();

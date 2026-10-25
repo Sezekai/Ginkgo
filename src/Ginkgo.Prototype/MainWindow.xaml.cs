@@ -78,6 +78,21 @@ public partial class MainWindow : Window
     }
 
     private void OnSynth200k(object s, RoutedEventArgs e) => LoadSynthetic(200_000);
+    /// <summary>Memory limits for the picture cache (decoded, ready to draw) and the compressed-thumbnail cache, from the picker.</summary>
+    private (long decoded, long encoded) CacheBudgets()
+    {
+        var parts = ((CacheBox.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag as string ?? "200,150").Split(',');
+        return (long.Parse(parts[0]) * 1024 * 1024, long.Parse(parts[1]) * 1024 * 1024);
+    }
+
+    private void OnCacheChanged(object s, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (!IsLoaded) return;
+        var (d, c) = CacheBudgets();
+        _loader?.SetBudgets(d, c);
+        View.PrefetchBudgetBytes = d * 36 / 100;     // warm-up gets about a third of the picture cache (72 MB at the original 200 MB)
+    }
+
     private void OnFadeChanged(object s, RoutedEventArgs e) { if (_loader is not null) _loader.FadeEnabled = FadeBox.IsChecked == true; }
     private void OnShow(object s, RoutedEventArgs e) => LoadLibrary();
 
@@ -141,8 +156,9 @@ public partial class MainWindow : Window
         };
         _ids = ids.ToArray();
         _loader = new ThumbLoader(tiers, _paths, origW.ToArray(), _store.Large, 6L * 1024 * 1024 * 1024,
-            (i, loc) => _largeQueue.Enqueue((_ids[i], loc.Pack, loc.Off, loc.Len)), Dispatcher, () => View.Refresh(), 128L * 1024 * 1024, 64L * 1024 * 1024);
+            (i, loc) => _largeQueue.Enqueue((_ids[i], loc.Pack, loc.Off, loc.Len)), Dispatcher, () => View.Refresh(), CacheBudgets().decoded, CacheBudgets().encoded);
         _loader.FadeEnabled = FadeBox.IsChecked == true;
+        View.PrefetchBudgetBytes = CacheBudgets().decoded * 36 / 100;
         View.Thumbs = _loader;
         View.SetItems(specs.ToArray(), null);
         _mode = $"library: {specs.Count:N0} ready";
