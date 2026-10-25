@@ -141,7 +141,7 @@ public partial class MainWindow : Window
         };
         _ids = ids.ToArray();
         _loader = new ThumbLoader(tiers, _paths, origW.ToArray(), _store.Large, 6L * 1024 * 1024 * 1024,
-            (i, loc) => _largeQueue.Enqueue((_ids[i], loc.Pack, loc.Off, loc.Len)), Dispatcher, () => View.Refresh(), 160L * 1024 * 1024, 96L * 1024 * 1024);
+            (i, loc) => _largeQueue.Enqueue((_ids[i], loc.Pack, loc.Off, loc.Len)), Dispatcher, () => View.Refresh(), 128L * 1024 * 1024, 64L * 1024 * 1024);
         _loader.FadeEnabled = FadeBox.IsChecked == true;
         View.Thumbs = _loader;
         View.SetItems(specs.ToArray(), null);
@@ -203,8 +203,26 @@ public partial class MainWindow : Window
         Task.Run(() => { try { IndexUpdates.SaveLarge(db, store, rows); } catch { } finally { Volatile.Write(ref _savingLarge, 0); } });
     }
 
+    private long _lastGc = Stopwatch.GetTimestamp();
+
+    /// <summary>Picture memory freed by the app only goes back to Windows when .NET cleans up, so do that when you've stopped scrolling.</summary>
+    private void IdleCleanup()
+    {
+        long now = Stopwatch.GetTimestamp();
+        double idle = (now - Volatile.Read(ref _pipe.LastUiActivity)) / (double)Stopwatch.Frequency;
+        double since = (now - _lastGc) / (double)Stopwatch.Frequency;
+        if (idle > 2.0 && since > 10 && Process.GetCurrentProcess().WorkingSet64 > 600L * 1024 * 1024)
+        {
+            _lastGc = now;
+            GC.Collect(2, GCCollectionMode.Forced, true, true);
+            GC.WaitForPendingFinalizers();
+            GC.Collect(2, GCCollectionMode.Forced, true, true);
+        }
+    }
+
     private void UpdateStats()
     {
+        IdleCleanup();
         long now = Stopwatch.GetTimestamp();
         double secs = (now - _lastTick) / (double)Stopwatch.Frequency;
         _fps = _frames / secs; _frames = 0; _lastTick = now;

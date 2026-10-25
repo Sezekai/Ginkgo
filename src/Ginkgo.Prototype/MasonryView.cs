@@ -241,7 +241,7 @@ public sealed class MasonryView : FrameworkElement
                 _lastPlanTick = now; _planOff = off; _planTarget = _target;
                 BuildPlan(off, H, dpi);
             }
-            _thumbs.SetWanted(_visible[0] - 150, _visible[^1] + 150);
+            _thumbs.SetWanted(_visible[0] - 12, _visible[^1] + 12);   // requests for tiles that have scrolled away are dropped
         }
 
         bool fading = false;
@@ -308,13 +308,14 @@ public sealed class MasonryView : FrameworkElement
 
         _planItems.Clear();
         long budget = PrefetchBudgetBytes, used = 0;
-        int encodedOnly = 0;
+        int encodedOnly = 0, n = 0;
+        bool allowLarge = !flick && Math.Abs(_target - off) < H * 0.2;   // sharp versions only when the scroll has settled
         foreach (var (_, i) in keyed)
         {
             int wPx = (int)Math.Round(layout.W[i] * dpi), hPx = (int)Math.Round(layout.H[i] * dpi);
             long bytes = (long)wPx * hPx * 4;
-            if (used + bytes <= budget && _planItems.Count < 500) { used += bytes; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, true); }
-            else if (encodedOnly < 1200) { int before = _planItems.Count; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, false); encodedOnly += _planItems.Count - before; }
+            if (used + bytes <= budget && _planItems.Count < 500) { used += bytes; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, true, allowLarge && n++ < 24); }
+            else if (encodedOnly < 1200) { int before = _planItems.Count; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, false, false); encodedOnly += _planItems.Count - before; }
             else break;
         }
         _thumbs!.SetPlan(_planItems.ToArray());

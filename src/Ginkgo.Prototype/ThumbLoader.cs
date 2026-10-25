@@ -55,7 +55,9 @@ public sealed class ThumbLoader : IDisposable
 
     // shared with workers
     private readonly ConcurrentDictionary<long, byte> _inflight = new();   // key = index*4+tier: queued or being worked on
-    private readonly ConcurrentQueue<Req> _urgent = new();   // first asked, first served: tiles load top to bottom
+    private readonly ConcurrentQueue<Req> _urgent = new();        // quick work for tiles on screen (reading a thumbnail): top to bottom
+    private readonly ConcurrentQueue<Req> _urgentLarge = new();   // slow work for tiles on screen (reading an original to make a sharp version)
+    private int _largeActive;                                     // how many workers are making sharp versions right now
     private readonly ConcurrentQueue<Done> _done = new();
     private Plan _plan = new();
     private readonly SemaphoreSlim _signal = new(0);
@@ -135,7 +137,8 @@ public sealed class ThumbLoader : IDisposable
     {
         long key = (long)index * 4 + tier;
         if (!_inflight.TryAdd(key, 0)) return false;
-        _urgent.Enqueue(new Req(index, w, h, tier, true, false));
+        var req = new Req(index, w, h, tier, true, false);
+        if (tier == 3 && Volatile.Read(ref _tiers[3].Len[index]) == 0) _urgentLarge.Enqueue(req); else _urgent.Enqueue(req);
         _signal.Release();
         return true;
     }
@@ -152,7 +155,7 @@ public sealed class ThumbLoader : IDisposable
     }
 
     /// <summary>UI thread only. Adds what this tile still needs to a warm-up list.</summary>
-    public void AppendPlan(int index, int widthPx, int heightPx, List<PlanItem> list, bool decodeToo)
+    public void AppendPlan(int index, int widthPx, int heightPx, List<PlanItem> list, bool decodeToo, bool largeToo)
     {
         if (!Resolve(index, widthPx, out int show, out bool large)) return;
         _cache.TryGetValue(index, out var node);
@@ -161,7 +164,7 @@ public sealed class ThumbLoader : IDisposable
         {
             list.Add(new PlanItem(index, widthPx, heightPx, show, !decodeToo));
         }
-        if (decodeToo && large && (e is null || e.Tier < 3) && !_inflight.ContainsKey((long)index * 4 + 3))
+        if (decodeToo && largeToo && large && (e is null || e.Tier < 3) && !_inflight.ContainsKey((long)index * 4 + 3))
             list.Add(new PlanItem(index, widthPx, heightPx, 3, false));
     }
 
@@ -171,8 +174,9 @@ public sealed class ThumbLoader : IDisposable
     {
         while (!_cts.IsCancellationRequested)
         {
-            Req req = default; bool have = false;
-            if (_urgent.TryDequeue(out req)) have = true;
+            Req req = default; bool have = false; bool makingLarge = false;
+            if (_urgent.TryDequeue(out req)) have = true;                      // quick work first, so a thumbnail never waits behind a slow job
+            else if (Volatile.Read(ref _largeActive) < 3 && _urgentLarge.TryDequeue(out req)) have = true;
             else
             {
                 var plan = Volatile.Read(ref _plan);
@@ -181,17 +185,14 @@ public sealed class ThumbLoader : IDisposable
                     int k = Interlocked.Increment(ref plan.Next) - 1;
                     if (k >= plan.Items.Length) break;
                     var it = plan.Items[k];
+                    bool slow = it.Tier == 3 && Volatile.Read(ref _tiers[3].Len[it.Index]) == 0;
+                    if (slow && Volatile.Read(ref _largeActive) >= 2) continue;   // keep workers free for what's on screen
                     if (!_inflight.TryAdd((long)it.Index * 4 + it.Tier, 0)) continue;
                     req = new Req(it.Index, it.WidthPx, it.HeightPx, it.Tier, false, it.EncodedOnly);
                     have = true; break;
                 }
             }
-            if (!have)
-            {
-                try { _signal.Wait(15, _cts.Token); } catch (OperationCanceledException) { return; }
-                continue;
-            }
-
+            if (have && req.Tier == 3 && Volatile.Read(ref _tiers[3].Len[req.Index]) == 0) { makingLarge = true; Interlocked.Increment(ref _largeActive); }
             BitmapSource? bmp = null; long bytes = 0;
             bool stale = req.Urgent && (req.Index < _lo || req.Index > _hi);
             if (!stale)
@@ -208,6 +209,7 @@ public sealed class ThumbLoader : IDisposable
                 }
                 catch { bmp = null; }
             }
+            if (makingLarge) Interlocked.Decrement(ref _largeActive);
             _done.Enqueue(new Done(req.Index, req.Tier, bmp, bytes, req.Urgent));
             if (Interlocked.Exchange(ref _drainQueued, 1) == 0)
                 _ui.BeginInvoke(DispatcherPriority.Render, Drain);
