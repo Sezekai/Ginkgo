@@ -81,7 +81,7 @@ public partial class MainWindow : Window
     /// <summary>Memory limits for the picture cache (decoded, ready to draw) and the compressed-thumbnail cache, from the picker.</summary>
     private (long decoded, long encoded) CacheBudgets()
     {
-        var parts = ((CacheBox.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag as string ?? "200,150").Split(',');
+        var parts = ((CacheBox.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag as string ?? "96,48").Split(',');
         return (long.Parse(parts[0]) * 1024 * 1024, long.Parse(parts[1]) * 1024 * 1024);
     }
 
@@ -253,7 +253,7 @@ public partial class MainWindow : Window
         double mb = Process.GetCurrentProcess().WorkingSet64 / 1048576.0;
         string cache = _loader is null ? "" :
             $" | pictures in RAM {_loader.CachedCount:N0} ({_loader.CachedBytes / 1048576.0:F0} MB) + compressed {_loader.EncodedBytes / 1048576.0:F0} MB" +
-            $" | sharp versions made {_loader.LargeMade:N0} | waiting {_loader.PendingCount} | disk read {_loader.AvgReadMs:F1} ms ({_loader.ThumbsPerRead:F0} thumbs/read) | decode {_loader.AvgDecodeMs:F1} ms";
+            $" | sharp versions made {_loader.LargeMade:N0} | waiting {_loader.PendingCount} | disk read {_loader.AvgReadMs:F1} ms ({_loader.ThumbsPerRead:F0} thumbs/read) | decode {_loader.AvgDecodeMs:F1} ms\n{_loader.SharpSummary}";
         Stats.Text = $"{_mode} | drawn {View.LastVisibleCount} | {_fps:F0} fps | RAM {mb:F0} MB{cache}";
         string pipe = _pipe.Running || _pipe.Done + _pipe.Failed + _pipe.BackfillTotal > 0
             ? $" | thumbnails {_pipe.Done:N0}/{_pipe.Total:N0} done, {_pipe.Failed:N0} failed{(_pipe.Failed > 0 ? " (last: " + _pipe.LastError + ")" : "")}{(_pipe.BackfillTotal > 0 ? $" | small sizes {_pipe.BackfillDone:N0}/{_pipe.BackfillTotal:N0}" : "")}"

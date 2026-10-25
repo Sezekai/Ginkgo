@@ -239,6 +239,7 @@ public sealed class MasonryView : FrameworkElement
             if ((now - _lastPlanTick) * 1000 / Stopwatch.Frequency > (moved ? 150 : 700))
             {
                 _lastPlanTick = now; _planOff = off; _planTarget = _target;
+                _thumbs.PurgeStale();
                 BuildPlan(off, H, dpi);
             }
             _thumbs.SetWanted(_visible[0] - 12, _visible[^1] + 12);   // requests for tiles that have scrolled away are dropped

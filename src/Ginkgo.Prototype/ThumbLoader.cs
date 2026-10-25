@@ -75,6 +75,19 @@ public sealed class ThumbLoader : IDisposable
     private readonly LinkedList<(long key, byte[] data)> _encLru = new();
     private long _encBytes;
 
+    private long _sharpJobs, _sharpDecodeTicks, _sharpPresentTicks, _sharpSaveTicks;
+    /// <summary>How long making sharp versions takes: reading+decoding the original / fitting it to the tile / saving it (milliseconds, averaged).</summary>
+    public string SharpSummary
+    {
+        get
+        {
+            long n = Volatile.Read(ref _sharpJobs);
+            if (n == 0) return "sharp: none made yet";
+            double f = 1000.0 / Stopwatch.Frequency / n;
+            return $"sharp ({n:N0} made): read+decode {Volatile.Read(ref _sharpDecodeTicks) * f:F0} ms, fit {Volatile.Read(ref _sharpPresentTicks) * f:F0} ms, save {Volatile.Read(ref _sharpSaveTicks) * f:F0} ms";
+        }
+    }
+
     private long _reads, _readTicks, _decodes, _decodeTicks, _blockThumbs;
     public long LargeMade;
     /// <summary>Crossfade when a sharper version replaces the one shown. (Tiles appearing for the first time never fade.)</summary>
@@ -99,6 +112,23 @@ public sealed class ThumbLoader : IDisposable
     }
 
     public void SetWanted(int lo, int hi) { _lo = lo; _hi = hi; }
+
+    /// <summary>Removes requests for tiles that have scrolled away, so they neither count as waiting nor sit in the way.</summary>
+    public void PurgeStale()
+    {
+        int lo = _lo, hi = _hi;
+        foreach (var stack in new[] { _urgent, _urgentLarge })
+        {
+            var items = new List<Req>();
+            while (stack.TryPop(out var r)) items.Add(r);          // newest first
+            for (int k = items.Count - 1; k >= 0; k--)             // push oldest first so the newest ends up on top again
+            {
+                var r = items[k];
+                if (r.Index < lo || r.Index > hi) _inflight.TryRemove((long)r.Index * 4 + r.Tier, out _);
+                else stack.Push(r);
+            }
+        }
+    }
 
     /// <summary>Replaces the list of things to warm up. Anything not yet started from the previous list is dropped.</summary>
     public void SetPlan(PlanItem[] items) => Volatile.Write(ref _plan, new Plan { Items = items });
@@ -182,7 +212,7 @@ public sealed class ThumbLoader : IDisposable
     /// </summary>
     private bool SharpMayStart()
     {
-        if (Volatile.Read(ref _largeActive) >= 2 || Volatile.Read(ref _quickActive) > 0 || !_urgent.IsEmpty) return false;
+        if (Volatile.Read(ref _largeActive) >= 3 || Volatile.Read(ref _quickActive) > 0 || !_urgent.IsEmpty) return false;
         return (Stopwatch.GetTimestamp() - Volatile.Read(ref _lastQuick)) * 1000 / Stopwatch.Frequency > 100;
     }
 
@@ -285,8 +315,12 @@ public sealed class ThumbLoader : IDisposable
     {
         try
         {
+            long t0 = Stopwatch.GetTimestamp();
             using var full = ThumbMaker.DecodeLarge(_paths[req.Index]);
+            long t1 = Stopwatch.GetTimestamp();
             var result = Present(full, req.WidthPx, req.HeightPx);
+            long t2 = Stopwatch.GetTimestamp();
+            Interlocked.Add(ref _sharpDecodeTicks, t1 - t0); Interlocked.Add(ref _sharpPresentTicks, t2 - t1); Interlocked.Increment(ref _sharpJobs);
             if (_large.Size > _largeCap) { _largeFailed.TryAdd(req.Index, 0); return result; }  // size limit reached: not saved
             // hand the picture to the screen first; saving comes after
             var enc = ThumbMaker.EncodeLarge(full);
@@ -295,6 +329,7 @@ public sealed class ThumbLoader : IDisposable
             t.Pack[req.Index] = loc.pack; t.Off[req.Index] = loc.offset;
             Volatile.Write(ref t.Len[req.Index], loc.length);   // last: readers only look once the length is set
             Interlocked.Increment(ref LargeMade);
+            Interlocked.Add(ref _sharpSaveTicks, Stopwatch.GetTimestamp() - t2);
             _onLargeMade(req.Index, new Loc(loc.pack, loc.offset, loc.length));
             return result;
         }
