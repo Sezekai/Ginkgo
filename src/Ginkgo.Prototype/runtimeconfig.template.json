@@ -1,6 +1,5 @@
 {
   "configProperties": {
-    "System.GC.Concurrent": false,
-    "System.GC.ConserveMemory": 5
+    "System.GC.Concurrent": true
   }
 }

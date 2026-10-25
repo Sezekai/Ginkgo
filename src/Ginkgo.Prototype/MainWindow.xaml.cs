@@ -37,6 +37,8 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        // avoid long pauses from memory clean-up while scrolling
+        System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.SustainedLowLatency;
         View.ScrollChanged += SyncBar;
         View.ScrollChanged += () => Interlocked.Exchange(ref _pipe.LastUiActivity, Stopwatch.GetTimestamp());
         View.HoverChanged += i => Hover.Text = i >= 0 && i < _paths.Length ? _paths[i] : " ";
@@ -76,6 +78,7 @@ public partial class MainWindow : Window
     }
 
     private void OnSynth200k(object s, RoutedEventArgs e) => LoadSynthetic(200_000);
+    private void OnFadeChanged(object s, RoutedEventArgs e) { if (_loader is not null) _loader.FadeEnabled = FadeBox.IsChecked == true; }
     private void OnShow(object s, RoutedEventArgs e) => LoadLibrary();
 
     private void LoadSynthetic(int n)
@@ -139,6 +142,7 @@ public partial class MainWindow : Window
         _ids = ids.ToArray();
         _loader = new ThumbLoader(tiers, _paths, origW.ToArray(), _store.Large, 6L * 1024 * 1024 * 1024,
             (i, loc) => _largeQueue.Enqueue((_ids[i], loc.Pack, loc.Off, loc.Len)), Dispatcher, () => View.Refresh(), 160L * 1024 * 1024, 96L * 1024 * 1024);
+        _loader.FadeEnabled = FadeBox.IsChecked == true;
         View.Thumbs = _loader;
         View.SetItems(specs.ToArray(), null);
         _mode = $"library: {specs.Count:N0} ready";

@@ -23,7 +23,7 @@ public sealed class ThumbLoader : IDisposable
 
     public sealed class Entry
     {
-        public int Index, Tier;
+        public int Index, Tier, PixelWidth;
         public BitmapSource Bitmap = null!;
         public BitmapSource? Prev;      // what was shown before, while fading to this one
         public long Bytes, FadeStart;
@@ -55,7 +55,7 @@ public sealed class ThumbLoader : IDisposable
 
     // shared with workers
     private readonly ConcurrentDictionary<long, byte> _inflight = new();   // key = index*4+tier: queued or being worked on
-    private readonly ConcurrentStack<Req> _urgent = new();
+    private readonly ConcurrentQueue<Req> _urgent = new();   // first asked, first served: tiles load top to bottom
     private readonly ConcurrentQueue<Done> _done = new();
     private Plan _plan = new();
     private readonly SemaphoreSlim _signal = new(0);
@@ -70,6 +70,8 @@ public sealed class ThumbLoader : IDisposable
 
     private long _reads, _readTicks, _decodes, _decodeTicks, _blockThumbs;
     public long LargeMade;
+    /// <summary>Crossfade when a sharper version replaces the one shown. (Tiles appearing for the first time never fade.)</summary>
+    public volatile bool FadeEnabled = true;
 
     public long CachedBytes => _bytes;
     public int CachedCount => _cache.Count;
@@ -86,7 +88,7 @@ public sealed class ThumbLoader : IDisposable
         _tiers = tiers; _paths = paths; _origW = originalWidths; _large = largeStore; _largeCap = largeCapBytes; _onLargeMade = onLargeMade;
         _ui = ui; _onReady = onReady;
         _budget = decodedBudgetBytes; _encBudget = encodedBudgetBytes;
-        for (int i = 0; i < threads; i++) new Thread(Work) { IsBackground = true, Name = "thumb-decode" }.Start();
+        for (int i = 0; i < threads; i++) new Thread(Work) { IsBackground = true, Name = "thumb-decode", Priority = ThreadPriority.BelowNormal }.Start();
     }
 
     public void SetWanted(int lo, int hi) { _lo = lo; _hi = hi; }
@@ -125,7 +127,7 @@ public sealed class ThumbLoader : IDisposable
     {
         if (e.Tier < show) return true;
         int need = Math.Min(Math.Min(widthPx, Nominal[e.Tier]), Math.Max(1, _origW[e.Index]));
-        int w = e.Bitmap.PixelWidth;
+        int w = e.PixelWidth;
         return w > need * 1.15 || w < need * 0.9;
     }
 
@@ -133,7 +135,7 @@ public sealed class ThumbLoader : IDisposable
     {
         long key = (long)index * 4 + tier;
         if (!_inflight.TryAdd(key, 0)) return false;
-        _urgent.Push(new Req(index, w, h, tier, true, false));
+        _urgent.Enqueue(new Req(index, w, h, tier, true, false));
         _signal.Release();
         return true;
     }
@@ -170,7 +172,7 @@ public sealed class ThumbLoader : IDisposable
         while (!_cts.IsCancellationRequested)
         {
             Req req = default; bool have = false;
-            if (_urgent.TryPop(out req)) have = true;
+            if (_urgent.TryDequeue(out req)) have = true;
             else
             {
                 var plan = Volatile.Read(ref _plan);
@@ -303,18 +305,16 @@ public sealed class ThumbLoader : IDisposable
         {
             _inflight.TryRemove((long)d.Index * 4 + d.Tier, out _);
             if (d.Bitmap is null) continue;
-            var ne = new Entry { Index = d.Index, Tier = d.Tier, Bitmap = d.Bitmap, Bytes = d.Bytes, FadeStart = now };
+            var ne = new Entry { Index = d.Index, Tier = d.Tier, Bitmap = d.Bitmap, PixelWidth = d.Bitmap.PixelWidth, Bytes = d.Bytes, FadeStart = now };
             if (_cache.TryGetValue(d.Index, out var old))
             {
                 var o = old.Value;
-                bool sameLook = d.Tier <= o.Tier && Math.Abs(d.Bitmap.PixelWidth - o.Bitmap.PixelWidth) <= o.Bitmap.PixelWidth * 0.08;
+                bool sameLook = d.Tier <= o.Tier && Math.Abs(ne.PixelWidth - o.PixelWidth) <= o.PixelWidth * 0.08;
                 if (sameLook) continue;                                   // nothing gained
-                if (d.Tier > o.Tier && o.Drawn) { ne.Prev = o.Bitmap; ne.FadeSecs = 0.18; }  // sharper version: fade over the old one
-                else if (o.Drawn) { ne.Prev = o.Bitmap; ne.FadeSecs = 0; }
+                if (d.Tier > o.Tier && o.Drawn && FadeEnabled) { ne.Prev = o.Bitmap; ne.FadeSecs = 0.15; }  // sharper version: fade over the old one
                 ne.Drawn = o.Drawn;
                 _lru.Remove(old); _cache.Remove(d.Index); _bytes -= o.Bytes;
             }
-            else if (d.Urgent) ne.FadeSecs = 0.10;                        // arrived while its tile was on screen
             _cache[d.Index] = _lru.AddFirst(ne);
             _bytes += d.Bytes; any = true;
         }

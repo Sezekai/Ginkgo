@@ -48,6 +48,9 @@ public sealed class MasonryView : FrameworkElement
         ClipToBounds = true;
         RenderOptions.SetBitmapScalingMode(this, BitmapScalingMode.Linear);
         Focusable = true;
+        // fades are redrawn once per screen refresh (never faster)
+        Loaded += (_, _) => CompositionTarget.Rendering += OnRefresh;
+        Unloaded += (_, _) => CompositionTarget.Rendering -= OnRefresh;
         _palette = new Brush[24];
         for (int i = 0; i < _palette.Length; i++)
         {
@@ -109,6 +112,8 @@ public sealed class MasonryView : FrameworkElement
         InvalidateVisual();
         ScrollChanged?.Invoke();
     }
+
+    private void OnRefresh(object? sender, EventArgs e) { if (_fadingNow) { _fadingNow = false; InvalidateVisual(); } }
 
     public double TotalHeight => _layout?.TotalHeight ?? 0;
     public int ItemCount => _items.Length;
@@ -207,6 +212,7 @@ public sealed class MasonryView : FrameworkElement
     private long _lastPlanTick;
     private double _planOff = double.NaN, _planTarget = double.NaN;
     private double _lastDir = 1;
+    private bool _fadingNow;
     private static readonly Brush FadeBase = Freeze(new SolidColorBrush(Color.FromRgb(40, 40, 46)));
 
     /// <summary>How many bytes of pictures the view may ask to have warmed up beyond the screen.</summary>
@@ -230,7 +236,7 @@ public sealed class MasonryView : FrameworkElement
             if (Math.Abs(dir) > 1) _lastDir = Math.Sign(dir);
             long now = Stopwatch.GetTimestamp();
             bool moved = double.IsNaN(_planOff) || Math.Abs(off - _planOff) > H * 0.08 || Math.Abs(_target - _planTarget) > H * 0.08;
-            if ((now - _lastPlanTick) * 1000 / Stopwatch.Frequency > (moved ? 60 : 500))
+            if ((now - _lastPlanTick) * 1000 / Stopwatch.Frequency > (moved ? 150 : 700))
             {
                 _lastPlanTick = now; _planOff = off; _planTarget = _target;
                 BuildPlan(off, H, dpi);
@@ -266,7 +272,7 @@ public sealed class MasonryView : FrameworkElement
             }
             else dc.DrawRectangle(_palette[(i * 7) % _palette.Length], i == _hoverIndex ? _hover : null, r); // plain placeholder: cheap
         }
-        if (fading) Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(InvalidateVisual));
+        _fadingNow = fading;
         LastRenderMs = sw.Elapsed.TotalMilliseconds;
     }
 
@@ -279,7 +285,7 @@ public sealed class MasonryView : FrameworkElement
     {
         var layout = _layout!;
         bool flick = Math.Abs(_target - off) > H * 0.5;
-        double lo = Math.Min(off, _target) - H * 3, hi = Math.Max(off, _target) + H * 5;
+        double lo = Math.Min(off, _target) - H * 2, hi = Math.Max(off, _target) + H * 3.5;
         layout.GetVisible((float)lo, (float)hi, _zone);
 
         double viewTop = off, viewBottom = off + H;
@@ -307,8 +313,8 @@ public sealed class MasonryView : FrameworkElement
         {
             int wPx = (int)Math.Round(layout.W[i] * dpi), hPx = (int)Math.Round(layout.H[i] * dpi);
             long bytes = (long)wPx * hPx * 4;
-            if (used + bytes <= budget && _planItems.Count < 700) { used += bytes; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, true); }
-            else if (encodedOnly < 2500) { int before = _planItems.Count; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, false); encodedOnly += _planItems.Count - before; }
+            if (used + bytes <= budget && _planItems.Count < 500) { used += bytes; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, true); }
+            else if (encodedOnly < 1200) { int before = _planItems.Count; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, false); encodedOnly += _planItems.Count - before; }
             else break;
         }
         _thumbs!.SetPlan(_planItems.ToArray());
