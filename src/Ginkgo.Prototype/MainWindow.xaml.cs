@@ -120,6 +120,13 @@ public partial class MainWindow : Window
     private void LoadLibrary()
     {
         if (_db is null || _store is null) return;
+        try   // sharp versions made a moment ago must be in the index before we read it
+        {
+            var pending = new List<(long id, int pack, long off, int len)>();
+            while (_largeQueue.TryDequeue(out var r0)) pending.Add(r0);
+            IndexUpdates.SaveLarge(_db, _store, pending);
+        }
+        catch { }
         var sw = Stopwatch.StartNew();
         var specs = new List<ItemSpec>(); var paths = new List<string>(); var ids = new List<long>(); var origW = new List<int>();
         var lpack = new List<int>(); var loff = new List<long>(); var llen = new List<int>();
@@ -154,9 +161,10 @@ public partial class MainWindow : Window
             new ThumbLoader.TierData(_store.Full, pack.ToArray(), off.ToArray(), len.ToArray()),
             new ThumbLoader.TierData(_store.Large, lpack.ToArray(), loff.ToArray(), llen.ToArray()),
         };
-        _ids = ids.ToArray();
+        var myIds = ids.ToArray();
+        _ids = myIds;
         _loader = new ThumbLoader(tiers, _paths, origW.ToArray(), _store.Large, 6L * 1024 * 1024 * 1024,
-            (i, loc) => _largeQueue.Enqueue((_ids[i], loc.Pack, loc.Off, loc.Len)), Dispatcher, () => View.Refresh(), CacheBudgets().decoded, CacheBudgets().encoded);
+            (i, loc) => _largeQueue.Enqueue((myIds[i], loc.Pack, loc.Off, loc.Len)), Dispatcher, () => View.Refresh(), CacheBudgets().decoded, CacheBudgets().encoded);
         _loader.FadeEnabled = FadeBox.IsChecked == true;
         View.PrefetchBudgetBytes = CacheBudgets().decoded * 36 / 100;
         View.Thumbs = _loader;
