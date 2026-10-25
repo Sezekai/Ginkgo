@@ -39,9 +39,14 @@ public static class ThumbMaker
     /// <summary>The sharper thumbnail (up to 1280 px wide) for big tiles. Reads the original once.</summary>
     public static byte[] MakeLarge(string path)
     {
-        using var bmp = DecodeCropped(path, LargeW, out _, out _);
-        return Encode(bmp, LargeW, LargeQuality);
+        using var bmp = DecodeLarge(path);
+        return EncodeLarge(bmp);
     }
+
+    /// <summary>Decodes the original at about 1280 px wide (cropped to the tile limits). The caller disposes the bitmap.</summary>
+    public static SKBitmap DecodeLarge(string path) => DecodeCropped(path, LargeW, out _, out _);
+
+    public static byte[] EncodeLarge(SKBitmap bmp) => Encode(bmp, LargeW, LargeQuality);
 
     /// <summary>Makes the small and micro sizes from an existing full-size thumbnail (no need to read the original picture).</summary>
     public static (byte[] small, byte[] micro) Derive(byte[] fullWebp)

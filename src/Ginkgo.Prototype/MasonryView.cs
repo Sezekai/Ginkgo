@@ -246,8 +246,9 @@ public sealed class MasonryView : FrameworkElement
 
         bool fading = false;
         long tick = Stopwatch.GetTimestamp();
-        foreach (int i in _visible)
+        for (int vi = _visible.Count - 1; vi >= 0; vi--)   // bottom to top, so the newest-first queue serves the top tiles first
         {
+            int i = _visible[vi];
             // snap every edge to a whole device pixel, so a tile is always drawn pixel-for-pixel
             double l = Math.Round(_layout.X[i] * dpi), t = Math.Round(_layout.Y[i] * dpi) - offPx;
             double rr = Math.Round((_layout.X[i] + _layout.W[i]) * dpi), bb = Math.Round((_layout.Y[i] + _layout.H[i]) * dpi) - offPx;
@@ -314,8 +315,8 @@ public sealed class MasonryView : FrameworkElement
         {
             int wPx = (int)Math.Round(layout.W[i] * dpi), hPx = (int)Math.Round(layout.H[i] * dpi);
             long bytes = (long)wPx * hPx * 4;
-            if (used + bytes <= budget && _planItems.Count < 500) { used += bytes; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, true, allowLarge && n++ < 24); }
-            else if (encodedOnly < 1200) { int before = _planItems.Count; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, false, false); encodedOnly += _planItems.Count - before; }
+            if (used + bytes <= budget && _planItems.Count < 4000) { used += bytes; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, true, allowLarge && n++ < 24); }
+            else if (encodedOnly < 6000) { int before = _planItems.Count; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, false, false); encodedOnly += _planItems.Count - before; }
             else break;
         }
         _thumbs!.SetPlan(_planItems.ToArray());
