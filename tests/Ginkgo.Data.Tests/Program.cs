@@ -129,6 +129,29 @@ Check(Math.Abs(ThumbMaker.ClampAspect(800, 4000) - 0.25f) < 1e-6 && Math.Abs(Thu
     Check(IndexDb.Scalar(c2, "SELECT l_len FROM files WHERE id=1") == loc.length, "large location saved in index");
 }
 
+// prepare sharp versions ahead of time: PNGs (and files over a size limit) only
+{
+    using (var c = db.Open()) IndexDb.Exec(c, "UPDATE files SET l_pack=0, l_off=0, l_len=0");
+    var (cnt, bytesTotal) = SharpPrebuild.Count(db, long.MaxValue);
+    Check(cnt >= 2 && bytesTotal > 0, $"count finds the PNGs (got {cnt})");
+    var (cntAll, _) = SharpPrebuild.Count(db, 1);
+    Check(cntAll > cnt, "a low size limit adds more files");
+    var sp = new PipelineStats();
+    await SharpPrebuild.RunAsync(db, stores, sp, long.MaxValue, 1L << 40, 2, CancellationToken.None);
+    Check(sp.SharpDone == cnt && sp.SharpFailed == 0, $"all PNGs prepared (done {sp.SharpDone} of {cnt}, failed {sp.SharpFailed})");
+    using var c3 = db.Open();
+    Check(IndexDb.Scalar(c3, "SELECT COUNT(*) FROM files WHERE path LIKE '%.png' AND w>340 AND state=1 AND l_len=0") == 0, "every wide-enough PNG has a sharp version");
+    Check(IndexDb.Scalar(c3, "SELECT l_len FROM files WHERE path LIKE '%three.jpg'") == 0, "small JPEG left alone");
+    var (cnt2, _) = SharpPrebuild.Count(db, long.MaxValue);
+    Check(cnt2 == 0, "nothing left to prepare");
+    using var cmd3 = c3.CreateCommand();
+    cmd3.CommandText = "SELECT l_pack, l_off, l_len FROM files WHERE path LIKE '%wide.png'";
+    using var rd3 = cmd3.ExecuteReader();
+    Check(rd3.Read(), "wide.png row");
+    using var wb = SKBitmap.Decode(stores.Large.Read(rd3.GetInt32(0), rd3.GetInt64(1), rd3.GetInt32(2))!);
+    Check(wb.Width == 1200 && wb.Height == 300, $"wide image cropped at 4:1 (got {wb.Width}x{wb.Height})");
+}
+
 // backfill: forget the small sizes, then rebuild them from the full thumbnails
 using (var c = db.Open()) IndexDb.Exec(c, "UPDATE files SET s_len=0, m_len=0");
 var bstats = new PipelineStats();

@@ -12,6 +12,10 @@ public sealed class PipelineStats
     public long Failed;
     public long BackfillTotal;  // existing thumbnails still needing their smaller sizes
     public long BackfillDone;
+    public long SharpTotal;     // originals to prepare sharp versions for in this run
+    public long SharpDone;
+    public long SharpFailed;
+    public volatile bool SharpRunning;
     public string LastError = "";
     public volatile bool Running;
     /// <summary>Stopwatch timestamp of the last time the user scrolled; background work pauses briefly after it.</summary>

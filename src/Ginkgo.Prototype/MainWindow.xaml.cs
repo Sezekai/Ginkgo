@@ -30,6 +30,9 @@ public partial class MainWindow : Window
     private readonly PipelineStats _pipe = new();
     private string _scanInfo = "";
     private Task? _buildTask;
+    private CancellationTokenSource? _sharpCts;
+    private Task? _sharpTask;
+    private const long LargeCapBytes = 12L * 1024 * 1024 * 1024;
     private long[] _ids = Array.Empty<long>();
     private readonly ConcurrentQueue<(long id, int pack, long off, int len)> _largeQueue = new();
     private int _savingLarge;
@@ -49,7 +52,7 @@ public partial class MainWindow : Window
         Loaded += (_, _) => Startup();
         Closing += (_, _) =>
         {
-            _buildCts?.Cancel(); _loader?.Dispose();
+            _buildCts?.Cancel(); _sharpCts?.Cancel(); _loader?.Dispose();
             try
             {
                 var rest = new List<(long id, int pack, long off, int len)>();
@@ -94,6 +97,31 @@ public partial class MainWindow : Window
     }
 
     private void OnFadeChanged(object s, RoutedEventArgs e) { if (_loader is not null) _loader.FadeEnabled = FadeBox.IsChecked == true; }
+    private async void OnSharp(object s, RoutedEventArgs e)
+    {
+        if (_sharpTask is { IsCompleted: false }) { _sharpCts?.Cancel(); SharpBtn.IsEnabled = false; return; }
+        if (_db is null || _store is null) return;
+        var db = _db; var store = _store;
+        _sharpCts = new CancellationTokenSource();
+        var ct = _sharpCts.Token;
+        SharpBtn.Content = "Stop preparing";
+        _sharpTask = Task.Run(async () =>
+        {
+            try
+            {
+                var (n, bytes) = SharpPrebuild.Count(db, SharpPrebuild.DefaultBigFileBytes);
+                _scanInfo = $"sharp prep: {n:N0} originals qualify ({bytes / 1e9:F1} GB to read)";
+                await SharpPrebuild.RunAsync(db, store, _pipe, SharpPrebuild.DefaultBigFileBytes, LargeCapBytes, 3, ct);
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { _scanInfo = "sharp prep problem: " + ex.Message; }
+        });
+        await _sharpTask;
+        SharpBtn.Content = "Prepare sharp versions (PNGs + files over 3 MB)";
+        SharpBtn.IsEnabled = true;
+        _scanInfo = ct.IsCancellationRequested ? "sharp prep stopped" : "sharp prep finished - press Show library (refresh) to use them";
+    }
+
     private void OnShow(object s, RoutedEventArgs e) => LoadLibrary();
 
     private void LoadSynthetic(int n)
@@ -163,7 +191,7 @@ public partial class MainWindow : Window
         };
         var myIds = ids.ToArray();
         _ids = myIds;
-        _loader = new ThumbLoader(tiers, _paths, origW.ToArray(), _store.Large, 6L * 1024 * 1024 * 1024,
+        _loader = new ThumbLoader(tiers, _paths, origW.ToArray(), _store.Large, LargeCapBytes,
             (i, loc) => _largeQueue.Enqueue((myIds[i], loc.Pack, loc.Off, loc.Len)), Dispatcher, () => View.Refresh(), CacheBudgets().decoded, CacheBudgets().encoded);
         _loader.FadeEnabled = FadeBox.IsChecked == true;
         View.PrefetchBudgetBytes = CacheBudgets().decoded * 36 / 100;
@@ -255,8 +283,8 @@ public partial class MainWindow : Window
             $" | pictures in RAM {_loader.CachedCount:N0} ({_loader.CachedBytes / 1048576.0:F0} MB) + compressed {_loader.EncodedBytes / 1048576.0:F0} MB" +
             $" | sharp versions made {_loader.LargeMade:N0} | waiting {_loader.PendingCount} | disk read {_loader.AvgReadMs:F1} ms ({_loader.ThumbsPerRead:F0} thumbs/read) | decode {_loader.AvgDecodeMs:F1} ms\n{_loader.SharpSummary}";
         Stats.Text = $"{_mode} | drawn {View.LastVisibleCount} | {_fps:F0} fps | RAM {mb:F0} MB{cache}";
-        string pipe = _pipe.Running || _pipe.Done + _pipe.Failed + _pipe.BackfillTotal > 0
-            ? $" | thumbnails {_pipe.Done:N0}/{_pipe.Total:N0} done, {_pipe.Failed:N0} failed{(_pipe.Failed > 0 ? " (last: " + _pipe.LastError + ")" : "")}{(_pipe.BackfillTotal > 0 ? $" | small sizes {_pipe.BackfillDone:N0}/{_pipe.BackfillTotal:N0}" : "")}"
+        string pipe = _pipe.Running || _pipe.Done + _pipe.Failed + _pipe.BackfillTotal + _pipe.SharpTotal > 0
+            ? $" | thumbnails {_pipe.Done:N0}/{_pipe.Total:N0} done, {_pipe.Failed:N0} failed{(_pipe.Failed > 0 ? " (last: " + _pipe.LastError + ")" : "")}{(_pipe.BackfillTotal > 0 ? $" | small sizes {_pipe.BackfillDone:N0}/{_pipe.BackfillTotal:N0}" : "")}{(_pipe.SharpTotal > 0 ? $" | sharp prep {_pipe.SharpDone:N0}/{_pipe.SharpTotal:N0}{(_pipe.SharpFailed > 0 ? $" ({_pipe.SharpFailed:N0} failed)" : "")}" : "")}"
             : "";
         Status.Text = _scanInfo + pipe;
     }
