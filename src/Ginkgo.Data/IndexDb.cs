@@ -6,6 +6,10 @@ namespace Ginkgo.Data;
 public sealed class IndexDb
 {
     public string Path { get; }
+    /// <summary>True when this start-up reset the on-demand sharp thumbnails (the old files can be deleted).</summary>
+    public bool LargeInvalidated { get; private set; }
+    /// <summary>How many existing thumbnails were marked for rebuilding by this start-up.</summary>
+    public long MarkedForRebuild { get; private set; }
 
     public IndexDb(string path)
     {
@@ -45,6 +49,24 @@ public sealed class IndexDb
         }
         foreach (var col in new[] { "s_pack", "s_off", "s_len", "m_pack", "m_off", "m_len", "l_pack", "l_off", "l_len" })
             if (!have.Contains(col)) Exec(c, $"ALTER TABLE files ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0");
+
+        // thumbnail rules v2: sizes follow width (long images used to get thin thumbnails) and the sharp size is 1280 px.
+        Exec(c, "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
+        string version;
+        using (var cmd = c.CreateCommand())
+        {
+            cmd.CommandText = "SELECT value FROM meta WHERE key='thumb_rules'";
+            version = cmd.ExecuteScalar() as string ?? "1";
+        }
+        if (version != "2")
+        {
+            // state 3 = "has thumbnails, but made with the old rules": still shown, rebuilt in the background
+            MarkedForRebuild = Scalar(c, "SELECT COUNT(*) FROM files WHERE state=1 AND (w*2 < h OR w > h*4)");
+            Exec(c, "UPDATE files SET state=3 WHERE state=1 AND (w*2 < h OR w > h*4)");
+            LargeInvalidated = Scalar(c, "SELECT COUNT(*) FROM files WHERE l_len>0") > 0;
+            Exec(c, "UPDATE files SET l_pack=0, l_off=0, l_len=0");
+            Exec(c, "INSERT OR REPLACE INTO meta(key,value) VALUES('thumb_rules','2')");
+        }
     }
 
     public SqliteConnection Open()

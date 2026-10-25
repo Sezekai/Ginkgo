@@ -39,7 +39,7 @@ public static class ThumbnailPipeline
         using (var cmd = c.CreateCommand())
         {
             // Videos and GIF animation come later; GIFs get a first-frame thumbnail now.
-            cmd.CommandText = "SELECT id, path FROM files WHERE state=0 AND kind<2 ORDER BY first_seen DESC, mtime DESC";
+            cmd.CommandText = "SELECT id, path FROM files WHERE state IN (0,3) AND kind<2 ORDER BY first_seen DESC, mtime DESC";
             using var r = cmd.ExecuteReader();
             while (r.Read()) todo.Add((r.GetInt64(0), r.GetString(1)));
         }

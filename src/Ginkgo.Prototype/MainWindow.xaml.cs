@@ -63,9 +63,13 @@ public partial class MainWindow : Window
         try
         {
             _db = new IndexDb(DbPath);
+            if (_db.LargeInvalidated && Directory.Exists(CacheDir))   // the sharp size changed to 1280 px: the old sharp files are no longer used
+                foreach (var f in Directory.EnumerateFiles(CacheDir, "large-*.bin")) { try { File.Delete(f); } catch { } }
             _store = new ThumbStores(CacheDir);
             using var c = _db.Open();
-            long done = IndexDb.Scalar(c, "SELECT COUNT(*) FROM files WHERE state=1");
+            long done = IndexDb.Scalar(c, "SELECT COUNT(*) FROM files WHERE state IN (1,3)");
+            long redo = IndexDb.Scalar(c, "SELECT COUNT(*) FROM files WHERE state=3");
+            if (redo > 0) _scanInfo = $"{redo:N0} long/wide images need new thumbnails - press Scan to rebuild them";
             if (done > 0) LoadLibrary(); else LoadSynthetic(200_000);
         }
         catch (Exception ex) { _scanInfo = "startup problem: " + ex.Message; LoadSynthetic(200_000); }
@@ -108,12 +112,12 @@ public partial class MainWindow : Window
         using (var cmd = c.CreateCommand())
         {
             // Home order: newest first seen, then newest file date.
-            cmd.CommandText = "SELECT path, w, h, thumb_pack, thumb_off, thumb_len, s_pack, s_off, s_len, m_pack, m_off, m_len, id, l_pack, l_off, l_len FROM files WHERE state=1 ORDER BY first_seen DESC, mtime DESC, id";
+            cmd.CommandText = "SELECT path, w, h, thumb_pack, thumb_off, thumb_len, s_pack, s_off, s_len, m_pack, m_off, m_len, id, l_pack, l_off, l_len FROM files WHERE state IN (1,3) ORDER BY first_seen DESC, mtime DESC, id";
             using var r = cmd.ExecuteReader();
             while (r.Read())
             {
                 int w = r.GetInt32(1), h = r.GetInt32(2);
-                specs.Add(new ItemSpec(h > 0 ? w / (float)h : 1f));
+                specs.Add(new ItemSpec(ThumbMaker.ClampAspect(w, h)));
                 paths.Add(r.GetString(0));
                 pack.Add(r.GetInt32(3)); off.Add(r.GetInt64(4)); len.Add(r.GetInt32(5));
                 spack.Add(r.GetInt32(6)); soff.Add(r.GetInt64(7)); slen.Add(r.GetInt32(8));
@@ -134,7 +138,7 @@ public partial class MainWindow : Window
         };
         _ids = ids.ToArray();
         _loader = new ThumbLoader(tiers, _paths, origW.ToArray(), _store.Large, 6L * 1024 * 1024 * 1024,
-            (i, loc) => _largeQueue.Enqueue((_ids[i], loc.Pack, loc.Off, loc.Len)), Dispatcher, () => View.Refresh(), 200L * 1024 * 1024, 150L * 1024 * 1024);
+            (i, loc) => _largeQueue.Enqueue((_ids[i], loc.Pack, loc.Off, loc.Len)), Dispatcher, () => View.Refresh(), 160L * 1024 * 1024, 96L * 1024 * 1024);
         View.Thumbs = _loader;
         View.SetItems(specs.ToArray(), null);
         _mode = $"library: {specs.Count:N0} ready";

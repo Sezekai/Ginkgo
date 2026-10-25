@@ -10,27 +10,40 @@ using SkiaSharp;
 namespace Ginkgo.Prototype;
 
 /// <summary>
-/// Supplies thumbnails to the grid.
-///  - Decoded pictures (ready to draw) live in a byte-budgeted LRU owned by the UI thread.
-///  - Compressed thumbnails live in a second, larger LRU, so scrolling back over recent tiles needs no disk read.
-///  - One disk read fetches a whole stretch of neighbouring thumbnails (hard drives are slow at jumping around).
-///  - What's on screen is loaded first; tiles ahead in the scroll direction are loaded quietly in the background.
+/// Supplies pictures to the grid.
+///  - Each tile is decoded at exactly its on-screen pixel size (no resampling while scrolling = no shimmer).
+///  - What is on screen is loaded first. A "plan" of what to warm up next (ahead of the scroll direction first, then behind,
+///    nearest first) is replaced every few tenths of a second, so work that is no longer useful is simply dropped.
+///  - Compressed thumbnails sit in a second cache; one disk read fetches a whole stretch of neighbours.
+///  - A better version of a tile fades in over the old one.
 /// </summary>
 public sealed class ThumbLoader : IDisposable
 {
-    /// <summary>Where one size of thumbnail lives, per item. Index 0 = micro, 1 = small, 2 = full.</summary>
-    public sealed record TierData(ThumbStore Store, int[] Pack, long[] Off, int[] Len);
+    public sealed record TierData(ThumbStore Store, int[] Pack, long[] Off, int[] Len);   // 0 micro, 1 small, 2 full, 3 large
 
-    private readonly record struct Req(int Index, int WidthPx, int Tier);
-    private readonly record struct Done(int Index, int Tier, BitmapSource? Bitmap, long Bytes);
-    private sealed record Entry(int Index, int Tier, BitmapSource Bitmap, long Bytes);
+    public sealed class Entry
+    {
+        public int Index, Tier;
+        public BitmapSource Bitmap = null!;
+        public BitmapSource? Prev;      // what was shown before, while fading to this one
+        public long Bytes, FadeStart;
+        public double FadeSecs;         // 0 = no fade
+        public bool Drawn;
+    }
 
-    private readonly TierData[] _tiers;           // 0 micro, 1 small, 2 full, 3 large (filled in on demand)
+    public readonly record struct PlanItem(int Index, int WidthPx, int HeightPx, int Tier, bool EncodedOnly);
+
+    private sealed class Plan { public PlanItem[] Items = Array.Empty<PlanItem>(); public int Next; }
+    private readonly record struct Req(int Index, int WidthPx, int HeightPx, int Tier, bool Urgent, bool EncodedOnly);
+    private readonly record struct Done(int Index, int Tier, BitmapSource? Bitmap, long Bytes, bool Urgent);
+
+    private static readonly int[] Nominal = { ThumbMaker.MicroW, ThumbMaker.SmallW, ThumbMaker.MaxW, ThumbMaker.LargeW };
+
+    private readonly TierData[] _tiers;
     private readonly string[] _paths; private readonly int[] _origW;
     private readonly ThumbStore _large; private readonly long _largeCap;
     private readonly Action<int, Loc> _onLargeMade;
     private readonly ConcurrentDictionary<int, byte> _largeFailed = new();
-    public long LargeMade;
     private readonly Dispatcher _ui;
     private readonly Action _onReady;
     private readonly long _budget, _encBudget;
@@ -38,13 +51,13 @@ public sealed class ThumbLoader : IDisposable
     // UI-thread-owned
     private readonly Dictionary<int, LinkedListNode<Entry>> _cache = new();
     private readonly LinkedList<Entry> _lru = new();
-    private readonly Dictionary<long, bool> _pending = new(); // key = index*4+size; value: has been asked for as urgent
     private long _bytes;
 
     // shared with workers
+    private readonly ConcurrentDictionary<long, byte> _inflight = new();   // key = index*4+tier: queued or being worked on
     private readonly ConcurrentStack<Req> _urgent = new();
-    private readonly ConcurrentQueue<Req> _prefetch = new();
     private readonly ConcurrentQueue<Done> _done = new();
+    private Plan _plan = new();
     private readonly SemaphoreSlim _signal = new(0);
     private readonly CancellationTokenSource _cts = new();
     private int _lo, _hi = int.MaxValue;
@@ -56,10 +69,11 @@ public sealed class ThumbLoader : IDisposable
     private long _encBytes;
 
     private long _reads, _readTicks, _decodes, _decodeTicks, _blockThumbs;
+    public long LargeMade;
 
     public long CachedBytes => _bytes;
     public int CachedCount => _cache.Count;
-    public int PendingCount => _pending.Count;
+    public int PendingCount => _inflight.Count;
     public long EncodedBytes => Volatile.Read(ref _encBytes);
     public double AvgReadMs => Volatile.Read(ref _reads) == 0 ? 0 : Volatile.Read(ref _readTicks) * 1000.0 / Stopwatch.Frequency / _reads;
     public double AvgDecodeMs => Volatile.Read(ref _decodes) == 0 ? 0 : Volatile.Read(ref _decodeTicks) * 1000.0 / Stopwatch.Frequency / _decodes;
@@ -77,19 +91,19 @@ public sealed class ThumbLoader : IDisposable
 
     public void SetWanted(int lo, int hi) { _lo = lo; _hi = hi; }
 
-    /// <summary>Which size is wanted for a tile this many pixels wide: tiny ones need only the micro size, big ones the large size.</summary>
+    /// <summary>Replaces the list of things to warm up. Anything not yet started from the previous list is dropped.</summary>
+    public void SetPlan(PlanItem[] items) => Volatile.Write(ref _plan, new Plan { Items = items });
+
+    // ---- which size, what to show ---------------------------------------------------------------------------
+
     private static int WantedTier(int widthPx) => widthPx <= 120 ? 0 : widthPx <= 200 ? 1 : widthPx <= 330 ? 2 : 3;
 
-    /// <summary>The wanted size if the item has it, otherwise the next larger size that exists (-1 if none).</summary>
     private int Effective(int index, int wanted)
     {
         for (int k = wanted; k < _tiers.Length; k++) if (Volatile.Read(ref _tiers[k].Len[index]) > 0) return k;
         return -1;
     }
 
-    /// <summary>
-    /// Decides what to show now (<paramref name="show"/>) and whether a large version should be made/loaded (<paramref name="large"/>).
-    /// </summary>
     private bool Resolve(int index, int widthPx, out int show, out bool large)
     {
         int want = WantedTier(widthPx);
@@ -100,68 +114,99 @@ public sealed class ThumbLoader : IDisposable
             if (Volatile.Read(ref _tiers[3].Len[index]) > 0) { show = 3; return true; }
             large = true;                      // make it; show the 320 px one meanwhile
             show = Effective(index, 2);
-            return show >= 0 || _origW[index] > 0;
+            return true;
         }
         show = Effective(index, want);
         return show >= 0;
     }
 
-    private void Push(int index, int widthPx, int tier, bool urgent)
+    /// <summary>True if a picture already in the cache is the wrong size for this tile (or too low a tier).</summary>
+    private bool NeedsRefresh(Entry e, int show, int widthPx)
+    {
+        if (e.Tier < show) return true;
+        int need = Math.Min(Math.Min(widthPx, Nominal[e.Tier]), Math.Max(1, _origW[e.Index]));
+        int w = e.Bitmap.PixelWidth;
+        return w > need * 1.15 || w < need * 0.9;
+    }
+
+    private bool TryQueue(int index, int w, int h, int tier)
     {
         long key = (long)index * 4 + tier;
-        if (_pending.TryGetValue(key, out bool u)) { if (!urgent || u) return; }
-        _pending[key] = urgent;
-        var req = new Req(index, widthPx, tier);
-        if (urgent) _urgent.Push(req); else _prefetch.Enqueue(req);
+        if (!_inflight.TryAdd(key, 0)) return false;
+        _urgent.Push(new Req(index, w, h, tier, true, false));
         _signal.Release();
+        return true;
     }
 
-    /// <summary>UI thread only. Returns the picture if it's ready, otherwise asks for it right now and returns null.</summary>
-    public BitmapSource? Get(int index, int widthPx)
+    /// <summary>UI thread only. The picture for a tile if there is one (asks for it / a better one if needed).</summary>
+    public Entry? Get(int index, int widthPx, int heightPx)
     {
         if (!Resolve(index, widthPx, out int show, out bool large)) return null;
-        BitmapSource? have = null; int haveTier = -1;
-        if (_cache.TryGetValue(index, out var node))
-        {
-            _lru.Remove(node); _lru.AddFirst(node);
-            have = node.Value.Bitmap; haveTier = node.Value.Tier;
-        }
-        if (show >= 0 && haveTier < show) Push(index, widthPx, show, true);
-        if (large && haveTier < 3) Push(index, widthPx, 3, true);
-        return have;
+        Entry? e = null;
+        if (_cache.TryGetValue(index, out var node)) { _lru.Remove(node); _lru.AddFirst(node); e = node.Value; e.Drawn = true; }
+        if (show >= 0 && (e is null || NeedsRefresh(e, show, widthPx))) TryQueue(index, widthPx, heightPx, show);
+        if (large && (e is null || e.Tier < 3)) TryQueue(index, widthPx, heightPx, 3);
+        return e;
     }
 
-    /// <summary>UI thread only. Quietly gets a tile ready before it is needed.</summary>
-    public void Prefetch(int index, int widthPx)
+    /// <summary>UI thread only. Adds what this tile still needs to a warm-up list.</summary>
+    public void AppendPlan(int index, int widthPx, int heightPx, List<PlanItem> list, bool decodeToo)
     {
         if (!Resolve(index, widthPx, out int show, out bool large)) return;
-        int haveTier = _cache.TryGetValue(index, out var node) ? node.Value.Tier : -1;
-        if (show >= 0 && haveTier < show) Push(index, widthPx, show, false);
-        if (large && haveTier < 3) Push(index, widthPx, 3, false);
+        _cache.TryGetValue(index, out var node);
+        var e = node?.Value;
+        if (show >= 0 && (e is null || NeedsRefresh(e, show, widthPx)) && !_inflight.ContainsKey((long)index * 4 + show))
+        {
+            list.Add(new PlanItem(index, widthPx, heightPx, show, !decodeToo));
+        }
+        if (decodeToo && large && (e is null || e.Tier < 3) && !_inflight.ContainsKey((long)index * 4 + 3))
+            list.Add(new PlanItem(index, widthPx, heightPx, 3, false));
     }
+
+    // ---- workers --------------------------------------------------------------------------------------------
 
     private void Work()
     {
         while (!_cts.IsCancellationRequested)
         {
-            try { _signal.Wait(_cts.Token); } catch (OperationCanceledException) { return; }
-            if (!_urgent.TryPop(out var req) && !_prefetch.TryDequeue(out req)) continue;
+            Req req = default; bool have = false;
+            if (_urgent.TryPop(out req)) have = true;
+            else
+            {
+                var plan = Volatile.Read(ref _plan);
+                while (true)
+                {
+                    int k = Interlocked.Increment(ref plan.Next) - 1;
+                    if (k >= plan.Items.Length) break;
+                    var it = plan.Items[k];
+                    if (!_inflight.TryAdd((long)it.Index * 4 + it.Tier, 0)) continue;
+                    req = new Req(it.Index, it.WidthPx, it.HeightPx, it.Tier, false, it.EncodedOnly);
+                    have = true; break;
+                }
+            }
+            if (!have)
+            {
+                try { _signal.Wait(15, _cts.Token); } catch (OperationCanceledException) { return; }
+                continue;
+            }
+
             BitmapSource? bmp = null; long bytes = 0;
-            if (req.Index >= _lo && req.Index <= _hi)
+            bool stale = req.Urgent && (req.Index < _lo || req.Index > _hi);
+            if (!stale)
             {
                 try
                 {
                     var data = GetEncoded(req.Index, req.Tier);
-                    if (data is not null)
+                    if (data is not null && !req.EncodedOnly)
                     {
                         long t0 = Stopwatch.GetTimestamp();
-                        (bmp, bytes) = Decode(data, req.WidthPx);
+                        (bmp, bytes) = Decode(data, req.WidthPx, req.HeightPx);
                         Interlocked.Add(ref _decodeTicks, Stopwatch.GetTimestamp() - t0); Interlocked.Increment(ref _decodes);
                     }
                 }
                 catch { bmp = null; }
             }
-            _done.Enqueue(new Done(req.Index, req.Tier, bmp, bytes));
+            _done.Enqueue(new Done(req.Index, req.Tier, bmp, bytes, req.Urgent));
             if (Interlocked.Exchange(ref _drainQueued, 1) == 0)
                 _ui.BeginInvoke(DispatcherPriority.Render, Drain);
         }
@@ -176,7 +221,6 @@ public sealed class ThumbLoader : IDisposable
         }
         var t = _tiers[tier];
         if (tier == 3 && Volatile.Read(ref t.Len[index]) == 0) return MakeLarge(index);
-        // tiny thumbnails are cheap to carry, so grab many neighbours per read
         var plan = tier == 0 ? ReadPlanner.Make(t.Pack, t.Off, t.Len, index, 64, 256)
                  : tier == 1 ? ReadPlanner.Make(t.Pack, t.Off, t.Len, index, 16, 64)
                  : ReadPlanner.Make(t.Pack, t.Off, t.Len, index);
@@ -223,14 +267,15 @@ public sealed class ThumbLoader : IDisposable
         catch { _largeFailed.TryAdd(index, 0); return null; }
     }
 
-    private static (BitmapSource?, long) Decode(byte[] data, int widthPx)
+    /// <summary>Decodes a thumbnail at exactly the tile's pixel size (never bigger than the thumbnail itself).</summary>
+    private static (BitmapSource?, long) Decode(byte[] data, int widthPx, int heightPx)
     {
         using var src = SKBitmap.Decode(data);
         if (src is null) return (null, 0);
         SKBitmap use = src; SKBitmap? resized = null;
-        if (widthPx > 16 && src.Width > widthPx * 1.1)
+        if (widthPx > 16 && src.Width > widthPx * 1.05)
         {
-            int h = Math.Max(1, (int)Math.Round(src.Height * (widthPx / (double)src.Width)));
+            int h = heightPx > 0 ? heightPx : Math.Max(1, (int)Math.Round(src.Height * (widthPx / (double)src.Width)));
             resized = src.Resize(new SKImageInfo(widthPx, h, SKColorType.Bgra8888, SKAlphaType.Premul), SKFilterQuality.Medium);
             if (resized is not null) use = resized;
         }
@@ -247,21 +292,31 @@ public sealed class ThumbLoader : IDisposable
         return (bmp, bytes);
     }
 
+    // ---- UI thread ------------------------------------------------------------------------------------------
+
     private void Drain()
     {
         Volatile.Write(ref _drainQueued, 0);
         bool any = false;
+        long now = Stopwatch.GetTimestamp();
         while (_done.TryDequeue(out var d))
         {
-            _pending.Remove((long)d.Index * 4 + d.Tier);
+            _inflight.TryRemove((long)d.Index * 4 + d.Tier, out _);
             if (d.Bitmap is null) continue;
+            var ne = new Entry { Index = d.Index, Tier = d.Tier, Bitmap = d.Bitmap, Bytes = d.Bytes, FadeStart = now };
             if (_cache.TryGetValue(d.Index, out var old))
             {
-                if (old.Value.Tier >= d.Tier) continue;      // already have an equal or sharper one
-                _lru.Remove(old); _cache.Remove(d.Index); _bytes -= old.Value.Bytes;
+                var o = old.Value;
+                bool sameLook = d.Tier <= o.Tier && Math.Abs(d.Bitmap.PixelWidth - o.Bitmap.PixelWidth) <= o.Bitmap.PixelWidth * 0.08;
+                if (sameLook) continue;                                   // nothing gained
+                if (d.Tier > o.Tier && o.Drawn) { ne.Prev = o.Bitmap; ne.FadeSecs = 0.18; }  // sharper version: fade over the old one
+                else if (o.Drawn) { ne.Prev = o.Bitmap; ne.FadeSecs = 0; }
+                ne.Drawn = o.Drawn;
+                _lru.Remove(old); _cache.Remove(d.Index); _bytes -= o.Bytes;
             }
-            var node = _lru.AddFirst(new Entry(d.Index, d.Tier, d.Bitmap, d.Bytes));
-            _cache[d.Index] = node; _bytes += d.Bytes; any = true;
+            else if (d.Urgent) ne.FadeSecs = 0.10;                        // arrived while its tile was on screen
+            _cache[d.Index] = _lru.AddFirst(ne);
+            _bytes += d.Bytes; any = true;
         }
         while (_bytes > _budget && _lru.Last is { } last)
         {

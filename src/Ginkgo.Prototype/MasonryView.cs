@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Threading;
 using System.Windows.Media;
 using Ginkgo.Core.Layout;
 
@@ -117,7 +118,7 @@ public sealed class MasonryView : FrameworkElement
     public float TileTarget
     {
         get => _tileTarget;
-        set { _tileTarget = Math.Clamp(value, 60, 800); Relayout(); }
+        set { _tileTarget = Math.Clamp(value, 60, 1800); Relayout(); }
     }
 
     public void SetItems(ItemSpec[] items, string[]? labels)
@@ -201,65 +202,116 @@ public sealed class MasonryView : FrameworkElement
         if (found != _hoverIndex) { _hoverIndex = found; HoverChanged?.Invoke(found); InvalidateVisual(); }
     }
 
-    private readonly List<int> _ahead = new();
-    private long _lastPrefetch;
-    private int _pfLo = int.MaxValue, _pfHi = int.MinValue;
+    private readonly List<ThumbLoader.PlanItem> _planItems = new();
+    private readonly List<int> _zone = new();
+    private long _lastPlanTick;
+    private double _planOff = double.NaN, _planTarget = double.NaN;
     private double _lastDir = 1;
+    private static readonly Brush FadeBase = Freeze(new SolidColorBrush(Color.FromRgb(40, 40, 46)));
+
+    /// <summary>How many bytes of pictures the view may ask to have warmed up beyond the screen.</summary>
+    public long PrefetchBudgetBytes { get; set; } = 72L * 1024 * 1024;
 
     protected override void OnRender(DrawingContext dc)
     {
         var sw = Stopwatch.StartNew();
         dc.DrawRectangle(Background, null, new Rect(0, 0, ActualWidth, ActualHeight));
         if (_layout is null) return;
-        double off = Math.Round(_offset); // whole pixels: no shimmer
+        double dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        double offPx = Math.Round(_offset * dpi);       // scroll position in whole device pixels
+        double off = offPx / dpi;
         double H = ActualHeight;
         _layout.GetVisible((float)off - 200, (float)(off + H) + 200, _visible);
         LastVisibleCount = _visible.Count;
-        double dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
 
         if (_thumbs is not null && _visible.Count > 0)
         {
-            // Where are we heading? Warm up the tiles ahead (and where a flick will land) before they're needed.
             double dir = _target - _offset;
             if (Math.Abs(dir) > 1) _lastDir = Math.Sign(dir);
             long now = Stopwatch.GetTimestamp();
-            if ((now - _lastPrefetch) * 1000 / Stopwatch.Frequency > 70)
+            bool moved = double.IsNaN(_planOff) || Math.Abs(off - _planOff) > H * 0.08 || Math.Abs(_target - _planTarget) > H * 0.08;
+            if ((now - _lastPlanTick) * 1000 / Stopwatch.Frequency > (moved ? 60 : 500))
             {
-                _lastPrefetch = now;
-                _pfLo = int.MaxValue; _pfHi = int.MinValue;
-                int wpx = (int)Math.Round(_layout.ColumnWidth * dpi);
-                void Zone(double top, double bottom)
-                {
-                    _layout.GetVisible((float)top, (float)bottom, _ahead);
-                    // nearest to the screen first
-                    double mid = off + H / 2;
-                    _ahead.Sort((x, y) => Math.Abs(_layout.Y[x] - mid).CompareTo(Math.Abs(_layout.Y[y] - mid)));
-                    foreach (int i in _ahead)
-                    {
-                        if (i < _pfLo) _pfLo = i; if (i > _pfHi) _pfHi = i;
-                        _thumbs.Prefetch(i, wpx);
-                    }
-                }
-                if (Math.Abs(_target - _offset) > H * 0.25) Zone(_target - 100, _target + H + 100); // where a flick is landing
-                Zone(off - H * 0.5, off + H * 1.5);
-                if (_lastDir >= 0) Zone(off + H * 1.5, off + H * 3.5); else Zone(off - H * 2.5, off - H * 0.5);
+                _lastPlanTick = now; _planOff = off; _planTarget = _target;
+                BuildPlan(off, H, dpi);
             }
-            int lo = Math.Min(_visible[0], _pfLo), hi = Math.Max(_visible[^1], _pfHi);
-            _thumbs.SetWanted(lo - 100, hi + 100);
+            _thumbs.SetWanted(_visible[0] - 150, _visible[^1] + 150);
         }
 
+        bool fading = false;
+        long tick = Stopwatch.GetTimestamp();
         foreach (int i in _visible)
         {
-            var r = new Rect(Math.Round(_layout.X[i]), Math.Round(_layout.Y[i] - off), Math.Round(_layout.W[i]), Math.Round(_layout.H[i]));
-            var img = _thumbs?.Get(i, (int)Math.Round(r.Width * dpi));
-            if (img is not null)
+            // snap every edge to a whole device pixel, so a tile is always drawn pixel-for-pixel
+            double l = Math.Round(_layout.X[i] * dpi), t = Math.Round(_layout.Y[i] * dpi) - offPx;
+            double rr = Math.Round((_layout.X[i] + _layout.W[i]) * dpi), bb = Math.Round((_layout.Y[i] + _layout.H[i]) * dpi) - offPx;
+            int wPx = (int)(rr - l), hPx = (int)(bb - t);
+            var r = new Rect(l / dpi, t / dpi, wPx / dpi, hPx / dpi);
+            var e = _thumbs?.Get(i, wPx, hPx);
+            if (e is not null)
             {
-                dc.DrawImage(img, r);
+                double a = 1;
+                if (e.FadeSecs > 0)
+                {
+                    a = (tick - e.FadeStart) / (e.FadeSecs * Stopwatch.Frequency);
+                    if (a >= 1) { a = 1; e.FadeSecs = 0; e.Prev = null; } else fading = true;
+                }
+                if (a < 1)
+                {
+                    if (e.Prev is not null) dc.DrawImage(e.Prev, r); else dc.DrawRectangle(FadeBase, null, r);
+                    dc.PushOpacity(a); dc.DrawImage(e.Bitmap, r); dc.Pop();
+                }
+                else dc.DrawImage(e.Bitmap, r);
                 if (i == _hoverIndex) dc.DrawRectangle(null, _hover, r);
             }
             else dc.DrawRectangle(_palette[(i * 7) % _palette.Length], i == _hoverIndex ? _hover : null, r); // plain placeholder: cheap
         }
+        if (fading) Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(InvalidateVisual));
         LastRenderMs = sw.Elapsed.TotalMilliseconds;
+    }
+
+    /// <summary>
+    /// What to warm up next: tiles ahead in the scroll direction first, then those behind, nearest first. When a flick is
+    /// heading somewhere, the landing spot comes first. Pictures are limited by a memory budget; beyond that only the
+    /// compressed thumbnails are fetched (cheap), so scrolling back or on is quick.
+    /// </summary>
+    private void BuildPlan(double off, double H, double dpi)
+    {
+        var layout = _layout!;
+        bool flick = Math.Abs(_target - off) > H * 0.5;
+        double lo = Math.Min(off, _target) - H * 3, hi = Math.Max(off, _target) + H * 5;
+        layout.GetVisible((float)lo, (float)hi, _zone);
+
+        double viewTop = off, viewBottom = off + H;
+        var keyed = new List<(double p, int i)>(_zone.Count);
+        foreach (int i in _zone)
+        {
+            double top = layout.Y[i], bottom = top + layout.H[i];
+            if (bottom > viewTop && top < viewBottom) continue;           // on screen: handled directly
+            double below = top - viewBottom, above = viewTop - bottom;
+            double ahead = _lastDir >= 0 ? below : above, behind = _lastDir >= 0 ? above : below;
+            double p = ahead > 0 ? ahead : behind * 2.5;
+            if (flick)
+            {
+                double tg = bottom < _target ? _target - bottom : top > _target + H ? top - (_target + H) : 0;
+                p = Math.Min(p, tg);
+            }
+            keyed.Add((p, i));
+        }
+        keyed.Sort((x, y) => x.p.CompareTo(y.p));
+
+        _planItems.Clear();
+        long budget = PrefetchBudgetBytes, used = 0;
+        int encodedOnly = 0;
+        foreach (var (_, i) in keyed)
+        {
+            int wPx = (int)Math.Round(layout.W[i] * dpi), hPx = (int)Math.Round(layout.H[i] * dpi);
+            long bytes = (long)wPx * hPx * 4;
+            if (used + bytes <= budget && _planItems.Count < 700) { used += bytes; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, true); }
+            else if (encodedOnly < 2500) { int before = _planItems.Count; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, false); encodedOnly += _planItems.Count - before; }
+            else break;
+        }
+        _thumbs!.SetPlan(_planItems.ToArray());
     }
 
     private static Color HsvToColor(double h, double s, double v)
