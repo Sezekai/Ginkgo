@@ -1,0 +1,56 @@
+<Window x:Class="Ginkgo.App.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Settings" Width="620" Height="720" Background="#1C1C20" WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="18" TextBlock.Foreground="#E4E4E8">
+            <TextBlock Text="Library" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,6"/>
+            <DockPanel Margin="0,0,0,4">
+                <Button DockPanel.Dock="Right" Content="Choose..." Margin="8,0,0,0" Click="OnChooseLibrary"/>
+                <TextBox x:Name="LibraryBox" IsReadOnly="True" VerticalContentAlignment="Center"/>
+            </DockPanel>
+            <TextBlock x:Name="CacheLine" Foreground="#9AA0A6" Margin="0,0,0,8" TextWrapping="Wrap"/>
+            <StackPanel Orientation="Horizontal">
+                <Button Content="Look for changes now" Click="OnRescan"/>
+            </StackPanel>
+
+            <TextBlock Text="Speed and memory" FontSize="16" FontWeight="SemiBold" Margin="0,22,0,6"/>
+            <DockPanel Margin="0,0,0,6">
+                <TextBlock Text="Memory for pictures (picture cache / compressed cache)" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <ComboBox x:Name="CacheBox" SelectionChanged="OnCacheChanged" HorizontalAlignment="Right" MinWidth="200"/>
+            </DockPanel>
+            <DockPanel Margin="0,0,0,6">
+                <TextBlock Text="Look-ahead (sharp pictures prepared while you pause)" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <ComboBox x:Name="LookBox" SelectionChanged="OnLookChanged" HorizontalAlignment="Right" MinWidth="120">
+                    <ComboBoxItem Content="Off" Tag="0"/>
+                    <ComboBoxItem Content="1 window" Tag="1"/>
+                    <ComboBoxItem Content="2 windows" Tag="2"/>
+                    <ComboBoxItem Content="3 windows" Tag="3"/>
+                    <ComboBoxItem Content="5 windows" Tag="5"/>
+                    <ComboBoxItem Content="8 windows" Tag="8"/>
+                </ComboBox>
+            </DockPanel>
+            <CheckBox x:Name="FadeBox" Content="Fade when a sharper picture replaces a soft one" Foreground="#E4E4E8" Margin="0,0,0,6" Click="OnFadeChanged"/>
+
+            <TextBlock Text="Sharp pictures" FontSize="16" FontWeight="SemiBold" Margin="0,22,0,6"/>
+            <TextBlock TextWrapping="Wrap" Foreground="#9AA0A6" Margin="0,0,0,6"
+                       Text="Sharp versions are made the first time a large tile needs them and are kept for good. These buttons make them ahead of time. It reads a lot from your drive, so it pauses while you scroll."/>
+            <StackPanel Orientation="Horizontal">
+                <Button x:Name="SharpBigBtn" Content="PNGs and files over 3 MB" Click="OnSharpBig"/>
+                <Button x:Name="SharpAllBtn" Content="Every image that lacks one" Click="OnSharpAll"/>
+                <Button x:Name="SharpStopBtn" Content="Stop" IsEnabled="False" Click="OnSharpStop"/>
+            </StackPanel>
+
+            <TextBlock Text="Cache" FontSize="16" FontWeight="SemiBold" Margin="0,22,0,6"/>
+            <TextBlock x:Name="UsageText" FontFamily="Consolas" Margin="0,0,0,6"/>
+            <TextBlock TextWrapping="Wrap" Foreground="#9AA0A6" Margin="0,0,0,6"
+                       Text="Nothing here is ever capped. Thumbnails of files that were confirmed deleted leave unused space in the cache files; Clean up gives it back and leaves everything in use alone."/>
+            <StackPanel Orientation="Horizontal">
+                <Button x:Name="MeasureBtn" Content="Measure" Click="OnMeasure"/>
+                <Button x:Name="CleanBtn" Content="Clean up cache" Click="OnClean"/>
+            </StackPanel>
+            <TextBlock x:Name="Result" Foreground="#9AA0A6" Margin="0,18,0,0" TextWrapping="Wrap"/>
+            <Button Content="Close" Width="90" HorizontalAlignment="Right" Margin="0,18,0,0" Click="OnClose"/>
+        </StackPanel>
+    </ScrollViewer>
+</Window>
