@@ -72,8 +72,8 @@ public partial class MainWindow : Window
                 foreach (var f in Directory.EnumerateFiles(CacheDir, "large-*.bin")) { try { File.Delete(f); } catch { } }
             _store = new ThumbStores(CacheDir);
             using var c = _db.Open();
-            long done = IndexDb.Scalar(c, "SELECT COUNT(*) FROM files WHERE state IN (1,3)");
-            long redo = IndexDb.Scalar(c, "SELECT COUNT(*) FROM files WHERE state=3");
+            long done = IndexDb.Scalar(c, "SELECT COUNT(*) FROM files WHERE state IN (1,3) AND missing_since=0");
+            long redo = IndexDb.Scalar(c, "SELECT COUNT(*) FROM files WHERE state=3 AND missing_since=0");
             if (redo > 0) _scanInfo = $"{redo:N0} long/wide images need new thumbnails - press Scan to rebuild them";
             if (done > 0) LoadLibrary(); else LoadSynthetic(200_000);
         }
@@ -171,7 +171,7 @@ public partial class MainWindow : Window
         using (var cmd = c.CreateCommand())
         {
             // Home order: newest first seen, then newest file date.
-            cmd.CommandText = "SELECT path, w, h, thumb_pack, thumb_off, thumb_len, s_pack, s_off, s_len, m_pack, m_off, m_len, id, l_pack, l_off, l_len FROM files WHERE state IN (1,3) ORDER BY first_seen DESC, mtime DESC, id";
+            cmd.CommandText = "SELECT path, w, h, thumb_pack, thumb_off, thumb_len, s_pack, s_off, s_len, m_pack, m_off, m_len, id, l_pack, l_off, l_len FROM files WHERE state IN (1,3) AND missing_since=0 ORDER BY first_seen DESC, mtime DESC, id";
             using var r = cmd.ExecuteReader();
             while (r.Read())
             {

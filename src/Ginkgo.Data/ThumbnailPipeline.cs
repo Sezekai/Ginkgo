@@ -43,7 +43,7 @@ public static class ThumbnailPipeline
         using (var cmd = c.CreateCommand())
         {
             // Videos and GIF animation come later; GIFs get a first-frame thumbnail now.
-            cmd.CommandText = "SELECT id, path FROM files WHERE state IN (0,3) AND kind<2 ORDER BY first_seen DESC, mtime DESC";
+            cmd.CommandText = "SELECT id, path FROM files WHERE state IN (0,3) AND kind<2 AND missing_since=0 ORDER BY first_seen DESC, mtime DESC";
             using var r = cmd.ExecuteReader();
             while (r.Read()) todo.Add((r.GetInt64(0), r.GetString(1)));
         }
@@ -154,7 +154,7 @@ public static class TierBackfill
         using (var cmd = c.CreateCommand())
         {
             // in pack order, so the drive reads along the file instead of jumping around
-            cmd.CommandText = "SELECT id, thumb_pack, thumb_off, thumb_len FROM files WHERE state=1 AND m_len=0 AND thumb_len>0 ORDER BY thumb_pack, thumb_off";
+            cmd.CommandText = "SELECT id, thumb_pack, thumb_off, thumb_len FROM files WHERE state=1 AND missing_since=0 AND m_len=0 AND thumb_len>0 ORDER BY thumb_pack, thumb_off";
             using var r = cmd.ExecuteReader();
             while (r.Read()) todo.Add((r.GetInt64(0), r.GetInt32(1), r.GetInt64(2), r.GetInt32(3)));
         }

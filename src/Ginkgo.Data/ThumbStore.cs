@@ -24,7 +24,36 @@ public sealed class ThumbStore : IDisposable
     public ThumbStore(string directory, string prefix = "pack")
     {
         _dir = directory; _prefix = prefix;
-        Directory.CreateDirectory(_dir);
+        System.IO.Directory.CreateDirectory(_dir);
+    }
+
+    /// <summary>Starts writing into a fresh pack file; returns its number. Everything appended from now on lands in packs with this number or higher.</summary>
+    public int RollToNewPack()
+    {
+        lock (_lock)
+        {
+            int next = (_writer is null ? LatestPack() : _writerPack) + 1;
+            if (_writer is not null) { _writer.Flush(); _writer.Dispose(); _dirty = false; }
+            _writerPack = next;
+            _writer = new FileStream(PackPath(_writerPack), FileMode.Create, FileAccess.Write, FileShare.ReadWrite, 1 << 16);
+            Interlocked.Exchange(ref _size, -1);
+            return next;
+        }
+    }
+
+    /// <summary>Deletes pack files numbered below <paramref name="firstKept"/>. Only call once the index no longer points into them.</summary>
+    public void DeletePacksBefore(int firstKept)
+    {
+        lock (_lock)
+        {
+            foreach (var f in System.IO.Directory.EnumerateFiles(_dir, _prefix + "-*.bin"))
+            {
+                if (!int.TryParse(Path.GetFileNameWithoutExtension(f).AsSpan(_prefix.Length + 1), out int n) || n >= firstKept) continue;
+                if (_readers.TryRemove(n, out var h)) h.Dispose();
+                try { File.Delete(f); } catch { }
+            }
+            Interlocked.Exchange(ref _size, -1);
+        }
     }
 
     private string PackPath(int pack) => Path.Combine(_dir, $"{_prefix}-{pack:D5}.bin");
@@ -32,7 +61,7 @@ public sealed class ThumbStore : IDisposable
     private int LatestPack()
     {
         int best = 0;
-        foreach (var f in Directory.EnumerateFiles(_dir, _prefix + "-*.bin"))
+        foreach (var f in System.IO.Directory.EnumerateFiles(_dir, _prefix + "-*.bin"))
             if (int.TryParse(Path.GetFileNameWithoutExtension(f).AsSpan(_prefix.Length + 1), out int n) && n > best) best = n;
         return best;
     }
@@ -78,7 +107,7 @@ public sealed class ThumbStore : IDisposable
     public long TotalBytes()
     {
         long t = 0;
-        foreach (var f in Directory.EnumerateFiles(_dir, _prefix + "-*.bin")) t += new FileInfo(f).Length;
+        foreach (var f in System.IO.Directory.EnumerateFiles(_dir, _prefix + "-*.bin")) t += new FileInfo(f).Length;
         return t;
     }
 

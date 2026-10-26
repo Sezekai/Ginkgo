@@ -140,7 +140,7 @@ Check(Math.Abs(ThumbMaker.ClampAspect(800, 4000) - 0.25f) < 1e-6 && Math.Abs(Thu
     await SharpPrebuild.RunAsync(db, stores, sp, long.MaxValue, 1L << 40, 2, CancellationToken.None);
     Check(sp.SharpDone == cnt && sp.SharpFailed == 0, $"all PNGs prepared (done {sp.SharpDone} of {cnt}, failed {sp.SharpFailed})");
     using var c3 = db.Open();
-    Check(IndexDb.Scalar(c3, "SELECT COUNT(*) FROM files WHERE path LIKE '%.png' AND w>340 AND state=1 AND l_len=0") == 0, "every wide-enough PNG has a sharp version");
+    Check(IndexDb.Scalar(c3, "SELECT COUNT(*) FROM files WHERE path LIKE '%.png' AND w>340 AND state=1 AND missing_since=0 AND l_len=0") == 0, "every wide-enough PNG has a sharp version");
     Check(IndexDb.Scalar(c3, "SELECT l_len FROM files WHERE path LIKE '%three.jpg'") == 0, "small JPEG left alone");
     var (cnt2, _) = SharpPrebuild.Count(db, long.MaxValue);
     Check(cnt2 == 0, "nothing left to prepare");
@@ -158,8 +158,8 @@ var bstats = new PipelineStats();
 await TierBackfill.RunAsync(db, stores, bstats, 2, CancellationToken.None);
 using (var c = db.Open())
 {
-    long ready = IndexDb.Scalar(c, "SELECT COUNT(*) FROM files WHERE state=1");
-    Check(IndexDb.Scalar(c, "SELECT COUNT(*) FROM files WHERE state=1 AND m_len>0 AND s_len>0") == ready, $"backfill restored all {ready}");
+    long ready = IndexDb.Scalar(c, "SELECT COUNT(*) FROM files WHERE state=1 AND missing_since=0");
+    Check(IndexDb.Scalar(c, "SELECT COUNT(*) FROM files WHERE state=1 AND missing_since=0 AND m_len>0 AND s_len>0") == ready, $"backfill restored all {ready}");
     Check(bstats.BackfillDone == ready, $"backfill count (got {bstats.BackfillDone})");
 }
 var again = new PipelineStats();
@@ -183,6 +183,188 @@ Check(again.BackfillTotal == 0, "backfill has nothing left");
     Check(st3.Done == marked && IndexDb.Scalar(c2, "SELECT COUNT(*) FROM files WHERE state=3") == 0, "rebuild clears the marks");
 }
 
+
+// =====================================================================================================================
+// Foundations: file IDs, soft deletes, edits, safety check, grace period, watcher, clean-up
+// =====================================================================================================================
+{
+    string lib3 = Path.Combine(tmp, "Lib3"), hold = Path.Combine(tmp, "hold");
+    Directory.CreateDirectory(hold);
+    void ImgIn(string rel, int w, int h)
+    {
+        var full = Path.Combine(lib3, rel);
+        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+        using var bmp = new SKBitmap(w, h);
+        using (var canvas = new SKCanvas(bmp))
+        {
+            canvas.Clear(new SKColor((byte)(w % 251), (byte)(h % 241), 90));
+            using var paint = new SKPaint { Color = SKColors.White };
+            canvas.DrawCircle(w / 2f, h / 2f, Math.Min(w, h) / 4f, paint);
+        }
+        using var data = SKImage.FromBitmap(bmp).Encode(rel.EndsWith(".png") ? SKEncodedImageFormat.Png : SKEncodedImageFormat.Jpeg, 90);
+        File.WriteAllBytes(full, data.ToArray());
+        File.SetLastWriteTimeUtc(full, DateTime.UtcNow.AddMinutes(-10));     // "old": not still being copied
+    }
+    string P(string rel) => Path.Combine(lib3, rel);
+    var none = new string[0];
+    var fids = new ContentIds();
+    ScanOptions Opt(Action<ScanOptionsBuilder>? tweak = null)
+    {
+        var b = new ScanOptionsBuilder { FileIds = fids };
+        tweak?.Invoke(b);
+        return b.Build();
+    }
+    ImgIn("Art/A/a1.jpg", 600, 400); ImgIn("Art/A/a2.jpg", 601, 401); ImgIn("Art/B/b1.jpg", 602, 402);
+    ImgIn("Art/NSFW/n1.jpg", 603, 403); ImgIn("Top/c1.png", 604, 404);
+
+    var db3 = new IndexDb(Path.Combine(tmp, "data3", "index.db"));
+    var stores3 = new ThumbStores(Path.Combine(tmp, "cache3"));
+    var f1 = LibraryScanner.Scan(db3, lib3, none, null, CancellationToken.None, Opt());
+    Check(f1.Added == 5 && f1.Total == 5, $"foundations: first scan finds 5 (got {f1.Added}/{f1.Total})");
+    using (var c = db3.Open())
+    {
+        Check(IndexDb.Scalar(c, "SELECT COUNT(*) FROM files WHERE file_id IS NOT NULL") == 5, "every new file got an ID");
+        Check(IndexDb.Scalar(c, "SELECT COUNT(*) FROM folders") == 5, $"5 folder rows (got {IndexDb.Scalar(c, "SELECT COUNT(*) FROM folders")})");
+    }
+    var pst = new PipelineStats();
+    await ThumbnailPipeline.RunAsync(db3, stores3, pst, 2, CancellationToken.None);
+    Check(pst.Done == 5, $"foundations: 5 thumbnails (got {pst.Done})");
+    long Q(string sql) { using var c = db3.Open(); return IndexDb.Scalar(c, sql); }
+
+    // ---- hidden, not forgotten; comes back with its thumbnails
+    long thumbA1 = Q("SELECT thumb_len FROM files WHERE path LIKE '%a1.jpg'");
+    File.Move(P("Art/A/a1.jpg"), Path.Combine(hold, "a1.jpg"));
+    var d1 = LibraryScanner.Scan(db3, lib3, none, null, CancellationToken.None, Opt());
+    Check(d1.Removed == 1 && d1.Purged == 0, $"missing file is hidden, not purged (hid {d1.Removed}, purged {d1.Purged})");
+    Check(Q("SELECT COUNT(*) FROM files WHERE path LIKE '%a1.jpg' AND missing_since>0") == 1, "its entry is kept");
+    Check(Q("SELECT COUNT(*) FROM files WHERE " + Visible.Shown) == 4, "and it no longer shows");
+    File.Move(Path.Combine(hold, "a1.jpg"), P("Art/A/a1.jpg"));
+    var d2 = LibraryScanner.Scan(db3, lib3, none, null, CancellationToken.None, Opt());
+    Check(d2.Restored == 1 && Q("SELECT thumb_len FROM files WHERE path LIKE '%a1.jpg'") == thumbA1 && Q("SELECT missing_since FROM files WHERE path LIKE '%a1.jpg'") == 0, "it returns with its thumbnails");
+
+    // ---- a move keeps the row, thumbnails, first-seen date; content level follows the new place
+    long idA2 = Q("SELECT id FROM files WHERE path LIKE '%a2.jpg'"), seenA2 = Q("SELECT first_seen FROM files WHERE path LIKE '%a2.jpg'"), thumbA2 = Q("SELECT thumb_len FROM files WHERE path LIKE '%a2.jpg'");
+    File.Move(P("Art/A/a2.jpg"), P("Art/NSFW/a2.jpg"));
+    var m1 = LibraryScanner.Scan(db3, lib3, none, null, CancellationToken.None, Opt());
+    Check(m1.Moved == 1 && m1.Added == 0 && m1.Removed == 0, $"move recognised (moved {m1.Moved}, added {m1.Added}, hid {m1.Removed})");
+    Check(Q("SELECT COUNT(*) FROM files WHERE path LIKE '%a2.jpg'") == 1 && Q($"SELECT COUNT(*) FROM files WHERE id={idA2} AND path LIKE '%NSFW%a2.jpg'") == 1, "same row, new path");
+    Check(Q($"SELECT thumb_len FROM files WHERE id={idA2}") == thumbA2 && Q($"SELECT first_seen FROM files WHERE id={idA2}") == seenA2, "thumbnails and first-seen date kept");
+    Check(Q($"SELECT level FROM files WHERE id={idA2}") == (int)ContentLevel.Nsfw, "content level follows the move");
+
+    // ---- a renamed folder: same folder identity, files keep their rows
+    long folderB = Q("SELECT id FROM folders WHERE path LIKE '%B'");
+    long idB1 = Q("SELECT id FROM files WHERE path LIKE '%b1.jpg'");
+    Directory.Move(P("Art/B"), P("Art/B2"));
+    var m2 = LibraryScanner.Scan(db3, lib3, none, null, CancellationToken.None, Opt());
+    Check(m2.Moved == 1 && m2.Added == 0, $"folder rename: file followed (moved {m2.Moved}, added {m2.Added})");
+    Check(Q($"SELECT COUNT(*) FROM folders WHERE id={folderB} AND path LIKE '%B2'") == 1 && Q("SELECT COUNT(*) FROM folders WHERE path LIKE '%B'") == 0, "folder keeps its identity under the new name");
+    Check(Q($"SELECT COUNT(*) FROM files WHERE id={idB1} AND path LIKE '%B2%'") == 1, "file row kept");
+
+    // ---- an edited file: still shown, sharp version dropped, rebuilt
+    Q("UPDATE files SET l_len=5, l_off=1 WHERE path LIKE '%c1.png'");
+    ImgIn("Top/c1.png", 700, 500);
+    var e1 = LibraryScanner.Scan(db3, lib3, none, null, CancellationToken.None, Opt());
+    Check(e1.Changed == 1, $"edit seen (got {e1.Changed})");
+    Check(Q("SELECT state FROM files WHERE path LIKE '%c1.png'") == 3 && Q("SELECT l_len FROM files WHERE path LIKE '%c1.png'") == 0, "edited: marked for rebuild, stale sharp version dropped");
+    Check(Q("SELECT COUNT(*) FROM files WHERE path LIKE '%c1.png' AND " + Visible.Shown) == 1, "edited file stays visible while it is rebuilt");
+    var pst2 = new PipelineStats();
+    await ThumbnailPipeline.RunAsync(db3, stores3, pst2, 2, CancellationToken.None);
+    Check(pst2.Done == 1 && Q("SELECT w FROM files WHERE path LIKE '%c1.png'") == 700 && Q("SELECT state FROM files WHERE path LIKE '%c1.png'") == 1, "edited file rebuilt with the new picture");
+
+    // ---- safety check: a big sudden disappearance is not acted on
+    string[] victims = { "Art/A/a1.jpg", "Art/NSFW/a2.jpg", "Art/NSFW/n1.jpg" };
+    foreach (var v in victims) File.Move(P(v), Path.Combine(hold, Path.GetFileName(v)));
+    var t1 = LibraryScanner.Scan(db3, lib3, none, null, CancellationToken.None, Opt(b => { b.SafetyMinCount = 2; b.SafetyFraction = 0.2; }));
+    Check(t1.SafetyTripped && t1.WouldHide == 3 && t1.Removed == 0, $"safety check trips (tripped {t1.SafetyTripped}, would hide {t1.WouldHide})");
+    Check(Q("SELECT COUNT(*) FROM files WHERE missing_since>0") == 0, "nothing hidden when it trips");
+    var t2 = LibraryScanner.Scan(db3, lib3, none, null, CancellationToken.None, Opt(b => { b.SafetyMinCount = 2; b.AcceptLargeRemoval = true; }));
+    Check(!t2.SafetyTripped && t2.Removed == 3, $"hidden once confirmed (hid {t2.Removed})");
+    foreach (var v in victims) File.Move(Path.Combine(hold, Path.GetFileName(v)), P(v));
+    var t3 = LibraryScanner.Scan(db3, lib3, none, null, CancellationToken.None, Opt());
+    Check(t3.Restored == 3, $"all three come back (got {t3.Restored})");
+
+    // ---- an unplugged library changes nothing
+    long visibleBefore = Q("SELECT COUNT(*) FROM files WHERE " + Visible.Shown);
+    var off = LibraryScanner.Scan(db3, Path.Combine(tmp, "NoSuchDrive"), none, null, CancellationToken.None, Opt());
+    Check(off.RootMissing && Q("SELECT COUNT(*) FROM files WHERE " + Visible.Shown) == visibleBefore && Q("SELECT COUNT(*) FROM files WHERE missing_since>0") == 0, "missing library folder: nothing changes");
+
+    // ---- partial scans and files still being copied
+    ImgIn("Art/A/new1.jpg", 610, 410);
+    long rowsBefore = Q("SELECT COUNT(*) FROM files");
+    var sub = LibraryScanner.Scan(db3, lib3, none, null, CancellationToken.None, Opt(b => { b.SubFolder = Path.Combine("Art", "A"); b.Recursive = false; }));
+    Check(sub.Added == 1 && sub.Removed == 0 && Q("SELECT COUNT(*) FROM files") == rowsBefore + 1, $"folder-only scan adds just the new file (added {sub.Added})");
+    ImgIn("Art/A/fresh.jpg", 611, 411);
+    File.SetLastWriteTimeUtc(P("Art/A/fresh.jpg"), DateTime.UtcNow);
+    var fr = LibraryScanner.Scan(db3, lib3, none, null, CancellationToken.None, Opt(b => b.SkipRecentSeconds = 3600));
+    Check(fr.Deferred == 1 && fr.Added == 0, $"a file still being copied is left for later (deferred {fr.Deferred}, added {fr.Added})");
+    var fr2 = LibraryScanner.Scan(db3, lib3, none, null, CancellationToken.None, Opt());
+    Check(fr2.Added == 1, "and picked up once it settles");
+
+    // ---- the live watcher
+    {
+        int rounds = 0;
+        using var watcher = new LibraryWatcher(db3, lib3, none, null, Opt(), 300);
+        watcher.Scanned += _ => Interlocked.Increment(ref rounds);
+        ImgIn("Art/A/watched.jpg", 612, 412);
+        bool Wait(Func<bool> cond) { for (int i = 0; i < 100; i++) { if (cond()) return true; Thread.Sleep(200); } return false; }
+        Check(Wait(() => Q("SELECT COUNT(*) FROM files WHERE path LIKE '%watched.jpg'") == 1), "watcher: a new file shows up by itself");
+        File.Delete(P("Art/A/watched.jpg"));
+        Check(Wait(() => Q("SELECT COUNT(*) FROM files WHERE path LIKE '%watched.jpg' AND missing_since>0") == 1), "watcher: a deleted file is hidden by itself");
+        Check(Interlocked.CompareExchange(ref rounds, 0, 0) >= 2, "watcher reported its scans");
+    }
+
+    // ---- confirmed deletion after the grace period, then the cache is compacted
+    File.Move(P("Art/A/a1.jpg"), Path.Combine(hold, "gone-for-good.jpg"));
+    LibraryScanner.Scan(db3, lib3, none, null, CancellationToken.None, Opt());
+    long rowsBeforePurge = Q("SELECT COUNT(*) FROM files");
+    var early = LibraryScanner.Scan(db3, lib3, none, null, CancellationToken.None, Opt(b => b.UtcNow = () => DateTime.UtcNow.AddDays(10)));
+    Check(early.Purged == 0 && Q("SELECT COUNT(*) FROM files") == rowsBeforePurge, "not purged before the grace period ends");
+    var late = LibraryScanner.Scan(db3, lib3, none, null, CancellationToken.None, Opt(b => b.UtcNow = () => DateTime.UtcNow.AddDays(31)));
+    Check(late.Purged >= 1 && Q("SELECT COUNT(*) FROM files WHERE path LIKE '%a1.jpg'") == 0, $"purged after the grace period (purged {late.Purged})");
+
+    var usage = CacheCleanup.Measure(db3, stores3);
+    var fullTier = usage.First(u => u.Name == "Full");
+    Check(fullTier.Wasted > 0, $"purged thumbnails leave dead space ({fullTier.Wasted} bytes)");
+    var cr = CacheCleanup.Compact(db3, stores3, 0.0, null, CancellationToken.None);
+    Check(cr.BytesAfter < cr.BytesBefore && cr.Entries > 0, $"clean-up gives space back ({cr.BytesBefore} -> {cr.BytesAfter})");
+    Check(CacheCleanup.Measure(db3, stores3).First(u => u.Name == "Full").Wasted == 0, "no dead space left");
+    using (var c = db3.Open())
+    {
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT thumb_pack, thumb_off, thumb_len, tw FROM files WHERE state=1 AND thumb_len>0";
+        using var rd = cmd.ExecuteReader();
+        int ok = 0, total = 0;
+        while (rd.Read())
+        {
+            total++;
+            var b = stores3.Full.Read(rd.GetInt32(0), rd.GetInt64(1), rd.GetInt32(2));
+            using var bm = b is null ? null : SKBitmap.Decode(b);
+            if (bm is not null && bm.Width == rd.GetInt32(3)) ok++;
+        }
+        Check(total > 0 && ok == total, $"every thumbnail still reads correctly after clean-up ({ok}/{total})");
+    }
+
+    // ---- real NTFS file IDs (only on Windows)
+    if (OperatingSystem.IsWindows())
+    {
+        var real = new WindowsFileIds();
+        var a = P("Top/c1.png");
+        string? id1 = real.GetFileId(a, false);
+        Check(id1 is not null, "windows: file ID readable");
+        var moved = P("Top/c1-moved.png"); File.Move(a, moved);
+        Check(real.GetFileId(moved, false) == id1, "windows: ID survives a rename");
+        var copy = P("Top/c1-copy.png"); File.Copy(moved, copy);
+        Check(real.GetFileId(copy, false) != id1, "windows: a copy has its own ID");
+        Check(real.GetFileId(P("Top"), true) is not null, "windows: folder ID readable");
+        Check(real.GetFileId(P("Top/nothing.png"), false) is null, "windows: missing file gives no ID");
+        // backfill on an index that predates IDs
+        Q("UPDATE files SET file_id=NULL");
+        int filled = FileIdBackfill.Run(db3, lib3, real, null, CancellationToken.None);
+        Check(filled > 0 && Q("SELECT COUNT(*) FROM files WHERE file_id IS NULL AND missing_since=0") == 0, $"windows: backfill fills IDs ({filled})");
+    }
+    stores3.Dispose();
+}
+
 stores.Dispose();
 try { Directory.Delete(tmp, true); } catch { }
 Console.WriteLine($"::notice::{pass} passed, {fail} failed");
@@ -192,4 +374,35 @@ catch (Exception ex)
 {
     Console.WriteLine("::error::EXCEPTION " + ex.GetType().Name + ": " + ex.Message.Replace("\n", " ") + " @ " + (ex.StackTrace ?? "").Replace("\r", "").Replace("\n", " | "));
     return 2;
+}
+
+
+/// <summary>Test stand-in for NTFS file IDs: a file is identified by its content, a folder by what is directly inside it.</summary>
+class ContentIds : IFileIdProvider
+{
+    public string? GetFileId(string path, bool isDirectory)
+    {
+        try
+        {
+            if (!isDirectory)
+                return File.Exists(path) ? "f:" + Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(File.ReadAllBytes(path))) : null;
+            if (!Directory.Exists(path)) return null;
+            var parts = Directory.GetFiles(path).Select(f => Path.GetFileName(f) + ":" + new FileInfo(f).Length).Order().ToList();
+            if (parts.Count == 0) parts = Directory.GetDirectories(path).Select(d => "d" + Path.GetFileName(d)).Order().ToList();
+            return "d:" + Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(string.Join("|", parts))));
+        }
+        catch { return null; }
+    }
+}
+
+/// <summary>ScanOptions is immutable (init-only); tests tweak it through this.</summary>
+class ScanOptionsBuilder
+{
+    public IFileIdProvider? FileIds; public double SafetyFraction = 0.2; public int SafetyMinCount = 200; public bool AcceptLargeRemoval;
+    public string? SubFolder; public bool Recursive = true; public int SkipRecentSeconds; public Func<DateTime> UtcNow = () => DateTime.UtcNow;
+    public ScanOptions Build() => new()
+    {
+        FileIds = FileIds, SafetyFraction = SafetyFraction, SafetyMinCount = SafetyMinCount, AcceptLargeRemoval = AcceptLargeRemoval,
+        SubFolder = SubFolder, Recursive = Recursive, SkipRecentSeconds = SkipRecentSeconds, UtcNow = UtcNow,
+    };
 }

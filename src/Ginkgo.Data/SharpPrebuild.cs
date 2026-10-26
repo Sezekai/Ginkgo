@@ -11,7 +11,7 @@ namespace Ginkgo.Data;
 public static class SharpPrebuild
 {
     public const long DefaultBigFileBytes = 3L * 1024 * 1024;
-    private const string Where = "state IN (1,3) AND kind=0 AND l_len=0 AND w>340 AND (lower(path) LIKE '%.png' OR size>=$big)";
+    private const string Where = "state IN (1,3) AND missing_since=0 AND kind=0 AND l_len=0 AND w>340 AND (lower(path) LIKE '%.png' OR size>=$big)";
 
     /// <summary>How many originals qualify, and their total size.</summary>
     public static (long count, long bytes) Count(IndexDb db, long bigBytes)

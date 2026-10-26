@@ -3,6 +3,13 @@ using Microsoft.Data.Sqlite;
 namespace Ginkgo.Data;
 
 /// <summary>The SQLite index of every media file. One connection per use; WAL mode so reading never blocks writing.</summary>
+/// <summary>SQL fragments every query of what the user can see must use, so hidden (missing) files never show.</summary>
+public static class Visible
+{
+    /// <summary>Files that are shown in the library: thumbnails ready (or being rebuilt) and not missing.</summary>
+    public const string Shown = "state IN (1,3) AND missing_since=0";
+}
+
 public sealed class IndexDb
 {
     public string Path { get; }
@@ -49,6 +56,21 @@ public sealed class IndexDb
         }
         foreach (var col in new[] { "s_pack", "s_off", "s_len", "m_pack", "m_off", "m_len", "l_pack", "l_off", "l_len" })
             if (!have.Contains(col)) Exec(c, $"ALTER TABLE files ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0");
+
+        // identity and soft deletes: file_id survives moves and renames; missing_since is when a file was first not found (0 = present)
+        if (!have.Contains("file_id")) Exec(c, "ALTER TABLE files ADD COLUMN file_id TEXT");
+        if (!have.Contains("missing_since")) Exec(c, "ALTER TABLE files ADD COLUMN missing_since INTEGER NOT NULL DEFAULT 0");
+        Exec(c, """
+            CREATE INDEX IF NOT EXISTS ix_files_fileid ON files(file_id);
+            CREATE INDEX IF NOT EXISTS ix_files_missing ON files(missing_since);
+            CREATE TABLE IF NOT EXISTS folders (
+              id INTEGER PRIMARY KEY,
+              path TEXT NOT NULL UNIQUE,          -- relative to the library folder
+              file_id TEXT,
+              missing_since INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS ix_folders_fileid ON folders(file_id);
+            """);
 
         // thumbnail rules v2: sizes follow width (long images used to get thin thumbnails) and the sharp size is 1280 px.
         Exec(c, "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)");
