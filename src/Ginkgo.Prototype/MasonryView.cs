@@ -218,7 +218,7 @@ public sealed class MasonryView : FrameworkElement
     /// <summary>How many bytes of pictures the view may ask to have warmed up beyond the screen.</summary>
     public long PrefetchBudgetBytes { get; set; } = 72L * 1024 * 1024;
 
-    /// <summary>Look-ahead: how many windows ahead (in the scroll direction) sharp pictures are prepared in idle moments. 0 = off. One window behind is always included when on.</summary>
+    /// <summary>Look-ahead: windows ahead (in the scroll direction) whose sharp pictures are prepared in idle moments; one behind too. 0 = off.</summary>
     public int LookAheadWindows { get; set; } = 3;
     private double _prevRenderOff = double.NaN;
 
@@ -246,6 +246,7 @@ public sealed class MasonryView : FrameworkElement
                 _lastPlanTick = now; _planOff = off; _planTarget = _target;
                 _thumbs.PurgeStale();
                 BuildPlan(off, H, dpi);
+                BuildLookAhead(off, H, dpi);
             }
             _thumbs.SetWanted(_visible[0] - 12, _visible[^1] + 12);   // requests for tiles that have scrolled away are dropped
         }
@@ -286,35 +287,30 @@ public sealed class MasonryView : FrameworkElement
     /// <summary>
     /// What to warm up next: tiles ahead in the scroll direction first, then those behind, nearest first. When a flick is
     /// heading somewhere, the landing spot comes first. Pictures are limited by a memory budget; beyond that only the
-    /// compressed thumbnails are fetched (cheap). Look-ahead adds one more thing: once the view has settled, the sharp
-    /// versions for the next few windows are made and saved on the drive (no memory needed, and never wasted).
+    /// compressed thumbnails are fetched (cheap), so scrolling back or on is quick.
     /// </summary>
     private void BuildPlan(double off, double H, double dpi)
     {
         var layout = _layout!;
         bool flick = Math.Abs(_target - off) > H * 0.5;
-        int la = LookAheadWindows;
-        double aheadSpan = Math.Max(3.5, 1 + la);
-        double lo = Math.Min(off, _target) - H * 2, hi = Math.Max(off, _target) + H * aheadSpan;
+        double lo = Math.Min(off, _target) - H * 2, hi = Math.Max(off, _target) + H * 3.5;
         layout.GetVisible((float)lo, (float)hi, _zone);
 
         double viewTop = off, viewBottom = off + H;
-        var keyed = new List<(double p, int i, bool isAhead, double dist)>(_zone.Count);
+        var keyed = new List<(double p, int i)>(_zone.Count);
         foreach (int i in _zone)
         {
             double top = layout.Y[i], bottom = top + layout.H[i];
             if (bottom > viewTop && top < viewBottom) continue;           // on screen: handled directly
             double below = top - viewBottom, above = viewTop - bottom;
             double ahead = _lastDir >= 0 ? below : above, behind = _lastDir >= 0 ? above : below;
-            bool isAhead = ahead > 0;
-            double dist = isAhead ? ahead : behind;
-            double p = isAhead ? ahead : behind * 2.5;
+            double p = ahead > 0 ? ahead : behind * 2.5;
             if (flick)
             {
                 double tg = bottom < _target ? _target - bottom : top > _target + H ? top - (_target + H) : 0;
                 p = Math.Min(p, tg);
             }
-            keyed.Add((p, i, isAhead, dist));
+            keyed.Add((p, i));
         }
         keyed.Sort((x, y) => x.p.CompareTo(y.p));
 
@@ -322,21 +318,39 @@ public sealed class MasonryView : FrameworkElement
         long budget = PrefetchBudgetBytes, used = 0;
         int encodedOnly = 0, n = 0;
         bool allowLarge = !flick && Math.Abs(_target - off) < H * 0.2;   // sharp versions only when the scroll has settled
-        foreach (var (_, i, isAhead, dist) in keyed)
+        foreach (var (_, i) in keyed)
         {
             int wPx = (int)Math.Round(layout.W[i] * dpi), hPx = (int)Math.Round(layout.H[i] * dpi);
             long bytes = (long)wPx * hPx * 4;
-            int before = _planItems.Count;
             if (used + bytes <= budget && _planItems.Count < 4000) { used += bytes; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, true, allowLarge && n++ < 24); }
-            else if (encodedOnly < 6000) { _thumbs!.AppendPlan(i, wPx, hPx, _planItems, false, false); encodedOnly += _planItems.Count - before; }
-            if (allowLarge && la > 0 && (isAhead ? dist <= la * H : dist <= H))
-            {
-                bool hasLarge = false;
-                for (int k = before; k < _planItems.Count; k++) if (_planItems[k].Tier == 3) { hasLarge = true; break; }
-                if (!hasLarge) _thumbs!.AppendMakeOnly(i, wPx, hPx, _planItems);
-            }
+            else if (encodedOnly < 6000) { int before = _planItems.Count; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, false, false); encodedOnly += _planItems.Count - before; }
+            else break;
         }
         _thumbs!.SetPlan(_planItems.ToArray());
+    }
+
+    private readonly List<int> _laZone = new();
+    private void BuildLookAhead(double off, double H, double dpi)
+    {
+        int la = LookAheadWindows;
+        var layout = _layout!;
+        if (la <= 0 || Math.Abs(_target - off) > H * 0.2) { _thumbs!.SetLookAhead(Array.Empty<int>()); if (la <= 0) _thumbs.LookAheadWhy = "off"; return; }
+        layout.GetVisible((float)(off - H), (float)(off + H * (1 + la)), _laZone);
+        var keyed = new List<(double p, int i)>(_laZone.Count);
+        foreach (int i in _laZone)
+        {
+            double top = layout.Y[i], bottom = top + layout.H[i];
+            double below = top - (off + H), above = off - bottom;
+            double ahead = _lastDir >= 0 ? below : above, behind = _lastDir >= 0 ? above : below;
+            double p = ahead > 0 ? ahead : behind > 0 ? behind * 2.5 : 0;     // on screen: first
+            int wPx = (int)Math.Round(layout.W[i] * dpi);
+            if (_thumbs!.NeedsSharp(i, wPx)) keyed.Add((p, i));
+        }
+        keyed.Sort((a, b) => a.p.CompareTo(b.p));
+        int n = Math.Min(keyed.Count, 1500);
+        var arr = new int[n];
+        for (int k = 0; k < n; k++) arr[k] = keyed[k].i;
+        _thumbs!.SetLookAhead(arr);
     }
 
     private static Color HsvToColor(double h, double s, double v)
