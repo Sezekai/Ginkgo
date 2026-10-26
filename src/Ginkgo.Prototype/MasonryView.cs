@@ -218,6 +218,10 @@ public sealed class MasonryView : FrameworkElement
     /// <summary>How many bytes of pictures the view may ask to have warmed up beyond the screen.</summary>
     public long PrefetchBudgetBytes { get; set; } = 72L * 1024 * 1024;
 
+    /// <summary>Look-ahead: how many windows ahead (in the scroll direction) sharp pictures are prepared in idle moments. 0 = off. One window behind is always included when on.</summary>
+    public int LookAheadWindows { get; set; } = 3;
+    private double _prevRenderOff = double.NaN;
+
     protected override void OnRender(DrawingContext dc)
     {
         var sw = Stopwatch.StartNew();
@@ -227,6 +231,7 @@ public sealed class MasonryView : FrameworkElement
         double offPx = Math.Round(_offset * dpi);       // scroll position in whole device pixels
         double off = offPx / dpi;
         double H = ActualHeight;
+        if (double.IsNaN(_prevRenderOff) || Math.Abs(off - _prevRenderOff) > 0.5) { _thumbs?.NoteScroll(); _prevRenderOff = off; }
         _layout.GetVisible((float)off - 200, (float)(off + H) + 200, _visible);
         LastVisibleCount = _visible.Count;
 
@@ -281,30 +286,35 @@ public sealed class MasonryView : FrameworkElement
     /// <summary>
     /// What to warm up next: tiles ahead in the scroll direction first, then those behind, nearest first. When a flick is
     /// heading somewhere, the landing spot comes first. Pictures are limited by a memory budget; beyond that only the
-    /// compressed thumbnails are fetched (cheap), so scrolling back or on is quick.
+    /// compressed thumbnails are fetched (cheap). Look-ahead adds one more thing: once the view has settled, the sharp
+    /// versions for the next few windows are made and saved on the drive (no memory needed, and never wasted).
     /// </summary>
     private void BuildPlan(double off, double H, double dpi)
     {
         var layout = _layout!;
         bool flick = Math.Abs(_target - off) > H * 0.5;
-        double lo = Math.Min(off, _target) - H * 2, hi = Math.Max(off, _target) + H * 3.5;
+        int la = LookAheadWindows;
+        double aheadSpan = Math.Max(3.5, 1 + la);
+        double lo = Math.Min(off, _target) - H * 2, hi = Math.Max(off, _target) + H * aheadSpan;
         layout.GetVisible((float)lo, (float)hi, _zone);
 
         double viewTop = off, viewBottom = off + H;
-        var keyed = new List<(double p, int i)>(_zone.Count);
+        var keyed = new List<(double p, int i, bool isAhead, double dist)>(_zone.Count);
         foreach (int i in _zone)
         {
             double top = layout.Y[i], bottom = top + layout.H[i];
             if (bottom > viewTop && top < viewBottom) continue;           // on screen: handled directly
             double below = top - viewBottom, above = viewTop - bottom;
             double ahead = _lastDir >= 0 ? below : above, behind = _lastDir >= 0 ? above : below;
-            double p = ahead > 0 ? ahead : behind * 2.5;
+            bool isAhead = ahead > 0;
+            double dist = isAhead ? ahead : behind;
+            double p = isAhead ? ahead : behind * 2.5;
             if (flick)
             {
                 double tg = bottom < _target ? _target - bottom : top > _target + H ? top - (_target + H) : 0;
                 p = Math.Min(p, tg);
             }
-            keyed.Add((p, i));
+            keyed.Add((p, i, isAhead, dist));
         }
         keyed.Sort((x, y) => x.p.CompareTo(y.p));
 
@@ -312,13 +322,19 @@ public sealed class MasonryView : FrameworkElement
         long budget = PrefetchBudgetBytes, used = 0;
         int encodedOnly = 0, n = 0;
         bool allowLarge = !flick && Math.Abs(_target - off) < H * 0.2;   // sharp versions only when the scroll has settled
-        foreach (var (_, i) in keyed)
+        foreach (var (_, i, isAhead, dist) in keyed)
         {
             int wPx = (int)Math.Round(layout.W[i] * dpi), hPx = (int)Math.Round(layout.H[i] * dpi);
             long bytes = (long)wPx * hPx * 4;
+            int before = _planItems.Count;
             if (used + bytes <= budget && _planItems.Count < 4000) { used += bytes; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, true, allowLarge && n++ < 24); }
-            else if (encodedOnly < 6000) { int before = _planItems.Count; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, false, false); encodedOnly += _planItems.Count - before; }
-            else break;
+            else if (encodedOnly < 6000) { _thumbs!.AppendPlan(i, wPx, hPx, _planItems, false, false); encodedOnly += _planItems.Count - before; }
+            if (allowLarge && la > 0 && (isAhead ? dist <= la * H : dist <= H))
+            {
+                bool hasLarge = false;
+                for (int k = before; k < _planItems.Count; k++) if (_planItems[k].Tier == 3) { hasLarge = true; break; }
+                if (!hasLarge) _thumbs!.AppendMakeOnly(i, wPx, hPx, _planItems);
+            }
         }
         _thumbs!.SetPlan(_planItems.ToArray());
     }

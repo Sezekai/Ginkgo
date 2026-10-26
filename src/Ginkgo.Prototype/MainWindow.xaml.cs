@@ -96,6 +96,12 @@ public partial class MainWindow : Window
         View.PrefetchBudgetBytes = d * 36 / 100;     // warm-up gets about a third of the picture cache (72 MB at the original 200 MB)
     }
 
+    private void OnLookChanged(object s, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (!IsLoaded) return;
+        View.LookAheadWindows = int.Parse((LookBox.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Tag as string ?? "3");
+    }
+
     private void OnFadeChanged(object s, RoutedEventArgs e) { if (_loader is not null) _loader.FadeEnabled = FadeBox.IsChecked == true; }
     private async void OnSharp(object s, RoutedEventArgs e)
     {
@@ -281,7 +287,7 @@ public partial class MainWindow : Window
         double mb = Process.GetCurrentProcess().WorkingSet64 / 1048576.0;
         string cache = _loader is null ? "" :
             $" | pictures in RAM {_loader.CachedCount:N0} ({_loader.CachedBytes / 1048576.0:F0} MB) + compressed {_loader.EncodedBytes / 1048576.0:F0} MB" +
-            $" | sharp versions made {_loader.LargeMade:N0} | waiting {_loader.PendingCount} | disk read {_loader.AvgReadMs:F1} ms ({_loader.ThumbsPerRead:F0} thumbs/read) | decode {_loader.AvgDecodeMs:F1} ms\n{_loader.SharpSummary}";
+            $" | sharp versions made {_loader.LargeMade:N0} | waiting {_loader.PendingCount} | disk read {_loader.AvgReadMs:F1} ms ({_loader.ThumbsPerRead:F0} thumbs/read) | decode {_loader.AvgDecodeMs:F1} ms\n{_loader.SharpSummary}\n{_loader.LookAheadSummary}";
         Stats.Text = $"{_mode} | drawn {View.LastVisibleCount} | {_fps:F0} fps | RAM {mb:F0} MB{cache}";
         string pipe = _pipe.Running || _pipe.Done + _pipe.Failed + _pipe.BackfillTotal + _pipe.SharpTotal > 0
             ? $" | thumbnails {_pipe.Done:N0}/{_pipe.Total:N0} done, {_pipe.Failed:N0} failed{(_pipe.Failed > 0 ? " (last: " + _pipe.LastError + ")" : "")}{(_pipe.BackfillTotal > 0 ? $" | small sizes {_pipe.BackfillDone:N0}/{_pipe.BackfillTotal:N0}" : "")}{(_pipe.SharpTotal > 0 ? $" | sharp prep {_pipe.SharpDone:N0}/{_pipe.SharpTotal:N0}{(_pipe.SharpFailed > 0 ? $" ({_pipe.SharpFailed:N0} failed)" : "")}" : "")}"

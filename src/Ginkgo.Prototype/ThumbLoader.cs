@@ -31,10 +31,10 @@ public sealed class ThumbLoader : IDisposable
         public bool Drawn;
     }
 
-    public readonly record struct PlanItem(int Index, int WidthPx, int HeightPx, int Tier, bool EncodedOnly);
+    public readonly record struct PlanItem(int Index, int WidthPx, int HeightPx, int Tier, bool EncodedOnly, bool MakeOnly = false);
 
     private sealed class Plan { public PlanItem[] Items = Array.Empty<PlanItem>(); public int Next; }
-    private readonly record struct Req(int Index, int WidthPx, int HeightPx, int Tier, bool Urgent, bool EncodedOnly);
+    private readonly record struct Req(int Index, int WidthPx, int HeightPx, int Tier, bool Urgent, bool EncodedOnly, bool MakeOnly = false);
     private readonly record struct Done(int Index, int Tier, BitmapSource? Bitmap, long Bytes, bool Urgent);
 
     private static readonly int[] Nominal = { ThumbMaker.MicroW, ThumbMaker.SmallW, ThumbMaker.MaxW, ThumbMaker.LargeW };
@@ -62,6 +62,11 @@ public sealed class ThumbLoader : IDisposable
     private readonly ConcurrentStack<Req> _urgentLarge = new();   // slow work for tiles on screen (reading an original to make a sharp version)
     private int _quickActive;                                     // quick jobs being worked on right now
     private long _lastQuick;                                      // when quick work was last asked for or finished
+    private int _laActive;                                        // look-ahead jobs running right now
+    private long _lastScroll;                                     // when the view last moved
+    private readonly ConcurrentDictionary<int, byte> _laMade = new();   // sharp versions made by look-ahead and not yet seen on screen
+    public long LookAheadMade, LookAheadUsed;
+    public string LookAheadSummary => $"look-ahead: made {Volatile.Read(ref LookAheadMade):N0}, already ready when scrolled to {Volatile.Read(ref LookAheadUsed):N0}, running {Volatile.Read(ref _laActive)}";
     private int _largeActive;                                     // how many workers are making sharp versions right now
     private readonly ConcurrentQueue<Done> _done = new();
     private Plan _plan = new();
@@ -112,6 +117,9 @@ public sealed class ThumbLoader : IDisposable
     }
 
     public void SetWanted(int lo, int hi) { _lo = lo; _hi = hi; }
+
+    /// <summary>Called whenever the view moves; look-ahead only starts new work after the view has been still for a moment.</summary>
+    public void NoteScroll() => Volatile.Write(ref _lastScroll, Stopwatch.GetTimestamp());
 
     /// <summary>Removes requests for tiles that have scrolled away, so they neither count as waiting nor sit in the way.</summary>
     public void PurgeStale()
@@ -183,6 +191,7 @@ public sealed class ThumbLoader : IDisposable
     public Entry? Get(int index, int widthPx, int heightPx)
     {
         if (!Resolve(index, widthPx, out int show, out bool large)) return null;
+        if (show == 3 && !_laMade.IsEmpty && _laMade.TryRemove(index, out _)) Interlocked.Increment(ref LookAheadUsed);
         Entry? e = null;
         if (_cache.TryGetValue(index, out var node)) { _lru.Remove(node); _lru.AddFirst(node); e = node.Value; e.Drawn = true; }
         if (show >= 0 && (e is null || NeedsRefresh(e, show, widthPx))) TryQueue(index, widthPx, heightPx, show);
@@ -204,6 +213,14 @@ public sealed class ThumbLoader : IDisposable
             list.Add(new PlanItem(index, widthPx, heightPx, 3, false));
     }
 
+    /// <summary>UI thread only. Look-ahead: just make and save the sharp version for a tile that will probably be needed (no picture is built).</summary>
+    public void AppendMakeOnly(int index, int widthPx, int heightPx, List<PlanItem> list)
+    {
+        if (!Resolve(index, widthPx, out _, out bool large) || !large) return;      // no sharp version needed, or it already exists
+        if (_inflight.ContainsKey((long)index * 4 + 3)) return;
+        list.Add(new PlanItem(index, widthPx, heightPx, 3, false, true));
+    }
+
     // ---- workers --------------------------------------------------------------------------------------------
 
     /// <summary>
@@ -212,15 +229,27 @@ public sealed class ThumbLoader : IDisposable
     /// </summary>
     private bool SharpMayStart()
     {
-        if (Volatile.Read(ref _largeActive) >= 3 || Volatile.Read(ref _quickActive) > 0 || !_urgent.IsEmpty) return false;
+        if (Volatile.Read(ref _largeActive) >= 3 || Volatile.Read(ref _largeActive) + Volatile.Read(ref _laActive) >= 4 || Volatile.Read(ref _quickActive) > 0 || !_urgent.IsEmpty) return false;
         return (Stopwatch.GetTimestamp() - Volatile.Read(ref _lastQuick)) * 1000 / Stopwatch.Frequency > 100;
+    }
+
+    /// <summary>
+    /// Look-ahead is the most patient work: at most 2 jobs, leaving room for what's on screen, and only when nothing quick
+    /// was asked for and the view hasn't moved for 300 ms.
+    /// </summary>
+    private bool LookAheadMayStart()
+    {
+        if (Volatile.Read(ref _laActive) >= 2 || Volatile.Read(ref _largeActive) + Volatile.Read(ref _laActive) >= 3
+            || Volatile.Read(ref _quickActive) > 0 || !_urgent.IsEmpty) return false;
+        long now = Stopwatch.GetTimestamp(), ms = Stopwatch.Frequency / 1000;
+        return now - Volatile.Read(ref _lastQuick) > 300 * ms && now - Volatile.Read(ref _lastScroll) > 300 * ms;
     }
 
     private void Work()
     {
         while (!_cts.IsCancellationRequested)
         {
-            Req req = default; bool have = false; bool makingLarge = false, quick = false;
+            Req req = default; bool have = false; bool makingLarge = false, quick = false, makeOnly = false;
             if (_urgent.TryPop(out req)) { have = true; quick = true; Interlocked.Increment(ref _quickActive); }   // thumbnails for what's on screen: always first
             else if (SharpMayStart() && _urgentLarge.TryPop(out req)) have = true;
             else
@@ -232,20 +261,23 @@ public sealed class ThumbLoader : IDisposable
                     if (k >= plan.Items.Length) break;
                     var it = plan.Items[k];
                     bool slow = it.Tier == 3 && Volatile.Read(ref _tiers[3].Len[it.Index]) == 0;
-                    if (slow && (!_urgentLarge.IsEmpty || !SharpMayStart())) continue;   // sharp versions wait until the screen is settled
+                    if (it.MakeOnly) { if (!_urgentLarge.IsEmpty || !LookAheadMayStart()) continue; }   // look-ahead is the most patient work of all
+                    else if (slow && (!_urgentLarge.IsEmpty || !SharpMayStart())) continue;               // sharp versions wait until the screen is settled
                     if (!_inflight.TryAdd((long)it.Index * 4 + it.Tier, 0)) continue;
-                    req = new Req(it.Index, it.WidthPx, it.HeightPx, it.Tier, false, it.EncodedOnly);
+                    req = new Req(it.Index, it.WidthPx, it.HeightPx, it.Tier, false, it.EncodedOnly, it.MakeOnly);
                     have = true; break;
                 }
             }
-            if (have && req.Tier == 3 && Volatile.Read(ref _tiers[3].Len[req.Index]) == 0) { makingLarge = true; Interlocked.Increment(ref _largeActive); }
+            if (have && req.MakeOnly) { makeOnly = true; Interlocked.Increment(ref _laActive); }
+            else if (have && req.Tier == 3 && Volatile.Read(ref _tiers[3].Len[req.Index]) == 0) { makingLarge = true; Interlocked.Increment(ref _largeActive); }
             BitmapSource? bmp = null; long bytes = 0;
             bool stale = req.Urgent && (req.Index < _lo || req.Index > _hi);
             if (!stale)
             {
                 try
                 {
-                    if (makingLarge && !req.EncodedOnly)
+                    if (req.MakeOnly) MakeLargeOnly(req.Index);
+                    else if (makingLarge && !req.EncodedOnly)
                     {
                         long t0 = Stopwatch.GetTimestamp();
                         (bmp, bytes) = MakeLargeAndPresent(req);       // show it first, save it afterwards
@@ -265,6 +297,7 @@ public sealed class ThumbLoader : IDisposable
                 catch { bmp = null; }
             }
             if (makingLarge) Interlocked.Decrement(ref _largeActive);
+            if (makeOnly) Interlocked.Decrement(ref _laActive);
             if (quick) { Interlocked.Decrement(ref _quickActive); Volatile.Write(ref _lastQuick, Stopwatch.GetTimestamp()); }
             _done.Enqueue(new Done(req.Index, req.Tier, bmp, bytes, req.Urgent));
             if (Interlocked.Exchange(ref _drainQueued, 1) == 0)
@@ -334,6 +367,25 @@ public sealed class ThumbLoader : IDisposable
             return result;
         }
         catch { _largeFailed.TryAdd(req.Index, 0); return (null, 0); }
+    }
+
+    /// <summary>Makes and saves the sharp version without building a picture for the screen.</summary>
+    private void MakeLargeOnly(int index)
+    {
+        try
+        {
+            if (Volatile.Read(ref _tiers[3].Len[index]) > 0) return;     // already made meanwhile
+            if (_large.Size > _largeCap) return;
+            var bytes = ThumbMaker.MakeLarge(_paths[index]);
+            var loc = _large.Append(bytes);
+            var t = _tiers[3];
+            t.Pack[index] = loc.pack; t.Off[index] = loc.offset;
+            Volatile.Write(ref t.Len[index], loc.length);
+            Interlocked.Increment(ref LargeMade); Interlocked.Increment(ref LookAheadMade);
+            _laMade.TryAdd(index, 0);
+            _onLargeMade(index, new Loc(loc.pack, loc.offset, loc.length));
+        }
+        catch { _largeFailed.TryAdd(index, 0); }
     }
 
     private byte[]? MakeLarge(int index)
