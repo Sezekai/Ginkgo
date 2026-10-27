@@ -42,7 +42,7 @@
                     </Grid.ColumnDefinitions>
                     <WrapPanel Orientation="Horizontal" Margin="14,17,0,17" VerticalAlignment="Center">
                         <Button Style="{StaticResource IconButton}" Content="&#xE700;" Height="32" Width="38" FontSize="14" Margin="0,3,10,3" VerticalAlignment="Center" ToolTip="Menu (Ctrl+B)" Click="OnSidebarToggle"/>
-                        <TextBlock Text="Ginkgo" FontWeight="SemiBold" FontSize="14" Foreground="{StaticResource Text}" VerticalAlignment="Center" Margin="0,3,19,3" VerticalAlignment="Center"/>
+                        <TextBlock Text="Ginkgo" FontWeight="SemiBold" FontSize="14" Foreground="{StaticResource Text}" Margin="0,3,19,3" VerticalAlignment="Center"/>
                         <Button x:Name="FoldersBtn" Content="Select folders" Height="32" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnFolders"/>
                         <ToggleButton x:Name="ImagesBtn" Content="Images" Height="32" Margin="0,3,9,3" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged"/>
                         <ToggleButton x:Name="GifsBtn" Content="GIFs" Height="32" Margin="0,3,9,3" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged"/>
