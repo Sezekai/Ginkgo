@@ -256,12 +256,13 @@ public sealed class ThumbLoader : IDisposable
     }
 
     /// <summary>Any thread. The best stored picture of a tile (the 1280 px one if it exists, else 320 px), for the viewer to show at once while the real file loads.</summary>
-    public BitmapSource? QuickPicture(int index)
+    public BitmapSource? QuickPicture(int index, bool small = false)
     {
         try
         {
-            for (int tier = 3; tier >= 2; tier--)
+            for (int step = 0; step < 2; step++)
             {
+                int tier = small ? 2 + step : 3 - step;
                 if (index < 0 || index >= _paths.Length || Volatile.Read(ref _tiers[tier].Len[index]) <= 0) continue;
                 var data = GetEncoded(index, tier);
                 if (data is null) continue;
@@ -351,7 +352,7 @@ public sealed class ThumbLoader : IDisposable
             if (quick) { Interlocked.Decrement(ref _quickActive); Volatile.Write(ref _lastQuick, Stopwatch.GetTimestamp()); }
             _done.Enqueue(new Done(req.Index, req.Tier, bmp, bytes, req.Urgent));
             if (Interlocked.Exchange(ref _drainQueued, 1) == 0)
-                _ui.BeginInvoke(DispatcherPriority.Render, Drain);
+                _ui.BeginInvoke(DispatcherPriority.Input, Drain);
         }
     }
 
@@ -473,8 +474,10 @@ public sealed class ThumbLoader : IDisposable
         Volatile.Write(ref _drainQueued, 0);
         bool any = false;
         long now = Stopwatch.GetTimestamp();
-        while (_done.TryDequeue(out var d))
+        int taken = 0;
+        while (taken < 8 && _done.TryDequeue(out var d))        // a few at a time, so the screen and the mouse are never kept waiting
         {
+            taken++;
             _inflight.TryRemove((long)d.Index * 4 + d.Tier, out _);
             if (d.Bitmap is null) continue;
             var ne = new Entry { Index = d.Index, Tier = d.Tier, Bitmap = d.Bitmap, PixelWidth = d.Bitmap.PixelWidth, Bytes = d.Bytes, FadeStart = now };
@@ -495,6 +498,7 @@ public sealed class ThumbLoader : IDisposable
             _lru.RemoveLast(); _cache.Remove(last.Value.Index); _bytes -= last.Value.Bytes;
         }
         if (any) _onReady();
+        if (!_done.IsEmpty && Interlocked.Exchange(ref _drainQueued, 1) == 0) _ui.BeginInvoke(DispatcherPriority.Input, Drain);
     }
 
     public void Dispose() { _cts.Cancel(); }

@@ -42,6 +42,7 @@ public partial class MainWindow : Window
 
     // side menu
     private bool _sideOpen;
+    private bool _diag;
 
     private const float TileMin = 60, TileMax = 1800;
     private static double SizeToSlider(float size) => Math.Log(Math.Clamp(size, TileMin, TileMax) / TileMin) / Math.Log(TileMax / TileMin);
@@ -306,7 +307,8 @@ public partial class MainWindow : Window
         string sharp = p.SharpTotal > 0 && p.SharpDone < p.SharpTotal ? $"  |  sharp versions {p.SharpDone:N0} of {p.SharpTotal:N0}" : "";
         bool busy = pipe.Length > 0 || back.Length > 0 || sharp.Length > 0 || p.Running || _engine.IdsRunning;
         string idle = !busy && _engine.IdsFinished ? "  |  file IDs done, nothing running in the background" : "";
-        return _engine.Status + pipe + back + sharp + idle;
+        string diag = _diag ? $"  |  {_fps:F0} fps, draw {View.LastRenderMs:F1} ms, {View.LastVisibleCount} tiles, memory {Process.GetCurrentProcess().WorkingSet64 / 1048576:N0} MB, pending {_loader?.PendingCount ?? 0}" : "";
+        return _engine.Status + pipe + back + sharp + idle + diag;
     }
 
     private void UpdateChangeIndicator()
@@ -427,6 +429,7 @@ public partial class MainWindow : Window
             case Key.Enter: if (View.HoverIndex >= 0) { OpenViewer(View.HoverIndex); e.Handled = true; } break;
             case Key.OemQuestion: RevealBar(); SearchBox.Focus(); e.Handled = true; break;
             case Key.K: ShowKeys(false); e.Handled = true; break;
+            case Key.F3: _diag = !_diag; e.Handled = true; break;
             case Key.M: SetSidebar(!_sideOpen); e.Handled = true; break;
             case Key.H: if (_barManual) OnShowBar(this, e); else OnHideBar(this, e); e.Handled = true; break;
             case Key.G: GeneralBtn.IsChecked = GeneralBtn.IsChecked != true; OnFilterChanged(this, e); e.Handled = true; break;
@@ -659,9 +662,12 @@ public partial class MainWindow : Window
     }
 
     private bool _infoMore, _infoHidden;
+    private long _lastNav;
+    private readonly SemaphoreSlim _decodeGate = new(2);      // never more than two full-size decodes at once (holding an arrow key must not pile them up)
 
     private string[] _infoLines = Array.Empty<string>();      // block layout
     private string _infoOneLine = "";                         // the same details on a single line
+    private string[] _infoStack = Array.Empty<string>();      // one detail per line, for a narrow strip beside the picture
     private double _charW60;
 
     private static string TrimName(string name, int max)
@@ -696,14 +702,19 @@ public partial class MainWindow : Window
         else
             _infoLines = new[] { $"{count}    {TrimName(name, Math.Max(12, 60 - count.Length - 4))}", facts };
         _infoOneLine = $"{count}    {TrimName(name, 36)}    {facts}";
+        string md = $"{m.W[row]} x {m.H[row]}";
+        _infoStack = _infoMore
+            ? new[] { count, name, System.IO.Path.GetDirectoryName(m.Path[row]) ?? "", md, $"{m.W[row] * (long)m.H[row] / 1e6:F1} megapixels", $"{size} ({m.Size[row]:N0} bytes)", (kind.Trim() + " " + (ContentLevel)m.Level[row]).Trim(), "Modified " + mod, "Added " + DateTimeOffset.FromUnixTimeSeconds(m.FirstSeen[row]).ToLocalTime().ToString("d MMM yyyy", CultureInfo.CurrentCulture) }
+            : new[] { count, TrimName(name, 40), md, size + kind, mod };
         PlaceInfo();
     }
 
     private void OnViewerSize(object s, SizeChangedEventArgs e) { if (ViewerRoot.Visibility == Visibility.Visible && _model is not null && _vIndex < _order.Length) PlaceInfo(); }
 
     /// <summary>
-    /// Puts the information box where the picture isn't: below a wide picture, beside a tall one (narrowed so the lines wrap),
-    /// or on one line when only a thin strip is free. If nothing is free it sits over the bottom-left corner.
+    /// The information box always sits at the bottom left. Where exactly depends on the picture: in the empty strip below a wide
+    /// one, in the empty strip beside a tall one (made narrow and tall so the lines wrap), or on a single line when only a thin
+    /// strip is free. If nothing is free it sits over the picture's bottom-left corner.
     /// </summary>
     private void PlaceInfo()
     {
@@ -720,38 +731,38 @@ public partial class MainWindow : Window
         // where the picture is on screen
         double f = iw > 0 && ih > 0 ? Math.Min(HW / iw, HH / ih) : 1;
         double dw = iw * f * _zoom, dh = ih * f * _zoom, cx = HW / 2 + _panX, cy = HH / 2 + _panY;
-        double left = Math.Max(0, cx - dw / 2), right = Math.Min(HW, cx + dw / 2), top = Math.Max(0, cy - dh / 2), bottom = Math.Min(HH, cy + dh / 2);
-        double padX = 20, padY = 12, m = 12;                               // the box's own padding, and the gap to every edge
-        double leftFree = left, rightFree = HW - right, topFree = top, bottomFree = HH - bottom;
+        double left = Math.Max(0, cx - dw / 2), bottom = Math.Min(HH, cy + dh / 2);
+        double leftFree = left, bottomFree = HH - bottom;
+        double cap = _infoMore ? Math.Max(_charW60, HW * 0.5) : _charW60;     // normally about 60 characters wide; more info may grow
 
-        Size TryMeasure(bool oneLine, double maxW)
+        // kind: 0 = block of lines, 1 = one line, 2 = one detail per line (narrow)
+        Size TryMeasure(int kind, double maxBox)
         {
-            InfoText.TextWrapping = oneLine ? TextWrapping.NoWrap : TextWrapping.Wrap;
-            InfoText.Text = oneLine ? _infoOneLine : string.Join("\n", _infoLines);
-            InfoText.MaxWidth = oneLine ? double.PositiveInfinity : Math.Max(120, maxW - padX);
+            InfoBox.Padding = kind == 2 ? new Thickness(7, 5, 7, 5) : new Thickness(10, 6, 10, 6);
+            double padX = InfoBox.Padding.Left + InfoBox.Padding.Right;
+            InfoText.TextWrapping = kind == 1 ? TextWrapping.NoWrap : TextWrapping.Wrap;
+            InfoText.Text = kind == 1 ? _infoOneLine : string.Join("\n", kind == 2 ? _infoStack : _infoLines);
+            InfoText.MaxWidth = kind == 1 ? double.PositiveInfinity : Math.Max(40, maxBox - padX);
             InfoBox.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
             return InfoBox.DesiredSize;
         }
-        double cap = _infoMore ? Math.Max(_charW60, HW * 0.55) : _charW60;     // normally about 60 characters wide; more info may grow
-        bool Fits(Size s, double freeW, double freeH) => s.Width + 2 * m <= freeW && s.Height + 2 * m <= freeH;
-        void Put(double x, double y) { InfoBox.HorizontalAlignment = HorizontalAlignment.Left; InfoBox.VerticalAlignment = VerticalAlignment.Top; InfoBox.Margin = new Thickness(x, y, 0, 0); }
+        void Put(double x, double y) { InfoBox.HorizontalAlignment = HorizontalAlignment.Left; InfoBox.VerticalAlignment = VerticalAlignment.Bottom; InfoBox.Margin = new Thickness(x, 0, 0, y); }
 
-        Size s1;
         // 1. below the picture, as a block
-        s1 = TryMeasure(false, Math.Min(cap + padX, HW - 2 * m));
-        if (bottomFree > 0 && Fits(s1, HW, bottomFree)) { Put(m, HH - s1.Height - m); return; }
-        // 2. beside the picture on the left, narrowed so it wraps (tallest free strip is the whole height)
-        if (leftFree >= 170)
+        var s = TryMeasure(0, Math.Min(cap + 20, HW - 24));
+        if (bottomFree > 0 && s.Height + 24 <= bottomFree) { Put(12, 12); return; }
+        // 2. beside the picture on the left: narrow and tall
+        if (leftFree >= 56)
         {
-            var s = TryMeasure(false, Math.Min(cap + padX, leftFree - 2 * m));
-            if (Fits(s, leftFree, HH)) { Put(m, HH - s.Height - m); return; }
+            s = TryMeasure(2, leftFree - 10);
+            if (s.Width + 6 <= leftFree && s.Height + 12 <= HH) { Put(5, 6); return; }
         }
-        // 3. below the picture on one line
-        s1 = TryMeasure(true, 0);
-        if (bottomFree > 0 && Fits(s1, HW, bottomFree)) { Put(m, HH - s1.Height - m); return; }
+        // 3. below the picture, on one line
+        s = TryMeasure(1, 0);
+        if (bottomFree > 0 && s.Width + 24 <= HW && s.Height + 12 <= bottomFree) { Put(12, Math.Max(4, (bottomFree - s.Height) / 2)); return; }
         // 4. nothing free: over the bottom-left corner of the picture
-        var sf = TryMeasure(false, Math.Min(cap + padX, HW - 2 * m));
-        Put(m, Math.Max(m, HH - sf.Height - m));
+        TryMeasure(0, Math.Min(cap + 20, HW - 24));
+        Put(12, 12);
     }
 
     private void ShowIndex(int index)
@@ -794,6 +805,9 @@ public partial class MainWindow : Window
     private async Task LoadPicture(int index, bool full)
     {
         int token = ++_vToken;
+        long nowTick = Stopwatch.GetTimestamp();
+        bool fast = (nowTick - _lastNav) / (double)Stopwatch.Frequency < 0.3;       // keys are being held or tapped quickly
+        _lastNav = nowTick;
         int row = _order[index];
         var m = _model!;
         string path = m.Path[row];
@@ -811,25 +825,30 @@ public partial class MainWindow : Window
         if (bmp is null)
         {
             ViewerNote.Text = "";
-            var decoding = Task.Run(() => token != _vToken ? null : Decode(path, decodeW, decodeH));
             var loader = _loader;
             if (!full && loader is not null)
             {
-                // meanwhile show the stored 1280 / 320 px picture, so something is on screen at once
-                var quick = await Task.Run(() => loader.QuickPicture(index));
-                if (token == _vToken && quick is not null && !decoding.IsCompleted) Pic.Source = quick;
+                // something is on screen at once: the stored picture (a small one while keys are held, to keep up)
+                var quick = await Task.Run(() => token != _vToken ? null : loader.QuickPicture(index, fast));
+                if (token != _vToken) return;
+                if (quick is not null) { Pic.Source = quick; _vFull = false; }
             }
-            bmp = await decoding;
+            if (fast && !full) { await Task.Delay(170); if (token != _vToken) return; }     // still moving: wait until it settles before the real file
+            bmp = await Task.Run(() =>
+            {
+                _decodeGate.Wait();
+                try { return token != _vToken ? null : Decode(path, decodeW, decodeH); }
+                finally { _decodeGate.Release(); }
+            });
             if (bmp is not null && !full) lock (_vCache) CacheAdd(key, bmp);
         }
         if (token != _vToken) return;                                 // moved on to another picture meanwhile
         _vFull = full;
-        if (bmp is null) { Pic.Source = null; ViewerNote.Text = "This file can't be shown."; return; }
+        if (bmp is null) { if (Pic.Source is null) ViewerNote.Text = "This file can't be shown."; return; }
         Pic.Source = bmp;
         ViewerNote.Text = "";
         if (!full)
         {
-            if (m.Kind[row] == (byte)MediaKind.Gif) ViewerNote.Text = "";
             _ = Preload(index + 1); _ = Preload(index + 2); _ = Preload(index - 1);
         }
     }
@@ -853,7 +872,12 @@ public partial class MainWindow : Window
         string path = m.Path[row], key = path + "|" + decodeW + "x" + decodeH;
         lock (_vCache) if (_vCache.ContainsKey(key)) return;
         int token0 = _vToken;
-        var bmp = await Task.Run(() => token0 != _vToken ? null : Decode(path, decodeW, decodeH));
+        var bmp = await Task.Run(() =>
+        {
+            _decodeGate.Wait();
+            try { return token0 != _vToken ? null : Decode(path, decodeW, decodeH); }
+            finally { _decodeGate.Release(); }
+        });
         if (bmp is not null) lock (_vCache) CacheAdd(key, bmp);
     }
 

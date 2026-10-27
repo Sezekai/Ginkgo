@@ -33,7 +33,9 @@ public sealed class FolderPanel : Border
     private readonly Dictionary<string, Node> _nodes = new(StringComparer.OrdinalIgnoreCase);
     private List<Node> _roots = new();
     private string _sort = "Name"; private bool _reverse;
-    private bool _quiet;
+    private sealed class Btn { public Border B = null!; public TextBlock Name = null!; public Node N = null!; public bool Own; public Brush Fill = null!, Hover = null!; }
+    private readonly List<Btn> _btns = new();
+    private bool _painting, _paintOn;
 
     private static readonly Brush On = Frozen("#3E7A48"), OnHover = Frozen("#4B9058"), OffB = Frozen("#2A2A30"), OffHover = Frozen("#36363E"),
         Part = Frozen("#8A6A2A"), PartHover = Frozen("#A07C31"), Txt = Frozen("#E4E4E8"), TxtOff = Frozen("#8D939A"), Dim = Frozen("#B5BAC0");
@@ -154,8 +156,13 @@ public sealed class FolderPanel : Border
 
     private void Rebuild()
     {
-        _flow.Children.Clear();
+        _flow.Children.Clear(); _btns.Clear();
         foreach (var n in Sorted(_roots)) Add(n, 0, _flow);
+        UpdateSummary();
+    }
+
+    private void UpdateSummary()
+    {
         int shown = _nodes.Values.Where(n => n.Own > 0 && !_off.Contains(n.Path)).Sum(n => n.Own);
         int total = _nodes.Values.Sum(n => n.Own);
         _summary.Text = $"{shown:N0} of {total:N0} files shown";
@@ -186,20 +193,47 @@ public sealed class FolderPanel : Border
         into.Children.Add(box);
     }
 
+    private int StateOf(Btn x) => x.Own ? (_off.Contains(x.N.Path) ? 0 : 1) : State(x.N);
+
+    /// <summary>Re-colours every button in place (no rebuild, so the mouse keeps its place while painting).</summary>
+    private void Recolor()
+    {
+        foreach (var x in _btns) ColorOne(x);
+        UpdateSummary();
+    }
+
+    private void ColorOne(Btn x)
+    {
+        int st = StateOf(x);
+        x.Fill = st == 1 ? On : st == 2 ? Part : OffB;
+        x.Hover = st == 1 ? OnHover : st == 2 ? PartHover : OffHover;
+        x.Name.Foreground = st == 0 ? TxtOff : Txt;
+        x.B.Background = x.B.IsMouseOver ? x.Hover : x.Fill;
+    }
+
+    private void Apply(Btn x, bool on)
+    {
+        if (x.Own) { if (on) _off.Remove(x.N.Path); else _off.Add(x.N.Path); }
+        else SetSubtree(x.N, on);
+        Recolor();
+        Changed?.Invoke(new HashSet<string>(_off, StringComparer.OrdinalIgnoreCase));
+    }
+
+    protected override void OnPreviewMouseLeftButtonUp(MouseButtonEventArgs e) { _painting = false; base.OnPreviewMouseLeftButtonUp(e); }
+
     private FrameworkElement MakeButton(Node n, int depth, bool hasKids, bool open, bool ownOnly)
     {
-        int state = ownOnly ? (_off.Contains(n.Path) ? 0 : 1) : State(n);
-        var fill = state == 1 ? On : state == 2 ? Part : OffB;
-        var hover = state == 1 ? OnHover : state == 2 ? PartHover : OffHover;
+        var x = new Btn { N = n, Own = ownOnly };
         var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
         if (hasKids)
         {
             var arrow = new TextBlock
             {
-                Text = open ? "" : "", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 10, Foreground = Txt,
+                Text = open ? "\uE70D" : "\uE76C", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 10, Foreground = Txt,
                 VerticalAlignment = VerticalAlignment.Center, Padding = new Thickness(7, 6, 7, 6), Margin = new Thickness(-8, -4, 2, -4),
                 Background = Brushes.Transparent, Cursor = Cursors.Hand, ToolTip = open ? "Close subfolders" : "Show subfolders"
             };
+            arrow.MouseLeftButtonDown += (_, e) => e.Handled = true;           // the arrow only opens; it doesn't start painting
             arrow.MouseLeftButtonUp += (_, e) => { if (_open.Contains(n.Path)) _open.Remove(n.Path); else _open.Add(n.Path); Rebuild(); e.Handled = true; };
             arrow.MouseEnter += (_, _) => arrow.Background = new SolidColorBrush(Color.FromArgb(50, 255, 255, 255));
             arrow.MouseLeave += (_, _) => arrow.Background = Brushes.Transparent;
@@ -207,25 +241,36 @@ public sealed class FolderPanel : Border
         }
         string name = ownOnly ? "files here" : n.Name;
         int count = ownOnly ? n.Own : n.Sub;
-        row.Children.Add(new TextBlock { Text = name, Foreground = state == 0 ? TxtOff : Txt, VerticalAlignment = VerticalAlignment.Center, FontStyle = ownOnly ? FontStyles.Italic : FontStyles.Normal, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 520 });
+        x.Name = new TextBlock { Text = name, Foreground = Txt, VerticalAlignment = VerticalAlignment.Center, FontStyle = ownOnly ? FontStyles.Italic : FontStyles.Normal, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 520 };
+        row.Children.Add(x.Name);
         row.Children.Add(new TextBlock { Text = count.ToString("N0"), Foreground = Dim, Opacity = 0.75, FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 1, 0, 0) });
-        var b = new Border
+        x.B = new Border
         {
-            Child = row, Background = fill, CornerRadius = new CornerRadius(5), Padding = new Thickness(10, 5, 10, 5),
-            Cursor = Cursors.Hand,
+            Child = row, CornerRadius = new CornerRadius(5), Padding = new Thickness(10, 5, 10, 5), Cursor = Cursors.Hand,
             BorderBrush = DepthEdge[Math.Min(depth, DepthEdge.Length - 1)], BorderThickness = new Thickness(0, 0, 0, depth == 0 ? 0 : 2),
             ToolTip = ownOnly ? $"{count:N0} files directly in this folder" : $"{count:N0} files, {n.SubSize / 1048576.0:N0} MB" + (n.Path.Length > 0 ? "\n" + n.Path : "")
         };
-        b.MouseEnter += (_, _) => b.Background = hover;
-        b.MouseLeave += (_, _) => b.Background = fill;
-        b.MouseLeftButtonUp += (_, e) =>
+        _btns.Add(x);
+        // press on a folder and keep the button down while moving over others: they all switch the same way
+        x.B.MouseLeftButtonDown += (_, e) =>
         {
-            if (ownOnly) { if (!_off.Remove(n.Path)) _off.Add(n.Path); }
-            else SetSubtree(n, state != 1);
-            Rebuild(); Changed?.Invoke(new HashSet<string>(_off, StringComparer.OrdinalIgnoreCase));
+            _paintOn = StateOf(x) != 1;
+            _painting = true;
+            Apply(x, _paintOn);
             e.Handled = true;
         };
-        return b;
+        x.B.MouseEnter += (_, _) =>
+        {
+            x.B.Background = x.Hover;
+            if (_painting)
+            {
+                if (Mouse.LeftButton != MouseButtonState.Pressed) { _painting = false; return; }
+                if ((StateOf(x) == 1) != _paintOn || StateOf(x) == 2) Apply(x, _paintOn);
+            }
+        };
+        x.B.MouseLeave += (_, _) => x.B.Background = x.Fill;
+        ColorOne(x);
+        return x.B;
     }
 }
 
