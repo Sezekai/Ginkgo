@@ -749,18 +749,7 @@ public partial class MainWindow : Window
         // 3. below the picture on one line
         s1 = TryMeasure(true, 0);
         if (bottomFree > 0 && Fits(s1, HW, bottomFree)) { Put(m, HH - s1.Height - m); return; }
-        // 4. above the picture, block then one line
-        var sb = TryMeasure(false, Math.Min(cap + padX, HW - 2 * m));
-        if (topFree > 0 && Fits(sb, HW, topFree)) { Put(m, m); return; }
-        s1 = TryMeasure(true, 0);
-        if (topFree > 0 && Fits(s1, HW, topFree)) { Put(m, m); return; }
-        // 5. beside the picture on the right
-        if (rightFree >= 170)
-        {
-            var s = TryMeasure(false, Math.Min(cap + padX, rightFree - 2 * m));
-            if (Fits(s, rightFree, HH)) { Put(HW - s.Width - m, HH - s.Height - m); return; }
-        }
-        // 6. nothing free: over the bottom-left corner of the picture
+        // 4. nothing free: over the bottom-left corner of the picture
         var sf = TryMeasure(false, Math.Min(cap + padX, HW - 2 * m));
         Put(m, Math.Max(m, HH - sf.Height - m));
     }
