@@ -145,8 +145,13 @@ public sealed class MasonryView : FrameworkElement
     public void SetItems(ItemSpec[] items, string[]? labels, bool keepPosition = false)
     {
         double keep = _offset;
-        _items = items; _labels = labels; _offset = 0; _target = 0; _hoverIndex = -1; Relayout();
-        if (keepPosition) { _offset = Math.Clamp(keep, 0, MaxOffset); _target = _offset; InvalidateVisual(); ScrollChanged?.Invoke(); }
+        InRelayout = true;
+        try
+        {
+            _items = items; _labels = labels; _offset = 0; _target = 0; _hoverIndex = -1; Relayout();
+            if (keepPosition) { _offset = Math.Clamp(keep, 0, MaxOffset); _target = _offset; InvalidateVisual(); ScrollChanged?.Invoke(); }
+        }
+        finally { InRelayout = false; }
     }
 
     /// <summary>Scroll by a distance (eased).</summary>
@@ -161,7 +166,16 @@ public sealed class MasonryView : FrameworkElement
         Offset = top - (ActualHeight - _layout.H[index]) / 2;
     }
 
+    /// <summary>True while the offset is being recalculated because the layout changed (zoom, resize), not because the person scrolled.</summary>
+    public bool InRelayout { get; private set; }
+
     private void Relayout()
+    {
+        InRelayout = true;
+        try { RelayoutCore(); } finally { InRelayout = false; }
+    }
+
+    private void RelayoutCore()
     {
         if (ActualWidth < 50 || _items.Length == 0) { _layout = null; InvalidateVisual(); ScrollChanged?.Invoke(); return; }
         // keep the same position in the content after a resize/zoom

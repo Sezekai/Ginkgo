@@ -193,7 +193,9 @@ public sealed class ThumbLoader : IDisposable
     }
 
     /// <summary>Replaces the list of things to warm up. Anything not yet started from the previous list is dropped.</summary>
-    public void SetPlan(PlanItem[] items) => Volatile.Write(ref _plan, new Plan { Items = items });
+    public void SetPlan(PlanItem[] items) { Volatile.Write(ref _plan, new Plan { Items = items }); WakeWorkers(4); }
+
+    private void WakeWorkers(int n) { for (int k = 0; k < n && _signal.CurrentCount < 8; k++) _signal.Release(); }
 
     // ---- which size, what to show ---------------------------------------------------------------------------
 
@@ -237,7 +239,7 @@ public sealed class ThumbLoader : IDisposable
         var req = new Req(index, w, h, tier, true, false);
         if (tier == 3 && Volatile.Read(ref _tiers[3].Len[index]) == 0) _urgentLarge.Push(req);
         else { Volatile.Write(ref _lastQuick, Stopwatch.GetTimestamp()); _urgent.Push(req); }
-        _signal.Release();
+        WakeWorkers(1);
         return true;
     }
 
@@ -251,6 +253,23 @@ public sealed class ThumbLoader : IDisposable
         if (show >= 0 && (e is null || NeedsRefresh(e, show, widthPx))) TryQueue(index, widthPx, heightPx, show);
         if (large && (e is null || e.Tier < 3)) TryQueue(index, widthPx, heightPx, 3);
         return e;
+    }
+
+    /// <summary>Any thread. The best stored picture of a tile (the 1280 px one if it exists, else 320 px), for the viewer to show at once while the real file loads.</summary>
+    public BitmapSource? QuickPicture(int index)
+    {
+        try
+        {
+            for (int tier = 3; tier >= 2; tier--)
+            {
+                if (index < 0 || index >= _paths.Length || Volatile.Read(ref _tiers[tier].Len[index]) <= 0) continue;
+                var data = GetEncoded(index, tier);
+                if (data is null) continue;
+                return Decode(data, 0, 0).Item1;
+            }
+        }
+        catch { }
+        return null;
     }
 
     /// <summary>UI thread only. Adds what this tile still needs to a warm-up list.</summary>
@@ -301,6 +320,7 @@ public sealed class ThumbLoader : IDisposable
                     have = true; break;
                 }
             }
+            if (!have) { _signal.Wait(40); continue; }     // nothing to do: sleep (a wake-up arrives when work is queued)
             if (have && req.Tier == 3 && Volatile.Read(ref _tiers[3].Len[req.Index]) == 0) { makingLarge = true; Interlocked.Increment(ref _largeActive); }
             BitmapSource? bmp = null; long bytes = 0;
             bool stale = req.Urgent && (req.Index < _lo || req.Index > _hi);

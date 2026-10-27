@@ -24,7 +24,7 @@ public sealed class FolderPanel : Border
 
     public event Action<HashSet<string>>? Changed;
 
-    private readonly WrapPanel _flow = new() { Orientation = Orientation.Horizontal };
+    private readonly JustifyPanel _flow = new();
     private readonly ComboBox _sortBox = new() { Width = 140, Margin = new Thickness(0, 0, 8, 0) };
     private readonly ToggleButton _rev = new();
     private readonly TextBlock _summary = new() { Foreground = (Brush)Application.Current.FindResource("Dim"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
@@ -37,7 +37,7 @@ public sealed class FolderPanel : Border
 
     private static readonly Brush On = Frozen("#3E7A48"), OnHover = Frozen("#4B9058"), OffB = Frozen("#2A2A30"), OffHover = Frozen("#36363E"),
         Part = Frozen("#8A6A2A"), PartHover = Frozen("#A07C31"), Txt = Frozen("#E4E4E8"), TxtOff = Frozen("#8D939A"), Dim = Frozen("#B5BAC0");
-    private static readonly Brush[] DepthEdge = { Frozen("#00000000"), Frozen("#6BA675"), Frozen("#6C8FB8"), Frozen("#B08AC4"), Frozen("#C4A06C") };
+    private static readonly Brush[] DepthEdge = { Frozen("#00000000"), Frozen("#6C9BD2"), Frozen("#B58BD6"), Frozen("#D6AC6C"), Frozen("#6CC4B4") };
     private static Brush Frozen(string hex) { var b = (SolidColorBrush)new BrushConverter().ConvertFromString(hex)!; b.Freeze(); return b; }
 
     public FolderPanel(string sort, bool reverse)
@@ -155,21 +155,35 @@ public sealed class FolderPanel : Border
     private void Rebuild()
     {
         _flow.Children.Clear();
-        foreach (var n in Sorted(_roots)) Add(n, 0);
+        foreach (var n in Sorted(_roots)) Add(n, 0, _flow);
         int shown = _nodes.Values.Where(n => n.Own > 0 && !_off.Contains(n.Path)).Sum(n => n.Own);
         int total = _nodes.Values.Sum(n => n.Own);
         _summary.Text = $"{shown:N0} of {total:N0} files shown";
     }
 
-    private void Add(Node n, int depth)
+    private static readonly Brush[] GroupFill = { Frozen("#1F2733"), Frozen("#2A2033"), Frozen("#332C1F"), Frozen("#1F3330") };
+
+    /// <summary>A folder's button; when it is open, its subfolders sit in a tinted, outlined box right below it.</summary>
+    private void Add(Node n, int depth, JustifyPanel into)
     {
         bool hasKids = n.Kids.Any(k => k.Sub > 0);
         bool open = hasKids && _open.Contains(n.Path);
-        _flow.Children.Add(MakeButton(n, depth, hasKids, open, ownOnly: false));
+        into.Children.Add(MakeButton(n, depth, hasKids, open, ownOnly: false));
         if (!open) return;
-        if (n.Own > 0)
-            _flow.Children.Add(MakeButton(n, depth + 1, false, false, ownOnly: true));
-        foreach (var k in Sorted(n.Kids)) Add(k, depth + 1);
+        int d = Math.Min(depth, 3);
+        var inner = new JustifyPanel { Gap = 5 };
+        var head = new TextBlock { Text = "Inside " + n.Name, Foreground = DepthEdge[d + 1], FontSize = 11.5, FontWeight = FontWeights.SemiBold, Margin = new Thickness(2, 0, 0, 6), TextTrimming = TextTrimming.CharacterEllipsis };
+        var stack = new StackPanel();
+        stack.Children.Add(head); stack.Children.Add(inner);
+        if (n.Own > 0) inner.Children.Add(MakeButton(n, depth + 1, false, false, ownOnly: true));
+        foreach (var k in Sorted(n.Kids)) Add(k, depth + 1, inner);
+        var box = new Border
+        {
+            Child = stack, Background = GroupFill[d], BorderBrush = DepthEdge[d + 1], BorderThickness = new Thickness(3, 1, 1, 1),
+            CornerRadius = new CornerRadius(7), Padding = new Thickness(9, 7, 9, 9), Margin = new Thickness(0, 0, 0, 2)
+        };
+        JustifyPanel.SetFullRow(box, true);
+        into.Children.Add(box);
     }
 
     private FrameworkElement MakeButton(Node n, int depth, bool hasKids, bool open, bool ownOnly)
@@ -177,7 +191,7 @@ public sealed class FolderPanel : Border
         int state = ownOnly ? (_off.Contains(n.Path) ? 0 : 1) : State(n);
         var fill = state == 1 ? On : state == 2 ? Part : OffB;
         var hover = state == 1 ? OnHover : state == 2 ? PartHover : OffHover;
-        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
         if (hasKids)
         {
             var arrow = new TextBlock
@@ -193,13 +207,13 @@ public sealed class FolderPanel : Border
         }
         string name = ownOnly ? "files here" : n.Name;
         int count = ownOnly ? n.Own : n.Sub;
-        row.Children.Add(new TextBlock { Text = name, Foreground = state == 0 ? TxtOff : Txt, VerticalAlignment = VerticalAlignment.Center, FontStyle = ownOnly ? FontStyles.Italic : FontStyles.Normal });
+        row.Children.Add(new TextBlock { Text = name, Foreground = state == 0 ? TxtOff : Txt, VerticalAlignment = VerticalAlignment.Center, FontStyle = ownOnly ? FontStyles.Italic : FontStyles.Normal, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 520 });
         row.Children.Add(new TextBlock { Text = count.ToString("N0"), Foreground = Dim, Opacity = 0.75, FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 1, 0, 0) });
         var b = new Border
         {
             Child = row, Background = fill, CornerRadius = new CornerRadius(5), Padding = new Thickness(10, 5, 10, 5),
-            Margin = new Thickness(0, 0, 6, 6), Cursor = Cursors.Hand,
-            BorderBrush = DepthEdge[Math.Min(depth, DepthEdge.Length - 1)], BorderThickness = new Thickness(depth == 0 ? 0 : 3, 0, 0, 0),
+            Cursor = Cursors.Hand,
+            BorderBrush = DepthEdge[Math.Min(depth, DepthEdge.Length - 1)], BorderThickness = new Thickness(0, 0, 0, depth == 0 ? 0 : 2),
             ToolTip = ownOnly ? $"{count:N0} files directly in this folder" : $"{count:N0} files, {n.SubSize / 1048576.0:N0} MB" + (n.Path.Length > 0 ? "\n" + n.Path : "")
         };
         b.MouseEnter += (_, _) => b.Background = hover;
@@ -212,5 +226,68 @@ public sealed class FolderPanel : Border
             e.Handled = true;
         };
         return b;
+    }
+}
+
+
+/// <summary>
+/// Lays buttons out in rows and stretches every row to the full width, so there are no gaps at the ends.
+/// A child marked FullRow always gets a row of its own (used for the boxes holding open subfolders).
+/// </summary>
+public sealed class JustifyPanel : Panel
+{
+    public static readonly DependencyProperty FullRowProperty = DependencyProperty.RegisterAttached("FullRow", typeof(bool), typeof(JustifyPanel));
+    public static void SetFullRow(DependencyObject o, bool v) => o.SetValue(FullRowProperty, v);
+    public static bool GetFullRow(DependencyObject o) => (bool)o.GetValue(FullRowProperty);
+    public double Gap { get; set; } = 6;
+
+    protected override Size MeasureOverride(Size avail)
+    {
+        double w = double.IsInfinity(avail.Width) ? 600 : avail.Width;
+        foreach (UIElement c in InternalChildren) c.Measure(new Size(GetFullRow(c) ? w : w, double.PositiveInfinity));
+        return new Size(w, Layout(w, false));
+    }
+
+    protected override Size ArrangeOverride(Size final) => new(final.Width, Layout(final.Width, true));
+
+    private double Layout(double w, bool arrange)
+    {
+        double y = 0;
+        var row = new List<UIElement>();
+        double used = 0;
+        void Flush(bool last)
+        {
+            if (row.Count == 0) return;
+            double sum = row.Sum(c => Math.Min(c.DesiredSize.Width, w));
+            double room = w - Gap * (row.Count - 1);
+            double f = sum > 0 ? room / sum : 1;
+            if (last) f = Math.Min(f, 3.0);                       // a short last row is not stretched absurdly
+            double h = row.Max(c => c.DesiredSize.Height), x = 0;
+            foreach (var c in row)
+            {
+                double cw = Math.Min(c.DesiredSize.Width, w) * f;
+                if (arrange) c.Arrange(new Rect(x, y, cw, h));
+                x += cw + Gap;
+            }
+            y += h + Gap; row.Clear(); used = 0;
+        }
+        UIElement? lastChild = null;
+        foreach (UIElement c in InternalChildren)
+        {
+            if (c.Visibility == Visibility.Collapsed) continue;
+            lastChild = c;
+            if (GetFullRow(c))
+            {
+                Flush(false);
+                if (arrange) c.Arrange(new Rect(0, y, w, c.DesiredSize.Height));
+                y += c.DesiredSize.Height + Gap;
+                continue;
+            }
+            double cw = Math.Min(c.DesiredSize.Width, w);
+            if (row.Count > 0 && used + Gap + cw > w) Flush(false);
+            used += (row.Count > 0 ? Gap : 0) + cw; row.Add(c);
+        }
+        Flush(true);
+        return Math.Max(0, y - Gap);
     }
 }

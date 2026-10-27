@@ -246,6 +246,7 @@ public partial class MainWindow : Window
         if (_folderPopup.IsOpen) { _folderPopup.IsOpen = false; return; }
         // clicking the button while the pop-out is open closes it (the pop-out closes itself on that same click)
         if ((Stopwatch.GetTimestamp() - _popupClosedAt) / (double)Stopwatch.Frequency < 0.25) return;
+        _folders.Width = Math.Min(WindowState == WindowState.Maximized ? 960 : 640, Math.Max(360, ActualWidth - 40));
         _folders.Load(_model.FolderStats(CurrentQuery()), _settings.OffFolders);
         _folderPopup.IsOpen = true;
     }
@@ -325,6 +326,7 @@ public partial class MainWindow : Window
         if (ids) IdBar.Value = _engine.IdsDone / (double)_engine.IdsTotal;
         UpdateChangeIndicator();
         UpdateBanner();
+        if (ViewerRoot.Visibility == Visibility.Visible) Interlocked.Exchange(ref _engine.Pipe.LastUiActivity, Stopwatch.GetTimestamp());
         IdleCleanup();
     }
 
@@ -444,14 +446,41 @@ public partial class MainWindow : Window
     private static DependencyObject? ParentOf(DependencyObject d) =>
         d is System.Windows.Media.Visual || d is System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d);
 
-    /// <summary>The bar is also the title bar: drag it to move the window, double-click it to maximise.</summary>
+    private Point _titleDown; private bool _titleArmed;
+
+    /// <summary>The bar is also the title bar: drag it from anywhere that isn't a control to move the window (also out of maximised); double-click it to maximise.</summary>
     private void OnTitleDown(object s, MouseButtonEventArgs e)
     {
         for (var d = e.OriginalSource as DependencyObject; d != null && d != TopBar; d = ParentOf(d))
             if (d is System.Windows.Controls.Primitives.ButtonBase or TextBox or Slider or ComboBox or System.Windows.Controls.Primitives.Thumb) return;
-        if (e.ClickCount == 2) { OnMaximize(this, e); return; }
+        if (e.ClickCount == 2) { OnMaximize(this, e); e.Handled = true; return; }
+        _titleArmed = true; _titleDown = e.GetPosition(this);
+        TopBar.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void OnTitleMove(object s, MouseEventArgs e)
+    {
+        if (!_titleArmed) return;
+        if (e.LeftButton != MouseButtonState.Pressed) { OnTitleUp(s, null!); return; }
+        var p = e.GetPosition(this);
+        if (Math.Abs(p.X - _titleDown.X) < 4 && Math.Abs(p.Y - _titleDown.Y) < 4) return;
+        _titleArmed = false;
+        TopBar.ReleaseMouseCapture();
+        if (WindowState == WindowState.Maximized)
+        {
+            // come out of maximised with the window under the mouse, like other apps
+            double frac = Math.Clamp(_titleDown.X / Math.Max(1, ActualWidth), 0, 1);
+            var src = PresentationSource.FromVisual(this);
+            var m2d = src?.CompositionTarget?.TransformFromDevice ?? System.Windows.Media.Matrix.Identity;
+            var screen = m2d.Transform(PointToScreen(_titleDown));
+            WindowState = WindowState.Normal;
+            Left = screen.X - Width * frac; Top = Math.Max(0, screen.Y - Math.Min(_titleDown.Y, 24));
+        }
         try { DragMove(); } catch { }
     }
+
+    private void OnTitleUp(object s, MouseButtonEventArgs e) { _titleArmed = false; if (TopBar.IsMouseCaptured) TopBar.ReleaseMouseCapture(); }
 
     private void OnMinimize(object s, RoutedEventArgs e) => WindowState = WindowState.Minimized;
     private void OnMaximize(object s, RoutedEventArgs e) => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
@@ -490,7 +519,7 @@ public partial class MainWindow : Window
     {
         double off = View.Offset, d = off - _lastOffset;
         _lastOffset = off;
-        if (ViewerRoot.Visibility == Visibility.Visible) return;
+        if (ViewerRoot.Visibility == Visibility.Visible || View.InRelayout) return;     // zooming or resizing moves the offset too, but isn't scrolling
         bool before = _barAuto;
         if (off < 30) { _barAuto = false; _barAccum = 0; }
         else if (d > 0) { _barAccum = Math.Max(0, _barAccum) + d; if (_barAccum > 90) _barAuto = true; }
@@ -631,25 +660,109 @@ public partial class MainWindow : Window
 
     private bool _infoMore, _infoHidden;
 
+    private string[] _infoLines = Array.Empty<string>();      // block layout
+    private string _infoOneLine = "";                         // the same details on a single line
+    private double _charW60;
+
+    private static string TrimName(string name, int max)
+    {
+        if (name.Length <= max) return name;
+        string ext = System.IO.Path.GetExtension(name);
+        if (ext.Length > 8) ext = "";
+        int keep = Math.Max(4, max - ext.Length - 1);
+        return name.Substring(0, Math.Min(keep, name.Length - ext.Length)) + "…" + ext;
+    }
+
     private void UpdateInfo(int row)
     {
         var m = _model!;
         string name = System.IO.Path.GetFileName(m.Path[row]);
         string size = m.Size[row] >= 1048576 ? $"{m.Size[row] / 1048576.0:F1} MB" : $"{m.Size[row] / 1024.0:F0} KB";
-        string kind = m.Kind[row] == (byte)MediaKind.Gif ? "  GIF" : "";
-        var lines = new List<string>
-        {
-            $"{_vIndex + 1:N0} / {_paths.Length:N0}    {name}",
-            $"{m.W[row]} x {m.H[row]}    {size}{kind}    {DateTimeOffset.FromUnixTimeSeconds(m.Mtime[row]).ToLocalTime().ToString("d MMM yyyy", CultureInfo.CurrentCulture)}"
-        };
+        string kind = m.Kind[row] == (byte)MediaKind.Gif ? "   GIF" : "";
+        string mod = DateTimeOffset.FromUnixTimeSeconds(m.Mtime[row]).ToLocalTime().ToString("d MMM yyyy", CultureInfo.CurrentCulture);
+        string count = $"{_vIndex + 1:N0} / {_paths.Length:N0}";
+        string facts = $"{m.W[row]} x {m.H[row]}    {size}{kind}    {mod}";
         if (_infoMore)
         {
-            lines.Add(m.Path[row]);
-            lines.Add($"{m.W[row] * (long)m.H[row] / 1e6:F1} megapixels    {size} ({m.Size[row]:N0} bytes)    {(ContentLevel)m.Level[row]}");
-            lines.Add("Added to Ginkgo " + DateTimeOffset.FromUnixTimeSeconds(m.FirstSeen[row]).ToLocalTime().ToString("g", CultureInfo.CurrentCulture));
+            string dir = System.IO.Path.GetDirectoryName(m.Path[row]) ?? "";
+            _infoLines = new[]
+            {
+                $"{count}    {name}",
+                dir,
+                $"{m.W[row]} x {m.H[row]}    {m.W[row] * (long)m.H[row] / 1e6:F1} megapixels    {size} ({m.Size[row]:N0} bytes){kind}    {(ContentLevel)m.Level[row]}",
+                $"Modified {mod}    Added to Ginkgo {DateTimeOffset.FromUnixTimeSeconds(m.FirstSeen[row]).ToLocalTime().ToString("d MMM yyyy", CultureInfo.CurrentCulture)}",
+            };
         }
-        InfoText.Text = string.Join("\n", lines);
+        else
+            _infoLines = new[] { $"{count}    {TrimName(name, Math.Max(12, 60 - count.Length - 4))}", facts };
+        _infoOneLine = $"{count}    {TrimName(name, 36)}    {facts}";
+        PlaceInfo();
+    }
+
+    private void OnViewerSize(object s, SizeChangedEventArgs e) { if (ViewerRoot.Visibility == Visibility.Visible && _model is not null && _vIndex < _order.Length) PlaceInfo(); }
+
+    /// <summary>
+    /// Puts the information box where the picture isn't: below a wide picture, beside a tall one (narrowed so the lines wrap),
+    /// or on one line when only a thin strip is free. If nothing is free it sits over the bottom-left corner.
+    /// </summary>
+    private void PlaceInfo()
+    {
         InfoBox.Visibility = _infoHidden ? Visibility.Collapsed : Visibility.Visible;
+        if (_infoHidden || _model is null || _vIndex >= _order.Length) return;
+        double HW = PicHost.ActualWidth, HH = PicHost.ActualHeight;
+        if (HW < 50 || HH < 50) { HW = ActualWidth; HH = ActualHeight; }
+        if (_charW60 == 0)
+            _charW60 = new FormattedText(new string('0', 60), CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                new Typeface(InfoText.FontFamily, InfoText.FontStyle, InfoText.FontWeight, InfoText.FontStretch), InfoText.FontSize, Brushes.White,
+                VisualTreeHelper.GetDpi(this).PixelsPerDip).Width;
+        int row = _order[_vIndex];
+        double iw = _model.W[row], ih = _model.H[row];
+        // where the picture is on screen
+        double f = iw > 0 && ih > 0 ? Math.Min(HW / iw, HH / ih) : 1;
+        double dw = iw * f * _zoom, dh = ih * f * _zoom, cx = HW / 2 + _panX, cy = HH / 2 + _panY;
+        double left = Math.Max(0, cx - dw / 2), right = Math.Min(HW, cx + dw / 2), top = Math.Max(0, cy - dh / 2), bottom = Math.Min(HH, cy + dh / 2);
+        double padX = 20, padY = 12, m = 12;                               // the box's own padding, and the gap to every edge
+        double leftFree = left, rightFree = HW - right, topFree = top, bottomFree = HH - bottom;
+
+        Size TryMeasure(bool oneLine, double maxW)
+        {
+            InfoText.TextWrapping = oneLine ? TextWrapping.NoWrap : TextWrapping.Wrap;
+            InfoText.Text = oneLine ? _infoOneLine : string.Join("\n", _infoLines);
+            InfoText.MaxWidth = oneLine ? double.PositiveInfinity : Math.Max(120, maxW - padX);
+            InfoBox.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+            return InfoBox.DesiredSize;
+        }
+        double cap = _infoMore ? Math.Max(_charW60, HW * 0.55) : _charW60;     // normally about 60 characters wide; more info may grow
+        bool Fits(Size s, double freeW, double freeH) => s.Width + 2 * m <= freeW && s.Height + 2 * m <= freeH;
+        void Put(double x, double y) { InfoBox.HorizontalAlignment = HorizontalAlignment.Left; InfoBox.VerticalAlignment = VerticalAlignment.Top; InfoBox.Margin = new Thickness(x, y, 0, 0); }
+
+        Size s1;
+        // 1. below the picture, as a block
+        s1 = TryMeasure(false, Math.Min(cap + padX, HW - 2 * m));
+        if (bottomFree > 0 && Fits(s1, HW, bottomFree)) { Put(m, HH - s1.Height - m); return; }
+        // 2. beside the picture on the left, narrowed so it wraps (tallest free strip is the whole height)
+        if (leftFree >= 170)
+        {
+            var s = TryMeasure(false, Math.Min(cap + padX, leftFree - 2 * m));
+            if (Fits(s, leftFree, HH)) { Put(m, HH - s.Height - m); return; }
+        }
+        // 3. below the picture on one line
+        s1 = TryMeasure(true, 0);
+        if (bottomFree > 0 && Fits(s1, HW, bottomFree)) { Put(m, HH - s1.Height - m); return; }
+        // 4. above the picture, block then one line
+        var sb = TryMeasure(false, Math.Min(cap + padX, HW - 2 * m));
+        if (topFree > 0 && Fits(sb, HW, topFree)) { Put(m, m); return; }
+        s1 = TryMeasure(true, 0);
+        if (topFree > 0 && Fits(s1, HW, topFree)) { Put(m, m); return; }
+        // 5. beside the picture on the right
+        if (rightFree >= 170)
+        {
+            var s = TryMeasure(false, Math.Min(cap + padX, rightFree - 2 * m));
+            if (Fits(s, rightFree, HH)) { Put(HW - s.Width - m, HH - s.Height - m); return; }
+        }
+        // 6. nothing free: over the bottom-left corner of the picture
+        var sf = TryMeasure(false, Math.Min(cap + padX, HW - 2 * m));
+        Put(m, Math.Max(m, HH - sf.Height - m));
     }
 
     private void ShowIndex(int index)
@@ -657,28 +770,31 @@ public partial class MainWindow : Window
         _vIndex = Math.Clamp(index, 0, _paths.Length - 1);
         ResetZoom();
         int row = _order[_vIndex];
-        var m = _model!;
         UpdateInfo(row);
+        Interlocked.Exchange(ref _engine.Pipe.LastUiActivity, Stopwatch.GetTimestamp());      // keep the drive free for the picture
         _ = LoadPicture(_vIndex, full: false);
     }
 
     private (int w, int h) FitPixels(int row)
     {
         double dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
-        double hw = Math.Max(200, PicHost.ActualWidth * dpi), hh = Math.Max(200, PicHost.ActualHeight * dpi);
-        return ((int)hw, (int)hh);
+        double w = PicHost.ActualWidth, h = PicHost.ActualHeight;
+        if (w < 50 || h < 50) { w = ActualWidth; h = ActualHeight; }       // the viewer has only just appeared and isn't measured yet
+        return ((int)Math.Max(400, w * dpi), (int)Math.Max(300, h * dpi));
     }
 
     private static BitmapSource? Decode(string path, int decodeW, int decodeH)
     {
         try
         {
+            // read through a stream (not a Uri), so names containing # or % work
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 65536, FileOptions.SequentialScan);
             var bi = new BitmapImage();
             bi.BeginInit();
             bi.CacheOption = BitmapCacheOption.OnLoad;
             bi.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
             if (decodeW > 0) bi.DecodePixelWidth = decodeW; else if (decodeH > 0) bi.DecodePixelHeight = decodeH;
-            bi.UriSource = new Uri(path);
+            bi.StreamSource = fs;
             bi.EndInit();
             bi.Freeze();
             return bi;
@@ -706,7 +822,15 @@ public partial class MainWindow : Window
         if (bmp is null)
         {
             ViewerNote.Text = "";
-            bmp = await Task.Run(() => Decode(path, decodeW, decodeH));
+            var decoding = Task.Run(() => token != _vToken ? null : Decode(path, decodeW, decodeH));
+            var loader = _loader;
+            if (!full && loader is not null)
+            {
+                // meanwhile show the stored 1280 / 320 px picture, so something is on screen at once
+                var quick = await Task.Run(() => loader.QuickPicture(index));
+                if (token == _vToken && quick is not null && !decoding.IsCompleted) Pic.Source = quick;
+            }
+            bmp = await decoding;
             if (bmp is not null && !full) lock (_vCache) CacheAdd(key, bmp);
         }
         if (token != _vToken) return;                                 // moved on to another picture meanwhile
@@ -717,7 +841,7 @@ public partial class MainWindow : Window
         if (!full)
         {
             if (m.Kind[row] == (byte)MediaKind.Gif) ViewerNote.Text = "";
-            _ = Preload(index + 1); _ = Preload(index - 1);
+            _ = Preload(index + 1); _ = Preload(index + 2); _ = Preload(index - 1);
         }
     }
 
@@ -725,7 +849,7 @@ public partial class MainWindow : Window
     {
         if (_vCache.ContainsKey(key)) return;
         _vCache[key] = bmp; _vCacheOrder.Enqueue(key);
-        while (_vCacheOrder.Count > 4) _vCache.Remove(_vCacheOrder.Dequeue());
+        while (_vCacheOrder.Count > 6) _vCache.Remove(_vCacheOrder.Dequeue());
     }
 
     private async Task Preload(int index)
@@ -739,7 +863,8 @@ public partial class MainWindow : Window
         if (decodeW >= w || decodeH >= h) { decodeW = 0; decodeH = 0; }
         string path = m.Path[row], key = path + "|" + decodeW + "x" + decodeH;
         lock (_vCache) if (_vCache.ContainsKey(key)) return;
-        var bmp = await Task.Run(() => Decode(path, decodeW, decodeH));
+        int token0 = _vToken;
+        var bmp = await Task.Run(() => token0 != _vToken ? null : Decode(path, decodeW, decodeH));
         if (bmp is not null) lock (_vCache) CacheAdd(key, bmp);
     }
 
@@ -749,6 +874,7 @@ public partial class MainWindow : Window
     {
         PicScale.ScaleX = PicScale.ScaleY = _zoom;
         PicMove.X = _panX; PicMove.Y = _panY;
+        if (ViewerRoot.Visibility == Visibility.Visible && _model is not null && _vIndex < _order.Length) PlaceInfo();
     }
 
     private void ZoomAt(Point p, double newZoom)
