@@ -7,7 +7,7 @@ namespace Ginkgo.App;
 /// <summary>What the person has asked to see: filters and order.</summary>
 public sealed class ViewQuery
 {
-    public bool Nsfw, Very, Images = true, Gifs = true;
+    public bool General = true, Nsfw, Very, Images = true, Gifs = true;
     public HashSet<string> OffFolders = new(StringComparer.OrdinalIgnoreCase);
     public string Search = "";
     public string Sort = "FirstSeen";
@@ -63,34 +63,17 @@ public sealed class LibraryModel
         return m;
     }
 
-    /// <summary>Is this folder (or one of its parents) switched off?</summary>
-    public static bool IsOff(string folder, HashSet<string> off, Dictionary<string, bool> memo)
-    {
-        if (off.Count == 0) return false;
-        if (memo.TryGetValue(folder, out var v)) return v;
-        bool result = off.Contains(folder);
-        if (!result && folder.Length > 0)
-        {
-            int cut = folder.LastIndexOfAny(new[] { '\\', '/' });
-            result = IsOff(cut < 0 ? "" : folder.Substring(0, cut), off, memo);
-        }
-        memo[folder] = result;
-        return result;
-    }
-
     /// <summary>The rows to show, in order.</summary>
     public int[] Select(ViewQuery q)
     {
-        var memo = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
         var keep = new List<int>(Count);
         string search = q.Search.Trim();
         for (int i = 0; i < Count; i++)
         {
             byte lv = Level[i];
-            if (lv == (byte)ContentLevel.Nsfw && !q.Nsfw) continue;
-            if (lv == (byte)ContentLevel.Very && !q.Very) continue;
+            if (lv == (byte)ContentLevel.General ? !q.General : lv == (byte)ContentLevel.Nsfw ? !q.Nsfw : !q.Very) continue;
             if (Kind[i] == (byte)MediaKind.Image ? !q.Images : !q.Gifs) continue;
-            if (IsOff(Folder[i], q.OffFolders, memo)) continue;
+            if (q.OffFolders.Contains(Folder[i])) continue;
             if (search.Length > 0 && Path[i].IndexOf(search, StringComparison.OrdinalIgnoreCase) < 0) continue;
             keep.Add(i);
         }
@@ -139,24 +122,32 @@ public sealed class LibraryModel
         return (tiers, paths, ow, ids, specs, badges);
     }
 
-    /// <summary>Folder tree with counts, for the Select folders window.</summary>
-    public Dictionary<string, int> FolderCounts(ViewQuery q)
+    public sealed class FolderStat { public int Own; public long Size; public long Newest; }
+
+    /// <summary>Every folder that has files (and its parents), with how much of its OWN content passes the level and type switches.</summary>
+    public Dictionary<string, FolderStat> FolderStats(ViewQuery q)
     {
-        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var stats = new Dictionary<string, FolderStat>(StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < Count; i++)
         {
-            byte lv = Level[i];
-            if (lv == (byte)ContentLevel.Nsfw && !q.Nsfw) continue;
-            if (lv == (byte)ContentLevel.Very && !q.Very) continue;
             string f = Folder[i];
-            while (true)
+            if (!stats.TryGetValue(f, out var st))
             {
-                counts[f] = counts.GetValueOrDefault(f) + 1;
-                if (f.Length == 0) break;
-                int cut = f.LastIndexOfAny(new[] { '\\', '/' });
-                f = cut < 0 ? "" : f.Substring(0, cut);
+                stats[f] = st = new FolderStat();
+                string p = f;                                         // make sure every parent exists too
+                while (p.Length > 0)
+                {
+                    int cut = p.LastIndexOfAny(new[] { '\\', '/' });
+                    p = cut < 0 ? "" : p.Substring(0, cut);
+                    if (p.Length == 0 || stats.ContainsKey(p)) break;
+                    stats[p] = new FolderStat();
+                }
             }
+            byte lv = Level[i];
+            if (lv == (byte)ContentLevel.General ? !q.General : lv == (byte)ContentLevel.Nsfw ? !q.Nsfw : !q.Very) continue;
+            if (Kind[i] == (byte)MediaKind.Image ? !q.Images : !q.Gifs) continue;
+            st.Own++; st.Size += Size[i]; if (FirstSeen[i] > st.Newest) st.Newest = FirstSeen[i];
         }
-        return counts;
+        return stats;
     }
 }

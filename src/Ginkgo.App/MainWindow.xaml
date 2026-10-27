@@ -1,78 +1,128 @@
 <Window x:Class="Ginkgo.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:shell="clr-namespace:System.Windows.Shell;assembly=PresentationFramework"
         xmlns:local="clr-namespace:Ginkgo.App"
-        Title="Ginkgo" Width="1400" Height="900" MinWidth="720" MinHeight="480" Background="#121214"
-        UseLayoutRounding="True" SnapsToDevicePixels="True" PreviewKeyDown="OnKey">
-    <Grid>
+        Title="Ginkgo" Width="1400" Height="900" MinWidth="760" MinHeight="480" Background="#121214"
+        UseLayoutRounding="True" SnapsToDevicePixels="True" PreviewKeyDown="OnKey" StateChanged="OnStateChanged">
+    <shell:WindowChrome.WindowChrome>
+        <shell:WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0" UseAeroCaptionButtons="False" CornerRadius="0"/>
+    </shell:WindowChrome.WindowChrome>
+    <Grid x:Name="Root">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- notices: library missing, or a big removal that was held back -->
-        <Border x:Name="Banner" Grid.Row="0" Background="#5A4A1E" Padding="12,6" Visibility="Collapsed">
-            <DockPanel>
-                <StackPanel x:Name="BannerButtons" Orientation="Horizontal" DockPanel.Dock="Right"/>
-                <TextBlock x:Name="BannerText" Foreground="White" VerticalAlignment="Center" TextWrapping="Wrap"/>
-            </DockPanel>
-        </Border>
-
-        <Border Grid.Row="1" Background="{StaticResource Bar}" Padding="10,8">
-            <WrapPanel Orientation="Horizontal">
-                <ToggleButton x:Name="NavHome" Content="Home" IsChecked="True"/>
-                <ToggleButton Content="Browse" IsEnabled="False" ToolTip="Coming in the next build"/>
-                <ToggleButton Content="Favourites" IsEnabled="False" ToolTip="Coming in a later build"/>
-                <ToggleButton Content="Tools" IsEnabled="False" ToolTip="Coming in a later build"/>
-                <Rectangle Width="1" Fill="#3A3A42" Margin="6,2,12,2"/>
-                <Button x:Name="FoldersBtn" Content="Select folders" Click="OnFolders"/>
-                <ToggleButton x:Name="ImagesBtn" Content="Images" IsChecked="True" Click="OnFilterChanged"/>
-                <ToggleButton x:Name="GifsBtn" Content="GIFs" IsChecked="True" Click="OnFilterChanged"/>
-                <ToggleButton x:Name="NsfwBtn" Content="NSFW" Click="OnFilterChanged" ToolTip="Show NSFW files (N)"/>
-                <ToggleButton x:Name="VeryBtn" Content="Very" Click="OnFilterChanged" ToolTip="Show Very files (V)"/>
-                <Rectangle Width="1" Fill="#3A3A42" Margin="6,2,12,2"/>
-                <TextBlock Text="Search" Foreground="{StaticResource Dim}" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                <TextBox x:Name="SearchBox" Width="190" Margin="0,0,12,0" VerticalContentAlignment="Center" TextChanged="OnSearchChanged"/>
-                <TextBlock Text="Sort" Foreground="{StaticResource Dim}" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                <ComboBox x:Name="SortBox" Width="150" Margin="0,0,6,0" SelectionChanged="OnSortChanged">
-                    <ComboBoxItem Content="Newest first seen" Tag="FirstSeen"/>
-                    <ComboBoxItem Content="Newest modified" Tag="Modified"/>
-                    <ComboBoxItem Content="Name A to Z" Tag="Name"/>
-                    <ComboBoxItem Content="Largest file" Tag="SizeDesc"/>
-                    <ComboBoxItem Content="Smallest file" Tag="SizeAsc"/>
-                    <ComboBoxItem Content="Most pixels" Tag="Largest"/>
-                    <ComboBoxItem Content="Random" Tag="Random"/>
-                </ComboBox>
-                <Button x:Name="ShuffleBtn" Content="Reshuffle" Visibility="Collapsed" Click="OnReshuffle"/>
-                <TextBlock Text="Size" Foreground="{StaticResource Dim}" VerticalAlignment="Center" Margin="6,0,6,0"/>
-                <Slider x:Name="SizeSlider" Width="130" Minimum="80" Maximum="700" VerticalAlignment="Center" Margin="0,0,12,0" ValueChanged="OnSizeChanged"/>
-                <Button x:Name="SettingsBtn" Content="Settings" Click="OnSettings"/>
-            </WrapPanel>
-        </Border>
-
-        <Grid Grid.Row="2">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
+        <!-- the picture grid fills the window; the bar floats over its top -->
+        <Grid Grid.Row="0">
             <local:MasonryView x:Name="View"/>
-            <ScrollBar x:Name="Bar" Grid.Column="1" Orientation="Vertical" Width="16" ValueChanged="OnBarChanged"/>
-            <TextBlock x:Name="EmptyNote" Grid.ColumnSpan="2" Foreground="{StaticResource Dim}" FontSize="16" HorizontalAlignment="Center"
+            <ScrollBar x:Name="Scroll" Orientation="Vertical" HorizontalAlignment="Right" ValueChanged="OnBarChanged"/>
+            <TextBlock x:Name="EmptyNote" Foreground="{StaticResource Dim}" FontSize="16" HorizontalAlignment="Center"
                        VerticalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="560" Visibility="Collapsed"/>
         </Grid>
 
-        <Border Grid.Row="3" Background="{StaticResource Bar}" Padding="10,5">
+        <Border Grid.Row="1" Background="{StaticResource Bar}" Padding="12,5">
             <DockPanel>
-                <Button x:Name="UpdateBtn" DockPanel.Dock="Right" Content="Update view" Visibility="Collapsed" Margin="8,0,0,0" Click="OnUpdateView"/>
-                <TextBlock x:Name="CountText" DockPanel.Dock="Right" Foreground="{StaticResource Text}" Margin="12,0,0,0"/>
-                <TextBlock x:Name="StatusText" Foreground="{StaticResource Dim}" TextTrimming="CharacterEllipsis"/>
+                <Button x:Name="UpdateBtn" DockPanel.Dock="Right" Content="Update view" Visibility="Collapsed" Margin="8,0,0,0" Padding="8,2" Click="OnUpdateView"/>
+                <TextBlock x:Name="CountText" DockPanel.Dock="Right" Foreground="{StaticResource Text}" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                <ProgressBar x:Name="IdBar" DockPanel.Dock="Right" Width="120" Minimum="0" Maximum="1" Margin="12,0,0,0" Visibility="Collapsed" VerticalAlignment="Center"/>
+                <TextBlock x:Name="StatusText" Foreground="{StaticResource Dim}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
             </DockPanel>
         </Border>
 
+        <!-- the top bar: also the window's title bar. It slides away when you scroll down. -->
+        <StackPanel x:Name="BarHost" Grid.RowSpan="2" VerticalAlignment="Top">
+            <StackPanel.RenderTransform><TranslateTransform x:Name="BarShift"/></StackPanel.RenderTransform>
+            <Border x:Name="TopBar" Background="{StaticResource Bar}" MouseLeftButtonDown="OnTitleDown">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <WrapPanel Orientation="Horizontal" Margin="8,6,0,2" VerticalAlignment="Center">
+                        <Button Style="{StaticResource IconButton}" Content="&#xE700;" Height="28" Width="36" Margin="0,0,8,4" ToolTip="Menu (Ctrl+B)" Click="OnSidebarToggle"/>
+                        <TextBlock Text="Ginkgo" FontWeight="SemiBold" FontSize="14" Foreground="{StaticResource Text}" VerticalAlignment="Center" Margin="0,0,16,4"/>
+                        <Button x:Name="FoldersBtn" Content="Select folders" Height="28" Margin="0,0,6,4" Click="OnFolders"/>
+                        <ToggleButton x:Name="ImagesBtn" Content="Images" Height="28" Margin="0,0,6,4" IsChecked="True" Click="OnFilterChanged"/>
+                        <ToggleButton x:Name="GifsBtn" Content="GIFs" Height="28" Margin="0,0,6,4" IsChecked="True" Click="OnFilterChanged"/>
+                        <ToggleButton x:Name="GeneralBtn" Content="General" Height="28" Margin="0,0,6,4" IsChecked="True" Click="OnFilterChanged" ToolTip="Show General files (G)"/>
+                        <ToggleButton x:Name="NsfwBtn" Content="NSFW" Height="28" Margin="0,0,6,4" Click="OnFilterChanged" ToolTip="Show NSFW files (N)"/>
+                        <ToggleButton x:Name="VeryBtn" Content="Very" Height="28" Margin="0,0,14,4" Click="OnFilterChanged" ToolTip="Show Very files (V)"/>
+                        <TextBox x:Name="SearchBox" Width="170" Height="28" Margin="0,0,14,4" VerticalContentAlignment="Center" TextChanged="OnSearchChanged" ToolTip="Search file and folder names (/ or Ctrl+F)"/>
+                        <ComboBox x:Name="SortBox" Width="150" Margin="0,0,6,4" SelectionChanged="OnSortChanged">
+                            <ComboBoxItem Content="Newest first seen" Tag="FirstSeen"/>
+                            <ComboBoxItem Content="Newest modified" Tag="Modified"/>
+                            <ComboBoxItem Content="Name A to Z" Tag="Name"/>
+                            <ComboBoxItem Content="Largest file" Tag="SizeDesc"/>
+                            <ComboBoxItem Content="Smallest file" Tag="SizeAsc"/>
+                            <ComboBoxItem Content="Most pixels" Tag="Largest"/>
+                            <ComboBoxItem Content="Random" Tag="Random"/>
+                        </ComboBox>
+                        <Button x:Name="ShuffleBtn" Content="Reshuffle" Height="28" Margin="0,0,6,4" Visibility="Collapsed" Click="OnReshuffle"/>
+                        <Slider x:Name="SizeSlider" Width="120" Minimum="0" Maximum="1" Margin="8,0,8,4" VerticalAlignment="Center" ValueChanged="OnSizeChanged" ToolTip="Picture size (Ctrl + mouse wheel, + and -)"/>
+                        <ToggleButton x:Name="RowsBtn" Content="Equal rows" Height="28" Margin="0,0,6,4" Click="OnLayoutChanged" ToolTip="Rows of equal height instead of equal-width columns (L)"/>
+                        <Button x:Name="KeysBtn" Style="{StaticResource IconButton}" Content="&#xE765;" Height="28" Width="34" Margin="0,0,2,4" ToolTip="Keyboard shortcuts (K)" Click="OnKeysClick"/>
+                        <Button x:Name="HideBarBtn" Style="{StaticResource IconButton}" Content="&#xE70E;" Height="28" Width="34" Margin="0,0,2,4" ToolTip="Hide this bar (H)" Click="OnHideBar"/>
+                    </WrapPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                        <Button Style="{StaticResource IconButton}" Content="&#xE921;" Width="46" Height="38" FontSize="10" Click="OnMinimize"/>
+                        <Button x:Name="MaxBtn" Style="{StaticResource IconButton}" Content="&#xE922;" Width="46" Height="38" FontSize="10" Click="OnMaximize"/>
+                        <Button Style="{StaticResource CloseButton}" Content="&#xE8BB;" Width="46" Height="38" FontSize="10" Click="OnClose"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+            <Border x:Name="Banner" Background="#5A4A1E" Padding="12,6" Visibility="Collapsed">
+                <DockPanel>
+                    <StackPanel x:Name="BannerButtons" Orientation="Horizontal" DockPanel.Dock="Right"/>
+                    <TextBlock x:Name="BannerText" Foreground="White" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                </DockPanel>
+            </Border>
+        </StackPanel>
+
+        <!-- hover here to bring a hidden bar back; or use the little button -->
+        <Border x:Name="HoverStrip" Grid.RowSpan="2" VerticalAlignment="Top" Height="6" Background="Transparent" Visibility="Collapsed" Margin="0,0,150,0"/>
+        <Button x:Name="ShowBarBtn" Grid.RowSpan="2" Style="{StaticResource IconButton}" Content="&#xE70D;" Width="34" Height="26" FontSize="11" HorizontalAlignment="Right"
+                VerticalAlignment="Top" Margin="0,4,18,0" Background="#99000000" Visibility="Collapsed" ToolTip="Show the bar (H)" Click="OnShowBar"/>
+
+        <!-- side menu -->
+        <Grid x:Name="SideLayer" Grid.RowSpan="2" Visibility="Collapsed">
+            <Border x:Name="Scrim" Background="#88000000" MouseLeftButtonDown="OnScrimDown"/>
+            <Border x:Name="Side" Width="260" HorizontalAlignment="Left" Background="#17171B" BorderBrush="#2E2E35" BorderThickness="0,0,1,0">
+                <Border.RenderTransform><TranslateTransform x:Name="SideShift" X="-260"/></Border.RenderTransform>
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8,6,0,14">
+                        <Button Style="{StaticResource IconButton}" Content="&#xE700;" Height="28" Width="36" Margin="0,0,8,0" Click="OnSidebarToggle"/>
+                        <TextBlock Text="Ginkgo" FontWeight="SemiBold" FontSize="14" Foreground="{StaticResource Text}" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <StackPanel DockPanel.Dock="Bottom" Margin="0,0,0,10">
+                        <ToggleButton Style="{StaticResource SideItem}" Click="OnSideSettings">
+                            <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" Width="28" FontSize="15"/><TextBlock Text="Settings"/></StackPanel>
+                        </ToggleButton>
+                        <ToggleButton Style="{StaticResource SideItem}" Click="OnSideKeys">
+                            <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE765;" FontFamily="Segoe MDL2 Assets" Width="28" FontSize="15"/><TextBlock Text="Keyboard shortcuts"/><TextBlock Text="  K" Foreground="{StaticResource Dim}"/></StackPanel>
+                        </ToggleButton>
+                    </StackPanel>
+                    <StackPanel>
+                        <ToggleButton x:Name="NavHome" Style="{StaticResource SideItem}" IsChecked="True" Click="OnNav" Tag="Home">
+                            <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE80F;" FontFamily="Segoe MDL2 Assets" Width="28" FontSize="15"/><TextBlock Text="Home"/><TextBlock Text="  Ctrl+1" Foreground="{StaticResource Dim}" FontSize="11" VerticalAlignment="Center"/></StackPanel>
+                        </ToggleButton>
+                        <ToggleButton x:Name="NavBrowse" Style="{StaticResource SideItem}" Click="OnNav" Tag="Browse">
+                            <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" Width="28" FontSize="15"/><TextBlock Text="Browse"/><TextBlock Text="  soon" Foreground="{StaticResource Dim}" FontSize="11" VerticalAlignment="Center"/></StackPanel>
+                        </ToggleButton>
+                        <ToggleButton x:Name="NavFav" Style="{StaticResource SideItem}" Click="OnNav" Tag="Favourites">
+                            <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE734;" FontFamily="Segoe MDL2 Assets" Width="28" FontSize="15"/><TextBlock Text="Favourites"/><TextBlock Text="  soon" Foreground="{StaticResource Dim}" FontSize="11" VerticalAlignment="Center"/></StackPanel>
+                        </ToggleButton>
+                        <ToggleButton x:Name="NavTools" Style="{StaticResource SideItem}" Click="OnNav" Tag="Tools">
+                            <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE90F;" FontFamily="Segoe MDL2 Assets" Width="28" FontSize="15"/><TextBlock Text="Tools"/><TextBlock Text="  soon" Foreground="{StaticResource Dim}" FontSize="11" VerticalAlignment="Center"/></StackPanel>
+                        </ToggleButton>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+        </Grid>
+
         <!-- viewer -->
-        <Grid x:Name="ViewerRoot" Grid.RowSpan="4" Background="Black" Visibility="Collapsed" Focusable="True">
+        <Grid x:Name="ViewerRoot" Grid.RowSpan="2" Background="Black" Visibility="Collapsed" Focusable="True">
             <Grid x:Name="PicHost" ClipToBounds="True" Background="Black" MouseWheel="OnViewerWheel" MouseLeftButtonDown="OnViewerDown"
                   MouseMove="OnViewerMove" MouseLeftButtonUp="OnViewerUp">
                 <Image x:Name="Pic" Stretch="Uniform" RenderTransformOrigin="0.5,0.5" RenderOptions.BitmapScalingMode="HighQuality">
@@ -85,17 +135,21 @@
                 </Image>
                 <TextBlock x:Name="ViewerNote" Foreground="#C0C0C0" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="16"/>
             </Grid>
-            <Border x:Name="ViewerBar" VerticalAlignment="Top" Background="#CC000000" Padding="12,8">
-                <DockPanel>
-                    <Button DockPanel.Dock="Right" Content="Close (Esc)" Click="OnViewerClose"/>
-                    <TextBlock x:Name="ViewerTitle" Foreground="White" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                </DockPanel>
+            <Border x:Name="InfoBox" HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="14" Padding="10,6" CornerRadius="5"
+                    Background="#8C000000" IsHitTestVisible="False">
+                <TextBlock x:Name="InfoText" Foreground="#E8E8EC" FontSize="12" LineHeight="17" MaxWidth="640" TextWrapping="Wrap"/>
             </Border>
-            <Border x:Name="InfoPanel" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,48,12,0" Background="#E6101014" Padding="14,10" MinWidth="280" Visibility="Collapsed">
-                <TextBlock x:Name="InfoText" Foreground="White" FontFamily="Consolas" TextWrapping="Wrap" MaxWidth="460"/>
+        </Grid>
+
+        <!-- keyboard shortcuts -->
+        <Grid x:Name="KeysLayer" Grid.RowSpan="2" Background="#CC000000" Visibility="Collapsed" MouseLeftButtonDown="OnKeysLayerDown">
+            <Border Background="#1E1E23" BorderBrush="#3A3A42" BorderThickness="1" CornerRadius="8" Padding="22,16" HorizontalAlignment="Center" VerticalAlignment="Center" MouseLeftButtonDown="OnKeysPanelDown">
+                <StackPanel>
+                    <TextBlock x:Name="KeysTitle" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource Text}" Margin="0,0,0,10"/>
+                    <Grid x:Name="KeysGrid"/>
+                    <TextBlock Text="Press K or Esc to close" Foreground="{StaticResource Dim}" Margin="0,12,0,0" FontSize="12"/>
+                </StackPanel>
             </Border>
-            <TextBlock x:Name="ViewerHint" VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,12" Foreground="#80FFFFFF"
-                       Text="Arrows: previous / next    0: fit    1: 100%    I: info    H: hide interface    F: full screen    Esc: close"/>
         </Grid>
     </Grid>
 </Window>

@@ -16,6 +16,8 @@ public sealed class Engine : IDisposable
     public ThumbStores? Stores { get; private set; }
     public PipelineStats Pipe { get; } = new();
     public volatile string Status = "starting...";
+    /// <summary>Reading each file's identity from the drive (this is what makes the disk busy after an update).</summary>
+    public volatile bool IdsRunning; public int IdsDone, IdsTotal; public volatile bool IdsFinished;
     public volatile bool LibraryOffline;
     /// <summary>A scan wanted to hide a large share of the library and was stopped (null = no).</summary>
     public ScanResult? SafetyStop { get; private set; }
@@ -83,8 +85,10 @@ public sealed class Engine : IDisposable
                     if (changes > 0) { Interlocked.Add(ref _changesSinceView, changes); DataChanged?.Invoke(); }
                 }
             }
+            IdsRunning = true; IdsFinished = false;
+            try { FileIdBackfill.Run(Db, Settings.LibraryRoot, FileIdProviders.Default, (d, t) => { IdsDone = d; IdsTotal = t; }, ct); IdsFinished = true; }
+            finally { IdsRunning = false; }
             await MakeThumbnails(ct);
-            FileIdBackfill.Run(Db, Settings.LibraryRoot, FileIdProviders.Default, null, ct);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { Status = "problem: " + ex.Message; }

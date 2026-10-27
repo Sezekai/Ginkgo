@@ -54,6 +54,35 @@ var span = MasonryLayout.Compute(new[] { new ItemSpec(1), new ItemSpec(1), new I
 Check(span.W[2] == 210 && span.Y[2] >= span.Y[0] + span.H[0], "spanning item sits below both columns");
 
 // ---- Grid ----
+// justified rows: every row shares one height and fills the width
+{
+    var rndJ = new Random(7);
+    var its = new ItemSpec[500];
+    for (int i = 0; i < its.Length; i++) its[i] = new ItemSpec(0.4f + (float)rndJ.NextDouble() * 2.2f);
+    var jr = JustifiedLayout.Compute(its, 1200, 200, 3);
+    bool rowsOk = true, fill = true, noOverlap = true;
+    int a0 = 0;
+    while (a0 < its.Length)
+    {
+        int b0 = a0;
+        while (b0 + 1 < its.Length && jr.Y[b0 + 1] == jr.Y[a0]) b0++;
+        for (int i = a0; i <= b0; i++) if (Math.Abs(jr.H[i] - jr.H[a0]) > 0.001f) rowsOk = false;
+        if (b0 + 1 < its.Length && Math.Abs(jr.X[b0] + jr.W[b0] - 1200) > 0.05f) fill = false;     // every row but the last reaches the right edge
+        for (int i = a0; i < b0; i++) if (jr.X[i] + jr.W[i] + 3 > jr.X[i + 1] + 0.01f) noOverlap = false;
+        if (b0 + 1 < its.Length && jr.H[a0] > 200.01f) rowsOk = false;                              // never taller than the target
+        a0 = b0 + 1;
+    }
+    Check(rowsOk, "justified: tiles in a row share one height, never above target");
+    Check(fill, "justified: rows fill the full width");
+    Check(noOverlap, "justified: no overlap in a row");
+    var visJ = new List<int>();
+    jr.GetVisible(2000, 2600, visJ);
+    bool visOk = visJ.Count > 0;
+    for (int i = 0; i < its.Length; i++) { bool inside = jr.Y[i] + jr.H[i] >= 2000 && jr.Y[i] <= 2600; if (inside != visJ.Contains(i)) visOk = false; }
+    Check(visOk, "justified: visible-range search is exact");
+    Check(Math.Abs(jr.H[its.Length - 1] - 200) < 0.01f || jr.H[its.Length - 1] < 200, "justified: last row is not stretched");
+    Check(JustifiedLayout.Compute(new ItemSpec[0], 500, 100, 3).TotalHeight == 0, "justified: empty list");
+}
 var g = new GridLayout(1003, 1000, 4, 1f, 0);
 Check(g.VisibleRange(0, 10) == (0, 4), "grid first row");
 Check(g.VisibleRange(250, 260) == (4, 8), "grid second row");

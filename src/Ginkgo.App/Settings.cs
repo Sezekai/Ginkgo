@@ -9,16 +9,24 @@ public sealed class AppSettings
     public string LibraryRoot { get; set; } = @"E:\Pictures\IMGs";
     public string CacheDir { get; set; } = @"E:\GinkgoCache";
 
-    // content levels: General is always shown; these are the two global switches
-    public bool ShowNsfw { get; set; }
-    public bool ShowVery { get; set; }
+    // content levels. NSFW and Very are never remembered: the app always starts with them off.
+    public bool ShowGeneral { get; set; } = true;
+    [System.Text.Json.Serialization.JsonIgnore] public bool ShowNsfw { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore] public bool ShowVery { get; set; }
 
     // what kinds of file are shown
     public bool ShowImages { get; set; } = true;
     public bool ShowGifs { get; set; } = true;
 
-    /// <summary>Folders switched off in Select folders (paths relative to the library). A folder inside an off folder is off too.</summary>
+    /// <summary>Folders whose OWN files are hidden (paths relative to the library). A folder's subfolders are separate entries.</summary>
     public List<string> OffFolders { get; set; } = new();
+    /// <summary>1 = old rule (an off folder also hid everything inside it); 2 = each folder stands alone.</summary>
+    public int FolderRulesVersion { get; set; } = 2;
+    public string FolderSort { get; set; } = "Name";
+    public bool FolderSortReverse { get; set; }
+    /// <summary>true = rows of equal height; false = equal-width columns.</summary>
+    public bool RowsLayout { get; set; }
+    public bool BarHidden { get; set; }
 
     public string Sort { get; set; } = "FirstSeen";
     public float TileSize { get; set; } = 220;
@@ -35,7 +43,16 @@ public sealed class AppSettings
 
     public static AppSettings Load()
     {
-        try { if (File.Exists(FilePath)) return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath)) ?? new(); }
+        try
+        {
+            if (File.Exists(FilePath))
+            {
+                string text = File.ReadAllText(FilePath);
+                var s = JsonSerializer.Deserialize<AppSettings>(text) ?? new();
+                if (!text.Contains("FolderRulesVersion")) s.FolderRulesVersion = 1;
+                return s;
+            }
+        }
         catch { }
         return new();
     }

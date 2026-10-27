@@ -62,11 +62,13 @@ public sealed class WindowsFileIds : IFileIdProvider
 /// <summary>Fills in the IDs of files and folders that were indexed before IDs were tracked (or whose ID couldn't be read at the time).</summary>
 public static class FileIdBackfill
 {
-    public static int Run(IndexDb db, string root, IFileIdProvider? provider, Action<int>? progress, CancellationToken ct)
+    /// <param name="progress">(done, total) after every batch.</param>
+    public static int Run(IndexDb db, string root, IFileIdProvider? provider, Action<int, int>? progress, CancellationToken ct)
     {
         if (provider is null) return 0;
         int done = 0;
         using var c = db.Open();
+        var work = new List<(string table, bool isDir, List<(long id, string path)> rows)>();
         foreach (var (table, isDir) in new[] { ("files", false), ("folders", true) })
         {
             var todo = new List<(long id, string path)>();
@@ -76,12 +78,19 @@ public static class FileIdBackfill
                 using var r = cmd.ExecuteReader();
                 while (r.Read()) todo.Add((r.GetInt64(0), r.GetString(1)));
             }
-            for (int at = 0; at < todo.Count; at += 2000)
+            todo.Sort((a, b) => string.CompareOrdinal(a.path, b.path));      // folder by folder: the drive moves the least this way
+            work.Add((table, isDir, todo));
+        }
+        int total = work.Sum(w => w.rows.Count);
+        progress?.Invoke(0, total);
+        foreach (var (table, isDir, todo) in work)
+        {
+            for (int at = 0; at < todo.Count; at += 1000)
             {
                 ct.ThrowIfCancellationRequested();
-                var batch = todo.GetRange(at, Math.Min(2000, todo.Count - at));
+                var batch = todo.GetRange(at, Math.Min(1000, todo.Count - at));
                 var ids = new string?[batch.Count];
-                Parallel.For(0, batch.Count, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = ct }, i =>
+                Parallel.For(0, batch.Count, new ParallelOptions { MaxDegreeOfParallelism = 2, CancellationToken = ct }, i =>
                     ids[i] = provider.GetFileId(isDir ? Path.Combine(root, batch[i].path) : batch[i].path, isDir));
                 using var tx = c.BeginTransaction();
                 using var up = c.CreateCommand();
@@ -92,7 +101,7 @@ public static class FileIdBackfill
                 for (int i = 0; i < batch.Count; i++)
                     if (ids[i] is not null) { pf.Value = ids[i]; pi.Value = batch[i].id; up.ExecuteNonQuery(); done++; }
                 tx.Commit();
-                progress?.Invoke(done);
+                progress?.Invoke(Math.Min(total, at + batch.Count + (table == "folders" ? work[0].rows.Count : 0)), total);
             }
         }
         return done;

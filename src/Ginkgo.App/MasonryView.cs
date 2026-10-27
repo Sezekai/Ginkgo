@@ -16,7 +16,7 @@ public sealed class MasonryView : FrameworkElement
     private string[]? _labels;
     private double _offset;
     private float _tileTarget = 220;
-    private const float Gap = 6;
+    private const float Gap = 3;
     private readonly List<int> _visible = new();
     private readonly Typeface _face = new("Segoe UI");
     private readonly Brush[] _palette;
@@ -120,7 +120,10 @@ public sealed class MasonryView : FrameworkElement
 
     private void OnRefresh(object? sender, EventArgs e) { if (_fadingNow) { _fadingNow = false; InvalidateVisual(); } }
 
-    public double TotalHeight => _layout?.TotalHeight ?? 0;
+    public double TotalHeight => _layout is null ? 0 : _layout.TotalHeight + _inset;
+    private float _inset;
+    /// <summary>Empty space above the first row (room for the bar that floats over the top).</summary>
+    public float TopInset { get => _inset; set { if (Math.Abs(value - _inset) < 0.5f) return; _inset = value; Relayout(); } }
     public int ItemCount => _items.Length;
     public int LastVisibleCount { get; private set; }
     public double LastRenderMs { get; private set; }
@@ -128,8 +131,16 @@ public sealed class MasonryView : FrameworkElement
     public float TileTarget
     {
         get => _tileTarget;
-        set { _tileTarget = Math.Clamp(value, 60, 1800); Relayout(); }
+        set { float v = Math.Clamp(value, MinTile, MaxTile); if (Math.Abs(v - _tileTarget) < 0.01f) return; _tileTarget = v; Relayout(); TileTargetChanged?.Invoke(v); }
     }
+
+    public const float MinTile = 60, MaxTile = 1800;
+    /// <summary>Raised whenever the size changes (slider, Ctrl+wheel), so the slider can follow.</summary>
+    public event Action<float>? TileTargetChanged;
+
+    private bool _rows;
+    /// <summary>false = equal-width columns; true = rows of equal height (the size is then the row height).</summary>
+    public bool RowsMode { get => _rows; set { if (_rows == value) return; _rows = value; Relayout(); } }
 
     public void SetItems(ItemSpec[] items, string[]? labels, bool keepPosition = false)
     {
@@ -155,9 +166,14 @@ public sealed class MasonryView : FrameworkElement
         if (ActualWidth < 50 || _items.Length == 0) { _layout = null; InvalidateVisual(); ScrollChanged?.Invoke(); return; }
         // keep the same position in the content after a resize/zoom
         double frac = TotalHeight > 0 ? _offset / TotalHeight : 0;
-        int cols = MasonryLayout.ColumnsFor((float)ActualWidth, _tileTarget, Gap);
-        _layout = MasonryLayout.Compute(_items, (float)ActualWidth, cols, Gap);
-        _offset = Math.Clamp(frac * _layout.TotalHeight, 0, Math.Max(0, _layout.TotalHeight - ActualHeight));
+        if (_rows) _layout = JustifiedLayout.Compute(_items, (float)ActualWidth, _tileTarget, Gap);
+        else
+        {
+            int cols = MasonryLayout.ColumnsFor((float)ActualWidth, _tileTarget, Gap);
+            _layout = MasonryLayout.Compute(_items, (float)ActualWidth, cols, Gap);
+        }
+        if (_inset > 0) for (int i = 0; i < _layout.Y.Length; i++) _layout.Y[i] += _inset;
+        _offset = Math.Clamp(frac * TotalHeight, 0, Math.Max(0, TotalHeight - ActualHeight));
         _target = _offset;
         _lastWidth = ActualWidth;
         InvalidateVisual(); ScrollChanged?.Invoke();

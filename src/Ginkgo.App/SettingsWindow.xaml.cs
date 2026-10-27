@@ -15,6 +15,7 @@ public partial class SettingsWindow : Window
     public SettingsWindow(MainWindow main, AppSettings s, Engine engine)
     {
         InitializeComponent();
+        Theme.DarkTitleBar(this);
         _main = main; _s = s; _engine = engine;
         LibraryBox.Text = s.LibraryRoot;
         CacheLine.Text = "Cache and index: thumbnails are kept in " + s.CacheDir + " and the index in " + AppSettings.IndexPath;

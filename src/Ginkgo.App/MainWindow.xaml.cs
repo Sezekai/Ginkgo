@@ -20,13 +20,32 @@ public partial class MainWindow : Window
     private ThumbLoader? _loader;
     private int[] _order = Array.Empty<int>();       // model rows shown, in order
     private string[] _paths = Array.Empty<string>();
-    private bool _syncing, _loading = true;
+    private bool _syncing, _loading = true, _syncingSize;
     private int _buildVersion;
     private int _randomSeed = Environment.TickCount;
     private readonly DispatcherTimer _searchDelay = new() { Interval = TimeSpan.FromMilliseconds(250) };
+    private readonly DispatcherTimer _folderDelay = new() { Interval = TimeSpan.FromMilliseconds(140) };
+    private readonly DispatcherTimer _barTimer = new() { Interval = TimeSpan.FromMilliseconds(120) };
     private int _frames; private long _lastTick = Stopwatch.GetTimestamp(); private double _fps;
     private string _bannerKind = "";
     private long _lastGc = Stopwatch.GetTimestamp();
+
+    // folder pop-out
+    private readonly System.Windows.Controls.Primitives.Popup _folderPopup;
+    private readonly FolderPanel _folders;
+    private long _popupClosedAt;
+
+    // top bar
+    private bool _barManual, _barAuto, _barShown = true;
+    private double _barAccum, _lastOffset;
+    private long _barShownAt, _ignoreOverUntil;
+
+    // side menu
+    private bool _sideOpen;
+
+    private const float TileMin = 60, TileMax = 1800;
+    private static double SizeToSlider(float size) => Math.Log(Math.Clamp(size, TileMin, TileMax) / TileMin) / Math.Log(TileMax / TileMin);
+    private static float SliderToSize(double t) => (float)(TileMin * Math.Pow(TileMax / TileMin, Math.Clamp(t, 0, 1)));
 
     public MainWindow()
     {
@@ -34,22 +53,49 @@ public partial class MainWindow : Window
         System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.SustainedLowLatency;
         _engine = new Engine(_settings);
 
-        // restore what the person last chose
-        NsfwBtn.IsChecked = _settings.ShowNsfw; VeryBtn.IsChecked = _settings.ShowVery;
+        // restore what the person last chose (NSFW and Very always start off)
+        GeneralBtn.IsChecked = _settings.ShowGeneral; NsfwBtn.IsChecked = false; VeryBtn.IsChecked = false;
         ImagesBtn.IsChecked = _settings.ShowImages; GifsBtn.IsChecked = _settings.ShowGifs;
-        SizeSlider.Value = _settings.TileSize; View.TileTarget = _settings.TileSize;
+        RowsBtn.IsChecked = _settings.RowsLayout; View.RowsMode = _settings.RowsLayout;
+        SizeSlider.Value = SizeToSlider(_settings.TileSize); View.TileTarget = _settings.TileSize;
+        View.TileTargetChanged += size =>
+        {
+            _settings.TileSize = size;
+            _syncingSize = true; SizeSlider.Value = SizeToSlider(size); _syncingSize = false;
+        };
         foreach (ComboBoxItem it in SortBox.Items) if ((string)it.Tag == _settings.Sort) SortBox.SelectedItem = it;
         if (SortBox.SelectedItem is null) SortBox.SelectedIndex = 0;
         ShuffleBtn.Visibility = _settings.Sort == "Random" ? Visibility.Visible : Visibility.Collapsed;
         View.LookAheadWindows = _settings.LookAheadWindows;
+        _barManual = _settings.BarHidden;
+        UpdateFoldersLabel();
+
+        _folders = new FolderPanel(_settings.FolderSort, _settings.FolderSortReverse);
+        _folders.Changed += off =>
+        {
+            _settings.OffFolders = off.ToList();
+            UpdateFoldersLabel();
+            _folderDelay.Stop(); _folderDelay.Start();
+        };
+        _folders.SortChanged += (key, rev) => { _settings.FolderSort = key; _settings.FolderSortReverse = rev; };
+        _folders.Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 14, ShadowDepth = 3, Opacity = 0.55 };
+        _folderPopup = new System.Windows.Controls.Primitives.Popup
+        {
+            PlacementTarget = FoldersBtn, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom, StaysOpen = false,
+            AllowsTransparency = true, PopupAnimation = System.Windows.Controls.Primitives.PopupAnimation.Fade, VerticalOffset = 2,
+            Child = new Border { Margin = new Thickness(6, 0, 20, 20), Child = _folders }
+        };
+        _folderPopup.Closed += (_, _) => { _popupClosedAt = Stopwatch.GetTimestamp(); ApplyBar(); };
         _loading = false;
 
         View.ScrollChanged += SyncBar;
+        View.ScrollChanged += BarScroll;
         View.ScrollChanged += () => Interlocked.Exchange(ref _engine.Pipe.LastUiActivity, Stopwatch.GetTimestamp());
         View.HoverChanged += i => StatusText.Text = i >= 0 && i < _paths.Length ? HoverText(i) : StatusLine();
         View.ItemActivated += OpenViewer;
         CompositionTarget.Rendering += (_, _) => _frames++;
         _searchDelay.Tick += (_, _) => { _searchDelay.Stop(); BuildView(false); };
+        _folderDelay.Tick += (_, _) => { _folderDelay.Stop(); BuildView(false); };
 
         _engine.Opened += () => Dispatcher.InvokeAsync(async () => await ReloadModel(false));
         _engine.DataChanged += () => Dispatcher.BeginInvoke(UpdateChangeIndicator);
@@ -57,9 +103,16 @@ public partial class MainWindow : Window
         var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(0.5) };
         timer.Tick += (_, _) => Tick();
         timer.Start();
-        Loaded += (_, _) => _engine.Start();
+        _barTimer.Tick += (_, _) => ApplyBar();
+        _barTimer.Start();
+        BarHost.SizeChanged += (_, _) => UpdateInset();
+        SearchBox.GotKeyboardFocus += (_, _) => ApplyBar();
+        SearchBox.LostKeyboardFocus += (_, _) => ApplyBar();
+        TopBar.MouseLeave += (_, _) => _ignoreOverUntil = 0;
+        Loaded += (_, _) => { _engine.Start(); UpdateInset(); ApplyBar(); };
         Closing += (_, _) =>
         {
+            _settings.BarHidden = _barManual;
             SaveSettings();
             _loader?.Dispose();
             _engine.Dispose();
@@ -79,15 +132,30 @@ public partial class MainWindow : Window
         var sw = Stopwatch.StartNew();
         var m = await Task.Run(() => LibraryModel.Load(db));
         _model = m;
+        MigrateFolderRules(m);
         _engine.ViewRefreshed();
         UpdateChangeIndicator();
         await BuildViewAsync(keepPosition);
         StatusText.Text = $"library loaded in {sw.Elapsed.TotalSeconds:F1}s";
     }
 
+    /// <summary>Old settings hid a folder together with everything inside it; each folder now stands alone, so spell the old rule out.</summary>
+    private void MigrateFolderRules(LibraryModel m)
+    {
+        if (_settings.FolderRulesVersion >= 2) return;
+        var all = new HashSet<string>(m.Folder.Take(m.Count), StringComparer.OrdinalIgnoreCase);
+        var off = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in all)
+            foreach (var e in _settings.OffFolders)
+                if (f.Equals(e, StringComparison.OrdinalIgnoreCase) || f.StartsWith(e + "\\", StringComparison.OrdinalIgnoreCase) || f.StartsWith(e + "/", StringComparison.OrdinalIgnoreCase)) { off.Add(f); break; }
+        _settings.OffFolders = off.ToList();
+        _settings.FolderRulesVersion = 2;
+        UpdateFoldersLabel();
+    }
+
     private ViewQuery CurrentQuery() => new()
     {
-        Nsfw = NsfwBtn.IsChecked == true, Very = VeryBtn.IsChecked == true,
+        General = GeneralBtn.IsChecked == true, Nsfw = NsfwBtn.IsChecked == true, Very = VeryBtn.IsChecked == true,
         Images = ImagesBtn.IsChecked == true, Gifs = GifsBtn.IsChecked == true,
         OffFolders = new HashSet<string>(_settings.OffFolders, StringComparer.OrdinalIgnoreCase),
         Search = SearchBox.Text, Sort = (SortBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "FirstSeen", RandomSeed = _randomSeed,
@@ -142,9 +210,16 @@ public partial class MainWindow : Window
     private void OnFilterChanged(object s, RoutedEventArgs e)
     {
         if (_loading) return;
-        _settings.ShowNsfw = NsfwBtn.IsChecked == true; _settings.ShowVery = VeryBtn.IsChecked == true;
+        _settings.ShowGeneral = GeneralBtn.IsChecked == true;
         _settings.ShowImages = ImagesBtn.IsChecked == true; _settings.ShowGifs = GifsBtn.IsChecked == true;
         BuildView(false);
+    }
+
+    private void OnLayoutChanged(object s, RoutedEventArgs e)
+    {
+        if (_loading) return;
+        _settings.RowsLayout = RowsBtn.IsChecked == true;
+        View.RowsMode = _settings.RowsLayout;
     }
 
     private void OnSearchChanged(object s, TextChangedEventArgs e) { if (_loading) return; _searchDelay.Stop(); _searchDelay.Start(); }
@@ -161,24 +236,28 @@ public partial class MainWindow : Window
 
     private void OnSizeChanged(object s, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (_loading) return;
-        _settings.TileSize = (float)e.NewValue;
-        View.TileTarget = (float)e.NewValue;
+        if (_loading || _syncingSize) return;
+        View.TileTarget = SliderToSize(e.NewValue);
     }
 
     private void OnFolders(object s, RoutedEventArgs e)
     {
         if (_model is null) return;
-        var win = new SelectFoldersWindow(_model.FolderCounts(CurrentQuery()), _settings.OffFolders) { Owner = this };
-        if (win.ShowDialog() == true)
-        {
-            _settings.OffFolders = win.OffFolders;
-            FoldersBtn.Content = _settings.OffFolders.Count == 0 ? "Select folders" : $"Select folders ({_settings.OffFolders.Count} off)";
-            BuildView(false);
-        }
+        if (_folderPopup.IsOpen) { _folderPopup.IsOpen = false; return; }
+        // clicking the button while the pop-out is open closes it (the pop-out closes itself on that same click)
+        if ((Stopwatch.GetTimestamp() - _popupClosedAt) / (double)Stopwatch.Frequency < 0.25) return;
+        _folders.Load(_model.FolderStats(CurrentQuery()), _settings.OffFolders);
+        _folderPopup.IsOpen = true;
     }
 
-    private void OnSettings(object s, RoutedEventArgs e) => new SettingsWindow(this, _settings, _engine) { Owner = this }.ShowDialog();
+    private void UpdateFoldersLabel()
+    {
+        int n = _settings.OffFolders.Count;
+        FoldersBtn.Content = n == 0 ? "Select folders" : $"Select folders ({n:N0} off)";
+    }
+
+    private void OnSettings(object s, RoutedEventArgs e) => OpenSettings();
+    private void OpenSettings() => new SettingsWindow(this, _settings, _engine) { Owner = this }.ShowDialog();
 
     private void OnUpdateView(object s, RoutedEventArgs e) => _ = ReloadModel(true);
 
@@ -217,12 +296,16 @@ public partial class MainWindow : Window
     private string StatusLine()
     {
         var p = _engine.Pipe;
+        if (_engine.IdsRunning && _engine.IdsTotal > 0)
+            return $"Reading file IDs from the drive (this is the disk noise, it only happens once): {_engine.IdsDone:N0} of {_engine.IdsTotal:N0}";
         string pipe = p.Running || p.Total > 0 && p.Done < p.Total
             ? $"  |  thumbnails {p.Done:N0} of {p.Total:N0}{(p.Failed > 0 ? $" ({p.Failed:N0} could not be read)" : "")}"
             : "";
         string back = p.BackfillTotal > 0 && p.BackfillDone < p.BackfillTotal ? $"  |  small sizes {p.BackfillDone:N0} of {p.BackfillTotal:N0}" : "";
         string sharp = p.SharpTotal > 0 && p.SharpDone < p.SharpTotal ? $"  |  sharp versions {p.SharpDone:N0} of {p.SharpTotal:N0}" : "";
-        return _engine.Status + pipe + back + sharp;
+        bool busy = pipe.Length > 0 || back.Length > 0 || sharp.Length > 0 || p.Running || _engine.IdsRunning;
+        string idle = !busy && _engine.IdsFinished ? "  |  file IDs done, nothing running in the background" : "";
+        return _engine.Status + pipe + back + sharp + idle;
     }
 
     private void UpdateChangeIndicator()
@@ -237,6 +320,9 @@ public partial class MainWindow : Window
         long now = Stopwatch.GetTimestamp();
         _fps = _frames / ((now - _lastTick) / (double)Stopwatch.Frequency); _frames = 0; _lastTick = now;
         if (View.HoverIndex < 0) StatusText.Text = StatusLine();
+        bool ids = _engine.IdsRunning && _engine.IdsTotal > 0;
+        IdBar.Visibility = ids ? Visibility.Visible : Visibility.Collapsed;
+        if (ids) IdBar.Value = _engine.IdsDone / (double)_engine.IdsTotal;
         UpdateChangeIndicator();
         UpdateBanner();
         IdleCleanup();
@@ -279,7 +365,7 @@ public partial class MainWindow : Window
             BannerText.Text = $"The library folder {_settings.LibraryRoot} can't be found (is the drive connected?). Showing what Ginkgo already knows.";
             var again = new Button { Content = "Try again" }; again.Click += async (_, _) => { _bannerKind = ""; await _engine.Rescan(); };
             var choose = new Button { Content = "Choose folder..." };
-            choose.Click += (_, _) => { new SettingsWindow(this, _settings, _engine) { Owner = this }.ShowDialog(); };
+            choose.Click += (_, _) => OpenSettings();
             BannerButtons.Children.Add(again); BannerButtons.Children.Add(choose);
         }
     }
@@ -295,9 +381,9 @@ public partial class MainWindow : Window
         if (_syncing) return;
         _syncing = true;
         double max = Math.Max(0, View.TotalHeight - View.ActualHeight);
-        Bar.Maximum = max; Bar.ViewportSize = View.ActualHeight;
-        Bar.LargeChange = View.ActualHeight * 0.9; Bar.SmallChange = 60;
-        Bar.Value = View.Offset;
+        Scroll.Maximum = max; Scroll.ViewportSize = View.ActualHeight;
+        Scroll.LargeChange = View.ActualHeight * 0.9; Scroll.SmallChange = 60;
+        Scroll.Value = View.Offset;
         _syncing = false;
     }
 
@@ -307,15 +393,27 @@ public partial class MainWindow : Window
 
     private void OnKey(object s, KeyEventArgs e)
     {
+        if (KeysLayer.Visibility == Visibility.Visible)
+        {
+            if (e.Key is Key.Escape or Key.K or Key.OemQuestion) { KeysLayer.Visibility = Visibility.Collapsed; e.Handled = true; }
+            return;
+        }
         if (ViewerRoot.Visibility == Visibility.Visible) { ViewerKey(e); return; }
         bool typing = Keyboard.FocusedElement is TextBox;
         bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
         if (e.Key == Key.Escape)
         {
-            if (typing) { SearchBox.Text = ""; View.Focus(); e.Handled = true; }
+            if (_sideOpen) { SetSidebar(false); e.Handled = true; }
+            else if (typing) { SearchBox.Text = ""; View.Focus(); e.Handled = true; }
             return;
         }
-        if (ctrl && e.Key == Key.F) { SearchBox.Focus(); SearchBox.SelectAll(); e.Handled = true; return; }
+        if (ctrl && e.Key == Key.B) { SetSidebar(!_sideOpen); e.Handled = true; return; }
+        if (ctrl && e.Key == Key.F) { RevealBar(); SearchBox.Focus(); SearchBox.SelectAll(); e.Handled = true; return; }
+        if (ctrl && e.Key is Key.D1 or Key.D2 or Key.D3 or Key.D4)
+        {
+            Navigate(e.Key switch { Key.D1 => "Home", Key.D2 => "Browse", Key.D3 => "Favourites", _ => "Tools" });
+            e.Handled = true; return;
+        }
         if (typing) return;
         if (Keyboard.Modifiers != ModifierKeys.None && !ctrl) return;
         switch (e.Key)
@@ -325,13 +423,179 @@ public partial class MainWindow : Window
             case Key.PageDown: View.ScrollBy(View.ActualHeight * 0.9); e.Handled = true; break;
             case Key.PageUp: View.ScrollBy(-View.ActualHeight * 0.9); e.Handled = true; break;
             case Key.Enter: if (View.HoverIndex >= 0) { OpenViewer(View.HoverIndex); e.Handled = true; } break;
-            case Key.OemQuestion: SearchBox.Focus(); e.Handled = true; break;
+            case Key.OemQuestion: RevealBar(); SearchBox.Focus(); e.Handled = true; break;
+            case Key.K: ShowKeys(false); e.Handled = true; break;
+            case Key.M: SetSidebar(!_sideOpen); e.Handled = true; break;
+            case Key.H: if (_barManual) OnShowBar(this, e); else OnHideBar(this, e); e.Handled = true; break;
+            case Key.G: GeneralBtn.IsChecked = GeneralBtn.IsChecked != true; OnFilterChanged(this, e); e.Handled = true; break;
             case Key.N: NsfwBtn.IsChecked = NsfwBtn.IsChecked != true; OnFilterChanged(this, e); e.Handled = true; break;
             case Key.V: VeryBtn.IsChecked = VeryBtn.IsChecked != true; OnFilterChanged(this, e); e.Handled = true; break;
+            case Key.L: RowsBtn.IsChecked = RowsBtn.IsChecked != true; OnLayoutChanged(this, e); e.Handled = true; break;
             case Key.R: if (_settings.Sort == "Random") { OnReshuffle(this, e); e.Handled = true; } break;
-            case Key.Add: case Key.OemPlus: SizeSlider.Value = Math.Max(SizeSlider.Minimum, SizeSlider.Value / 1.15); e.Handled = true; break;
-            case Key.Subtract: case Key.OemMinus: SizeSlider.Value = Math.Min(SizeSlider.Maximum, SizeSlider.Value * 1.15); e.Handled = true; break;
+            case Key.Add: case Key.OemPlus: View.TileTarget *= 1.15f; e.Handled = true; break;
+            case Key.Subtract: case Key.OemMinus: View.TileTarget /= 1.15f; e.Handled = true; break;
         }
+    }
+
+    // =========================================================================================================
+    // window bar, side menu, shortcut list
+    // =========================================================================================================
+
+    private static DependencyObject? ParentOf(DependencyObject d) =>
+        d is System.Windows.Media.Visual || d is System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d);
+
+    /// <summary>The bar is also the title bar: drag it to move the window, double-click it to maximise.</summary>
+    private void OnTitleDown(object s, MouseButtonEventArgs e)
+    {
+        for (var d = e.OriginalSource as DependencyObject; d != null && d != TopBar; d = ParentOf(d))
+            if (d is System.Windows.Controls.Primitives.ButtonBase or TextBox or Slider or ComboBox or System.Windows.Controls.Primitives.Thumb) return;
+        if (e.ClickCount == 2) { OnMaximize(this, e); return; }
+        try { DragMove(); } catch { }
+    }
+
+    private void OnMinimize(object s, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+    private void OnMaximize(object s, RoutedEventArgs e) => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+    private void OnClose(object s, RoutedEventArgs e) => Close();
+
+    private void OnStateChanged(object? s, EventArgs e)
+    {
+        bool max = WindowState == WindowState.Maximized;
+        MaxBtn.Content = max ? "\uE923" : "\uE922";
+        Root.Margin = max ? SystemParameters.WindowResizeBorderThickness : new Thickness(0);     // a maximised window overhangs the screen by its resize border
+    }
+
+    // ---- top bar: slides away on scroll down, back on scroll up; H hides it for good until shown again ----
+
+    private bool BarPinned =>
+        _folderPopup.IsOpen || _sideOpen || Banner.Visibility == Visibility.Visible || SearchBox.IsKeyboardFocused ||
+        (TopBar.IsMouseOver && Stopwatch.GetTimestamp() > _ignoreOverUntil) || HoverStrip.IsMouseOver;
+
+    private void ApplyBar()
+    {
+        bool want = BarPinned || (!_barManual && !_barAuto);
+        if (want == _barShown) return;
+        if (!want && (Stopwatch.GetTimestamp() - _barShownAt) / (double)Stopwatch.Frequency < 0.45) return;   // don't flicker straight after showing
+        _barShown = want;
+        if (want) _barShownAt = Stopwatch.GetTimestamp();
+        double h = BarHost.ActualHeight + 4;
+        var anim = new System.Windows.Media.Animation.DoubleAnimation(want ? 0 : -h, TimeSpan.FromMilliseconds(want ? 140 : 190))
+        { EasingFunction = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut } };
+        BarShift.BeginAnimation(TranslateTransform.YProperty, anim);
+        BarHost.IsHitTestVisible = want;
+        HoverStrip.Visibility = want ? Visibility.Collapsed : Visibility.Visible;
+        ShowBarBtn.Visibility = !want && _barManual ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void BarScroll()
+    {
+        double off = View.Offset, d = off - _lastOffset;
+        _lastOffset = off;
+        if (ViewerRoot.Visibility == Visibility.Visible) return;
+        bool before = _barAuto;
+        if (off < 30) { _barAuto = false; _barAccum = 0; }
+        else if (d > 0) { _barAccum = Math.Max(0, _barAccum) + d; if (_barAccum > 90) _barAuto = true; }
+        else if (d < 0) { _barAccum = Math.Min(0, _barAccum) + d; if (_barAccum < -50) _barAuto = false; }
+        if (before != _barAuto) ApplyBar();
+    }
+
+    private void UpdateInset() => View.TopInset = _barManual ? 0 : (float)BarHost.ActualHeight;
+
+    private void OnHideBar(object s, RoutedEventArgs e)
+    {
+        _barManual = true;
+        _ignoreOverUntil = Stopwatch.GetTimestamp() + Stopwatch.Frequency;      // the mouse is still on the bar for a moment
+        UpdateInset(); ApplyBar();
+    }
+
+    private void OnShowBar(object s, RoutedEventArgs e)
+    {
+        _barManual = false; _barAuto = false;
+        UpdateInset(); ApplyBar();
+    }
+
+    private void RevealBar() { if (_barManual || _barAuto) { _barManual = false; _barAuto = false; UpdateInset(); } ApplyBar(); }
+
+    // ---- side menu ----
+
+    private void OnSidebarToggle(object s, RoutedEventArgs e) => SetSidebar(!_sideOpen);
+    private void OnScrimDown(object s, MouseButtonEventArgs e) => SetSidebar(false);
+
+    private void SetSidebar(bool open)
+    {
+        if (open == _sideOpen) return;
+        _sideOpen = open;
+        var ease = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut };
+        if (open)
+        {
+            SideLayer.Visibility = Visibility.Visible;
+            SideShift.BeginAnimation(TranslateTransform.XProperty, new System.Windows.Media.Animation.DoubleAnimation(0, TimeSpan.FromMilliseconds(170)) { EasingFunction = ease });
+            Scrim.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(170)));
+        }
+        else
+        {
+            var slide = new System.Windows.Media.Animation.DoubleAnimation(-260, TimeSpan.FromMilliseconds(150)) { EasingFunction = ease };
+            slide.Completed += (_, _) => { if (!_sideOpen) SideLayer.Visibility = Visibility.Collapsed; };
+            SideShift.BeginAnimation(TranslateTransform.XProperty, slide);
+            Scrim.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(0, TimeSpan.FromMilliseconds(150)));
+        }
+        ApplyBar();
+    }
+
+    private void OnNav(object s, RoutedEventArgs e) => Navigate((string)((FrameworkElement)s).Tag);
+
+    private void Navigate(string where)
+    {
+        NavHome.IsChecked = true; NavBrowse.IsChecked = NavFav.IsChecked = NavTools.IsChecked = false;
+        if (where != "Home") StatusText.Text = $"{where} is coming in a later build.";
+        SetSidebar(false);
+    }
+
+    private void OnSideSettings(object s, RoutedEventArgs e) { ((System.Windows.Controls.Primitives.ToggleButton)s).IsChecked = false; SetSidebar(false); OpenSettings(); }
+    private void OnSideKeys(object s, RoutedEventArgs e) { ((System.Windows.Controls.Primitives.ToggleButton)s).IsChecked = false; SetSidebar(false); ShowKeys(false); }
+
+    // ---- keyboard shortcut list ----
+
+    private static readonly (string keys, string what)[] GridKeys =
+    {
+        ("Ctrl+B  or  M", "Open or close the side menu"), ("H", "Hide or show the top bar"), ("/  or  Ctrl+F", "Search"),
+        ("G   N   V", "Show General / NSFW / Very files"), ("L", "Equal columns  or  equal rows"), ("+   -   or  Ctrl + wheel", "Picture size"),
+        ("R", "Reshuffle (when sorted randomly)"), ("Home   End", "Top / bottom"), ("Page Up   Page Down", "Scroll one screen"),
+        ("Enter  or  double-click", "Open the picture under the mouse"), ("Middle button", "Scroll by moving the mouse"),
+        ("Ctrl+1 ... 4", "Home, Browse, Favourites, Tools"), ("K", "This list"), ("Esc", "Close / clear the search"),
+    };
+    private static readonly (string keys, string what)[] ViewerKeys =
+    {
+        ("Left   Right   (Space)", "Previous / next picture"), ("Home   End", "First / last picture"), ("Mouse wheel", "Zoom in and out"),
+        ("Drag", "Move a zoomed picture"), ("0", "Fit to window"), ("1", "Actual size (100%)"), ("I", "More or less information"),
+        ("H", "Hide or show the information box"), ("F  or  F11", "Full screen"), ("K", "This list"), ("Esc  or  double-click", "Back to the grid"),
+    };
+
+    private void OnKeysClick(object s, RoutedEventArgs e) => ShowKeys(false);
+    private void OnKeysLayerDown(object s, MouseButtonEventArgs e) => KeysLayer.Visibility = Visibility.Collapsed;
+    private void OnKeysPanelDown(object s, MouseButtonEventArgs e) => e.Handled = true;
+
+    private void ShowKeys(bool viewer)
+    {
+        viewer = viewer || ViewerRoot.Visibility == Visibility.Visible;
+        KeysTitle.Text = viewer ? "Keyboard shortcuts: picture viewer" : "Keyboard shortcuts";
+        KeysGrid.Children.Clear(); KeysGrid.RowDefinitions.Clear(); KeysGrid.ColumnDefinitions.Clear();
+        KeysGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        KeysGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var list = viewer ? ViewerKeys : GridKeys;
+        for (int i = 0; i < list.Length; i++)
+        {
+            KeysGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var chip = new Border
+            {
+                Background = (Brush)FindResource("Field"), BorderBrush = (Brush)FindResource("Edge"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(8, 2, 8, 2), Margin = new Thickness(0, 3, 18, 3), HorizontalAlignment = HorizontalAlignment.Left,
+                Child = new TextBlock { Text = list[i].keys, Foreground = (Brush)FindResource("Text"), FontFamily = new FontFamily("Consolas"), FontSize = 12.5 }
+            };
+            var what = new TextBlock { Text = list[i].what, Foreground = (Brush)FindResource("Dim"), VerticalAlignment = VerticalAlignment.Center };
+            Grid.SetRow(chip, i); Grid.SetRow(what, i); Grid.SetColumn(what, 1);
+            KeysGrid.Children.Add(chip); KeysGrid.Children.Add(what);
+        }
+        KeysLayer.Visibility = Visibility.Visible;
     }
 
     // =========================================================================================================
@@ -341,7 +605,7 @@ public partial class MainWindow : Window
     private int _vIndex;
     private int _vToken;
     private double _zoom = 1, _panX, _panY;
-    private bool _vFull, _dragging, _fullscreen, _uiHidden;
+    private bool _vFull, _dragging, _fullscreen;
     private Point _dragStart; private double _dragPanX, _dragPanY;
     private WindowState _prevState; private WindowStyle _prevStyle;
     private readonly Dictionary<string, BitmapSource> _vCache = new();
@@ -365,7 +629,28 @@ public partial class MainWindow : Window
         View.Focus();
     }
 
-    private void OnViewerClose(object s, RoutedEventArgs e) => CloseViewer();
+    private bool _infoMore, _infoHidden;
+
+    private void UpdateInfo(int row)
+    {
+        var m = _model!;
+        string name = System.IO.Path.GetFileName(m.Path[row]);
+        string size = m.Size[row] >= 1048576 ? $"{m.Size[row] / 1048576.0:F1} MB" : $"{m.Size[row] / 1024.0:F0} KB";
+        string kind = m.Kind[row] == (byte)MediaKind.Gif ? "  GIF" : "";
+        var lines = new List<string>
+        {
+            $"{_vIndex + 1:N0} / {_paths.Length:N0}    {name}",
+            $"{m.W[row]} x {m.H[row]}    {size}{kind}    {DateTimeOffset.FromUnixTimeSeconds(m.Mtime[row]).ToLocalTime().ToString("d MMM yyyy", CultureInfo.CurrentCulture)}"
+        };
+        if (_infoMore)
+        {
+            lines.Add(m.Path[row]);
+            lines.Add($"{m.W[row] * (long)m.H[row] / 1e6:F1} megapixels    {size} ({m.Size[row]:N0} bytes)    {(ContentLevel)m.Level[row]}");
+            lines.Add("Added to Ginkgo " + DateTimeOffset.FromUnixTimeSeconds(m.FirstSeen[row]).ToLocalTime().ToString("g", CultureInfo.CurrentCulture));
+        }
+        InfoText.Text = string.Join("\n", lines);
+        InfoBox.Visibility = _infoHidden ? Visibility.Collapsed : Visibility.Visible;
+    }
 
     private void ShowIndex(int index)
     {
@@ -373,15 +658,7 @@ public partial class MainWindow : Window
         ResetZoom();
         int row = _order[_vIndex];
         var m = _model!;
-        ViewerTitle.Text = $"{_vIndex + 1:N0} of {_paths.Length:N0}    {System.IO.Path.GetFileName(m.Path[row])}    {m.W[row]} x {m.H[row]}";
-        InfoText.Text = string.Join("\n",
-            "Path    " + m.Path[row],
-            $"Size    {m.Size[row] / 1048576.0:F2} MB ({m.Size[row]:N0} bytes)",
-            $"Pixels  {m.W[row]} x {m.H[row]}  ({m.W[row] * (long)m.H[row] / 1e6:F1} MP)",
-            "Type    " + (m.Kind[row] == (byte)MediaKind.Gif ? "GIF" : "Image"),
-            "Level   " + (ContentLevel)m.Level[row],
-            "Changed " + DateTimeOffset.FromUnixTimeSeconds(m.Mtime[row]).ToLocalTime().ToString("g", CultureInfo.CurrentCulture),
-            "Seen    " + DateTimeOffset.FromUnixTimeSeconds(m.FirstSeen[row]).ToLocalTime().ToString("g", CultureInfo.CurrentCulture));
+        UpdateInfo(row);
         _ = LoadPicture(_vIndex, full: false);
     }
 
@@ -519,8 +796,9 @@ public partial class MainWindow : Window
             case Key.Home: ShowIndex(0); break;
             case Key.End: ShowIndex(_paths.Length - 1); break;
             case Key.F: case Key.F11: ToggleFullscreen(); break;
-            case Key.H: _uiHidden = !_uiHidden; ViewerBar.Visibility = ViewerHint.Visibility = _uiHidden ? Visibility.Collapsed : Visibility.Visible; if (_uiHidden) InfoPanel.Visibility = Visibility.Collapsed; break;
-            case Key.I: InfoPanel.Visibility = InfoPanel.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible; break;
+            case Key.K: case Key.OemQuestion: ShowKeys(true); break;
+            case Key.H: _infoHidden = !_infoHidden; UpdateInfo(_order[_vIndex]); break;
+            case Key.I: _infoMore = !_infoMore; _infoHidden = false; UpdateInfo(_order[_vIndex]); break;
             case Key.D0: case Key.NumPad0: ResetZoom(); break;
             case Key.D1: case Key.NumPad1:
                 {
