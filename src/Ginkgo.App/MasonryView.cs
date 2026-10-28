@@ -4,6 +4,8 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using Ginkgo.Core.Imaging;
 using Ginkgo.Core.Layout;
 
 namespace Ginkgo.App;
@@ -51,7 +53,7 @@ public sealed class MasonryView : FrameworkElement
     public MasonryView()
     {
         ClipToBounds = true;
-        RenderOptions.SetBitmapScalingMode(this, BitmapScalingMode.Linear);
+        RenderOptions.SetBitmapScalingMode(this, BitmapScalingMode.NearestNeighbor);     // the surface is drawn pixel-for-pixel
         Focusable = true;
         // fades are redrawn once per screen refresh (never faster)
         Loaded += (_, _) => CompositionTarget.Rendering += OnRefresh;
@@ -310,16 +312,50 @@ public sealed class MasonryView : FrameworkElement
             _thumbs.SetWanted(_visible[0] - 12, _visible[^1] + 12);   // requests for tiles that have scrolled away are dropped
         }
 
+        // All tiles are copied into one screen-sized picture, so the screen draws a single image per frame
+        // (WPF is slow at drawing hundreds of separate small images).
+        int pw = Math.Max(1, (int)Math.Round(ActualWidth * dpi)), ph = Math.Max(1, (int)Math.Round(H * dpi));
+        if (_surface is null || _surfW != pw || _surfH != ph)
+        {
+            _surface = new WriteableBitmap(pw, ph, 96, 96, PixelFormats.Pbgra32, null); _surfW = pw; _surfH = ph;
+        }
         bool fading = false;
         long tick = Stopwatch.GetTimestamp();
+        _overlay.Clear();
+        _surface.Lock();
+        try { fading = ComposeTiles(pw, ph, dpi, offPx, tick); }
+        finally { _surface.AddDirtyRect(new Int32Rect(0, 0, pw, ph)); _surface.Unlock(); }
+        dc.DrawImage(_surface, new Rect(0, 0, pw / dpi, ph / dpi));
+        foreach (var (r, hovered, gif) in _overlay)
+        {
+            if (hovered) dc.DrawRectangle(null, _hover, r);
+            if (gif && r.Width > 70) DrawBadge(dc, r);
+        }
+        _fadingNow = fading;
+        LastRenderMs = sw.Elapsed.TotalMilliseconds;
+        _maxRender = Math.Max(_maxRender, LastRenderMs);
+    }
+
+    private WriteableBitmap? _surface;
+    private int _surfW, _surfH;
+    private readonly List<(Rect r, bool hovered, bool gif)> _overlay = new();
+    private static readonly uint BgPixel = TileBlit.Pack(18, 18, 20), FadePixel = TileBlit.Pack(40, 40, 46);
+    private uint[]? _paletteBgra;
+
+    private unsafe bool ComposeTiles(int pw, int ph, double dpi, double offPx, long tick)
+    {
+        _paletteBgra ??= Enumerable.Range(0, 24).Select(i => { var c = HsvToColor(i * 15.0, 0.35, 0.55); return TileBlit.Pack(c.R, c.G, c.B); }).ToArray();
+        int stride = _surface!.BackBufferStride;
+        var buf = new Span<byte>((void*)_surface.BackBuffer, stride * ph);
+        TileBlit.Fill(buf, stride, pw, ph, 0, 0, pw, ph, BgPixel);
+        bool fading = false;
         for (int vi = _visible.Count - 1; vi >= 0; vi--)   // bottom to top, so the newest-first queue serves the top tiles first
         {
             int i = _visible[vi];
-            // snap every edge to a whole device pixel, so a tile is always drawn pixel-for-pixel
-            double l = Math.Round(_layout.X[i] * dpi), t = Math.Round(_layout.Y[i] * dpi) - offPx;
+            // snap every edge to a whole device pixel, so a tile is always copied pixel-for-pixel
+            double l = Math.Round(_layout!.X[i] * dpi), t = Math.Round(_layout.Y[i] * dpi) - offPx;
             double rr = Math.Round((_layout.X[i] + _layout.W[i]) * dpi), bb = Math.Round((_layout.Y[i] + _layout.H[i]) * dpi) - offPx;
-            int wPx = (int)(rr - l), hPx = (int)(bb - t);
-            var r = new Rect(l / dpi, t / dpi, wPx / dpi, hPx / dpi);
+            int x = (int)l, y = (int)t, wPx = (int)(rr - l), hPx = (int)(bb - t);
             var e = _thumbs?.Get(i, wPx, hPx);
             if (e is not null)
             {
@@ -329,20 +365,21 @@ public sealed class MasonryView : FrameworkElement
                     a = (tick - e.FadeStart) / (e.FadeSecs * Stopwatch.Frequency);
                     if (a >= 1) { a = 1; e.FadeSecs = 0; e.Prev = null; } else fading = true;
                 }
+                var px = e.Pix;
                 if (a < 1)
                 {
-                    if (e.Prev is not null) dc.DrawImage(e.Prev, r); else dc.DrawRectangle(FadeBase, null, r);
-                    dc.PushOpacity(a); dc.DrawImage(e.Bitmap, r); dc.Pop();
+                    var prev = e.Prev;
+                    TileBlit.Blend(buf, stride, pw, ph, x, y, wPx, hPx, px.Data, px.W, px.H,
+                        prev is null ? ReadOnlySpan<byte>.Empty : prev.Data, prev?.W ?? 0, prev?.H ?? 0, (int)(a * 256), FadePixel);
                 }
-                else dc.DrawImage(e.Bitmap, r);
-                if (i == _hoverIndex) dc.DrawRectangle(null, _hover, r);
-                if (Badges is { } bd && i < bd.Length && bd[i] == 1 && r.Width > 70) DrawBadge(dc, r);
+                else if (px.W == wPx && px.H == hPx) TileBlit.Copy(buf, stride, pw, ph, x, y, px.Data, px.W, px.H);
+                else TileBlit.CopyScaled(buf, stride, pw, ph, x, y, wPx, hPx, px.Data, px.W, px.H);       // only until the right size arrives
             }
-            else dc.DrawRectangle(_palette[(i * 7) % _palette.Length], i == _hoverIndex ? _hover : null, r); // plain placeholder: cheap
+            else TileBlit.Fill(buf, stride, pw, ph, x, y, wPx, hPx, _paletteBgra[(i * 7) % _paletteBgra.Length]);   // plain placeholder: cheap
+            bool gif = e is not null && Badges is { } bd && i < bd.Length && bd[i] == 1;
+            if (i == _hoverIndex || gif) _overlay.Add((new Rect(x / dpi, y / dpi, wPx / dpi, hPx / dpi), i == _hoverIndex, gif));
         }
-        _fadingNow = fading;
-        LastRenderMs = sw.Elapsed.TotalMilliseconds;
-        _maxRender = Math.Max(_maxRender, LastRenderMs);
+        return fading;
     }
 
     /// <summary>

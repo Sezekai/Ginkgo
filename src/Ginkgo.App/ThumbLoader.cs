@@ -19,13 +19,16 @@ namespace Ginkgo.App;
 /// </summary>
 public sealed class ThumbLoader : IDisposable
 {
+    /// <summary>A tile's pixels (premultiplied BGRA), already the size of the tile on screen. SrcW is the width of the thumbnail it was made from.</summary>
+    public sealed class Pix { public byte[] Data = Array.Empty<byte>(); public int W, H, SrcW; }
+
     public sealed record TierData(ThumbStore Store, int[] Pack, long[] Off, int[] Len);   // 0 micro, 1 small, 2 full, 3 large
 
     public sealed class Entry
     {
         public int Index, Tier, PixelWidth;
-        public BitmapSource Bitmap = null!;
-        public BitmapSource? Prev;      // what was shown before, while fading to this one
+        public Pix Pix = null!;
+        public Pix? Prev;               // what was shown before, while fading to this one
         public long Bytes, FadeStart;
         public double FadeSecs;         // 0 = no fade
         public bool Drawn;
@@ -35,7 +38,7 @@ public sealed class ThumbLoader : IDisposable
 
     private sealed class Plan { public PlanItem[] Items = Array.Empty<PlanItem>(); public int Next; }
     private readonly record struct Req(int Index, int WidthPx, int HeightPx, int Tier, bool Urgent, bool EncodedOnly);
-    private readonly record struct Done(int Index, int Tier, BitmapSource? Bitmap, long Bytes, bool Urgent);
+    private readonly record struct Done(int Index, int Tier, Pix? Pixels, long Bytes, bool Urgent);
 
     private static readonly int[] Nominal = { ThumbMaker.MicroW, ThumbMaker.SmallW, ThumbMaker.MaxW, ThumbMaker.LargeW };
 
@@ -224,9 +227,10 @@ public sealed class ThumbLoader : IDisposable
     }
 
     /// <summary>True if a picture already in the cache is the wrong size for this tile (or too low a tier).</summary>
-    private bool NeedsRefresh(Entry e, int show, int widthPx)
+    private bool NeedsRefresh(Entry e, int show, int widthPx, int heightPx)
     {
         if (e.Tier < show) return true;
+        if (widthPx > 16 && heightPx > 0 && (e.Pix.W != widthPx || e.Pix.H != heightPx)) return true;     // the tile is a different size now: make the picture that size
         int need = Math.Min(Math.Min(widthPx, Nominal[e.Tier]), Math.Max(1, _origW[e.Index]));
         int w = e.PixelWidth;
         return w > need * 1.15 || w < need * 0.9;
@@ -250,7 +254,7 @@ public sealed class ThumbLoader : IDisposable
         if (show == 3 && !_laMade.IsEmpty && _laMade.TryRemove(index, out _)) Interlocked.Increment(ref LookAheadUsed);
         Entry? e = null;
         if (_cache.TryGetValue(index, out var node)) { _lru.Remove(node); _lru.AddFirst(node); e = node.Value; e.Drawn = true; }
-        if (show >= 0 && (e is null || NeedsRefresh(e, show, widthPx))) TryQueue(index, widthPx, heightPx, show);
+        if (show >= 0 && (e is null || NeedsRefresh(e, show, widthPx, heightPx))) TryQueue(index, widthPx, heightPx, show);
         if (large && (e is null || e.Tier < 3)) TryQueue(index, widthPx, heightPx, 3);
         return e;
     }
@@ -266,7 +270,7 @@ public sealed class ThumbLoader : IDisposable
                 if (index < 0 || index >= _paths.Length || Volatile.Read(ref _tiers[tier].Len[index]) <= 0) continue;
                 var data = GetEncoded(index, tier);
                 if (data is null) continue;
-                return Decode(data, 0, 0).Item1;
+                return DecodeBitmap(data);
             }
         }
         catch { }
@@ -279,7 +283,7 @@ public sealed class ThumbLoader : IDisposable
         if (!Resolve(index, widthPx, out int show, out bool large)) return;
         _cache.TryGetValue(index, out var node);
         var e = node?.Value;
-        if (show >= 0 && (e is null || NeedsRefresh(e, show, widthPx)) && !_inflight.ContainsKey((long)index * 4 + show))
+        if (show >= 0 && (e is null || NeedsRefresh(e, show, widthPx, heightPx)) && !_inflight.ContainsKey((long)index * 4 + show))
         {
             list.Add(new PlanItem(index, widthPx, heightPx, show, !decodeToo));
         }
@@ -323,7 +327,7 @@ public sealed class ThumbLoader : IDisposable
             }
             if (!have) { _signal.Wait(40); continue; }     // nothing to do: sleep (a wake-up arrives when work is queued)
             if (have && req.Tier == 3 && Volatile.Read(ref _tiers[3].Len[req.Index]) == 0) { makingLarge = true; Interlocked.Increment(ref _largeActive); }
-            BitmapSource? bmp = null; long bytes = 0;
+            Pix? bmp = null; long bytes = 0;
             bool stale = req.Urgent && (req.Index < _lo || req.Index > _hi);
             if (!stale)
             {
@@ -395,7 +399,7 @@ public sealed class ThumbLoader : IDisposable
     }
 
     /// <summary>Reads the original, builds the picture for the tile right away, then saves the sharp version for next time.</summary>
-    private (BitmapSource?, long) MakeLargeAndPresent(Req req)
+    private (Pix?, long) MakeLargeAndPresent(Req req)
     {
         try
         {
@@ -437,21 +441,27 @@ public sealed class ThumbLoader : IDisposable
         catch { _largeFailed.TryAdd(index, 0); return null; }
     }
 
-    /// <summary>Decodes a thumbnail at exactly the tile's pixel size (never bigger than the thumbnail itself).</summary>
-    private static (BitmapSource?, long) Decode(byte[] data, int widthPx, int heightPx)
+    /// <summary>Decodes a thumbnail into pixels of exactly the tile's size on screen.</summary>
+    private static (Pix?, long) Decode(byte[] data, int widthPx, int heightPx)
     {
         using var src = SKBitmap.Decode(data);
         return src is null ? (null, 0) : Present(src, widthPx, heightPx);
     }
 
-    /// <summary>Turns a decoded bitmap into a picture at exactly the tile's pixel size (never bigger than the bitmap itself).</summary>
-    private static (BitmapSource?, long) Present(SKBitmap src, int widthPx, int heightPx)
+    /// <summary>
+    /// Turns a decoded bitmap into pixels at exactly the tile's size (smaller or larger than the bitmap), so the grid only has to copy them.
+    /// SrcW keeps the width the picture really has (never more than the thumbnail's own), which is what the refresh logic compares.
+    /// </summary>
+    private static (Pix?, long) Present(SKBitmap src, int widthPx, int heightPx)
     {
+        bool sized = widthPx > 16;
+        int srcEff = sized && src.Width > widthPx * 1.05 ? widthPx : src.Width;
+        int tw = sized ? widthPx : src.Width;
+        int th = sized ? (heightPx > 0 ? heightPx : Math.Max(1, (int)Math.Round(src.Height * (widthPx / (double)src.Width)))) : src.Height;
         SKBitmap use = src; SKBitmap? temp = null;
-        if (widthPx > 16 && src.Width > widthPx * 1.05)
+        if (tw != src.Width || th != src.Height)
         {
-            int h = heightPx > 0 ? heightPx : Math.Max(1, (int)Math.Round(src.Height * (widthPx / (double)src.Width)));
-            temp = src.Resize(new SKImageInfo(widthPx, h, SKColorType.Bgra8888, SKAlphaType.Premul), SKFilterQuality.Medium);
+            temp = src.Resize(new SKImageInfo(tw, th, SKColorType.Bgra8888, SKAlphaType.Premul), SKFilterQuality.Medium);
             if (temp is not null) use = temp;
         }
         if (use.ColorType != SKColorType.Bgra8888 || use.AlphaType != SKAlphaType.Premul)
@@ -460,11 +470,30 @@ public sealed class ThumbLoader : IDisposable
             temp?.Dispose();
             use = conv; temp = conv;
         }
+        int w = use.Width, h = use.Height, rowBytes = use.RowBytes;
+        var data = new byte[w * h * 4];
+        var ptr = use.GetPixels();
+        if (rowBytes == w * 4) System.Runtime.InteropServices.Marshal.Copy(ptr, data, 0, data.Length);
+        else for (int y = 0; y < h; y++) System.Runtime.InteropServices.Marshal.Copy(ptr + y * rowBytes, data, y * w * 4, w * 4);
+        temp?.Dispose();
+        return (new Pix { Data = data, W = w, H = h, SrcW = srcEff }, data.Length);
+    }
+
+    /// <summary>For the picture viewer: a stored thumbnail as it is, as a picture WPF can show.</summary>
+    private static BitmapSource? DecodeBitmap(byte[] data)
+    {
+        using var src = SKBitmap.Decode(data);
+        if (src is null) return null;
+        SKBitmap use = src; SKBitmap? temp = null;
+        if (use.ColorType != SKColorType.Bgra8888 || use.AlphaType != SKAlphaType.Premul)
+        {
+            var conv = use.Copy(SKColorType.Bgra8888);
+            use = conv; temp = conv;
+        }
         var bmp = BitmapSource.Create(use.Width, use.Height, 96, 96, PixelFormats.Pbgra32, null, use.GetPixels(), use.ByteCount, use.RowBytes);
         bmp.Freeze();
-        long bytes = use.ByteCount;
         temp?.Dispose();
-        return (bmp, bytes);
+        return bmp;
     }
 
     // ---- UI thread ------------------------------------------------------------------------------------------
@@ -474,19 +503,17 @@ public sealed class ThumbLoader : IDisposable
         Volatile.Write(ref _drainQueued, 0);
         bool any = false;
         long now = Stopwatch.GetTimestamp();
-        int taken = 0;
-        while (taken < 8 && _done.TryDequeue(out var d))        // a few at a time, so the screen and the mouse are never kept waiting
+        while ((Stopwatch.GetTimestamp() - now) * 1000 < 6 * Stopwatch.Frequency && _done.TryDequeue(out var d))      // at most ~6 ms at a time, so the screen and the mouse are never kept waiting
         {
-            taken++;
             _inflight.TryRemove((long)d.Index * 4 + d.Tier, out _);
-            if (d.Bitmap is null) continue;
-            var ne = new Entry { Index = d.Index, Tier = d.Tier, Bitmap = d.Bitmap, PixelWidth = d.Bitmap.PixelWidth, Bytes = d.Bytes, FadeStart = now };
+            if (d.Pixels is null) continue;
+            var ne = new Entry { Index = d.Index, Tier = d.Tier, Pix = d.Pixels, PixelWidth = d.Pixels.SrcW, Bytes = d.Bytes, FadeStart = now };
             if (_cache.TryGetValue(d.Index, out var old))
             {
                 var o = old.Value;
-                bool sameLook = d.Tier <= o.Tier && Math.Abs(ne.PixelWidth - o.PixelWidth) <= o.PixelWidth * 0.08;
+                bool sameLook = d.Tier <= o.Tier && Math.Abs(ne.PixelWidth - o.PixelWidth) <= o.PixelWidth * 0.08 && d.Pixels.W == o.Pix.W && d.Pixels.H == o.Pix.H;
                 if (sameLook) continue;                                   // nothing gained
-                if (d.Tier > o.Tier && o.Drawn && FadeEnabled) { ne.Prev = o.Bitmap; ne.FadeSecs = 0.15; }  // sharper version: fade over the old one
+                if (d.Tier > o.Tier && o.Drawn && FadeEnabled) { ne.Prev = o.Pix; ne.FadeSecs = 0.15; }  // sharper version: fade over the old one
                 ne.Drawn = o.Drawn;
                 _lru.Remove(old); _cache.Remove(d.Index); _bytes -= o.Bytes;
             }

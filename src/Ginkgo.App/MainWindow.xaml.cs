@@ -332,7 +332,7 @@ public partial class MainWindow : Window
         if (_diag)
         {
             var (mr, mp) = View.TakeWorst();
-            DiagText.Text = $"{_fps:F0} fps | worst frame gap {_worstGap:F0} ms | draw max {mr:F1} ms | plan max {mp:F1} ms | {View.LastVisibleCount} tiles | cached {_loader?.CachedCount ?? 0} | pending {_loader?.PendingCount ?? 0} | GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)}";
+            DiagText.Text = $"{_fps:F0} fps | render tier {RenderCapability.Tier >> 16} | worst frame gap {_worstGap:F0} ms | draw max {mr:F1} ms | plan max {mp:F1} ms | {View.LastVisibleCount} tiles | cached {_loader?.CachedCount ?? 0} | pending {_loader?.PendingCount ?? 0} | GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)}";
             _worstGap = 0;
         }
         bool ids = _engine.IdsRunning && _engine.IdsTotal > 0;

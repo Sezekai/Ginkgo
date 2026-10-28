@@ -1,4 +1,5 @@
 using Ginkgo.Core;
+using Ginkgo.Core.Imaging;
 using Ginkgo.Core.Layout;
 
 int pass = 0, fail = 0;
@@ -103,6 +104,35 @@ var (f, e) = g.VisibleRange(1e9f, 2e9f); Check(e == 1003 && f <= e, "grid clampe
     Check(sp.FirstIndex == 50 && sp.LastIndex == 50 && sp.Length == 20000, "scattered items: reads just the one");
     var tl = ReadPlanner.Make(new[] { 0 }, new long[] { 0 }, new[] { 100 }, 0);
     Check(tl.Length == 100, "single item list");
+}
+
+// ---- tile blit ----
+{
+    int dw = 8, dh = 6, st = dw * 4;
+    var surf = new byte[st * dh];
+    uint Px(int x, int y) => BitConverter.ToUInt32(surf, y * st + x * 4);
+    TileBlit.Fill(surf, st, dw, dh, 0, 0, dw, dh, 0xFF112233);
+    Check(Px(0, 0) == 0xFF112233 && Px(7, 5) == 0xFF112233, "blit: fill whole surface");
+    TileBlit.Fill(surf, st, dw, dh, -2, -2, 4, 4, 0xFF445566);
+    Check(Px(0, 0) == 0xFF445566 && Px(1, 1) == 0xFF445566 && Px(2, 2) == 0xFF112233, "blit: fill clipped at top-left");
+    var tile = new byte[3 * 2 * 4];
+    for (int i = 0; i < 6; i++) BitConverter.GetBytes(0xFF000000u | (uint)(i + 1)).CopyTo(tile, i * 4);
+    TileBlit.Copy(surf, st, dw, dh, 6, 4, tile, 3, 2);                 // hangs over the right edge
+    Check(Px(6, 4) == 0xFF000001 && Px(7, 4) == 0xFF000002 && Px(6, 5) == 0xFF000004 && Px(7, 5) == 0xFF000005, "blit: copy clipped at right edge");
+    TileBlit.Copy(surf, st, dw, dh, -1, 0, tile, 3, 2);                // hangs over the left edge
+    Check(Px(0, 0) == 0xFF000002 && Px(1, 0) == 0xFF000003, "blit: copy clipped at left edge");
+    TileBlit.Fill(surf, st, dw, dh, 0, 0, dw, dh, 0);
+    TileBlit.CopyScaled(surf, st, dw, dh, 2, 1, 4, 2, tile, 3, 2);     // 3x2 stretched to 4x2 (nearest)
+    Check(Px(2, 1) == 0xFF000001 && Px(5, 1) == 0xFF000003 && Px(2, 2) == 0xFF000004 && Px(1, 1) == 0 && Px(6, 1) == 0, "blit: scaled copy");
+    var white = new byte[4]; BitConverter.GetBytes(0xFFFFFFFFu).CopyTo(white, 0);
+    var black = new byte[4]; BitConverter.GetBytes(0xFF000000u).CopyTo(black, 0);
+    TileBlit.Blend(surf, st, dw, dh, 0, 0, 2, 2, white, 1, 1, black, 1, 1, 0, 0);
+    Check(Px(0, 0) == 0xFF000000, "blit: blend alpha 0 shows previous");
+    TileBlit.Blend(surf, st, dw, dh, 0, 0, 2, 2, white, 1, 1, black, 1, 1, 256, 0);
+    Check(Px(1, 1) == 0xFFFFFFFE || Px(1, 1) == 0xFFFFFFFF, "blit: blend alpha 256 shows new");
+    TileBlit.Blend(surf, st, dw, dh, 0, 0, 2, 2, white, 1, 1, ReadOnlySpan<byte>.Empty, 0, 0, 128, 0xFF000000);
+    uint mid = Px(0, 0) & 0xFF;
+    Check(mid >= 126 && mid <= 129, $"blit: blend halfway without previous (got {mid})");
 }
 
 Console.WriteLine($"{pass} passed, {fail} failed");
