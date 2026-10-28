@@ -127,6 +127,9 @@ public sealed class MasonryView : FrameworkElement
     public int ItemCount => _items.Length;
     public int LastVisibleCount { get; private set; }
     public double LastRenderMs { get; private set; }
+    private double _maxRender, _maxPlan;
+    /// <summary>Slowest draw and slowest plan since the last call (for the F3 readout).</summary>
+    public (double render, double plan) TakeWorst() { var r = (_maxRender, _maxPlan); _maxRender = _maxPlan = 0; return r; }
 
     public float TileTarget
     {
@@ -295,12 +298,14 @@ public sealed class MasonryView : FrameworkElement
             if (Math.Abs(dir) > 1) _lastDir = Math.Sign(dir);
             long now = Stopwatch.GetTimestamp();
             bool moved = double.IsNaN(_planOff) || Math.Abs(off - _planOff) > H * 0.08 || Math.Abs(_target - _planTarget) > H * 0.08;
-            if ((now - _lastPlanTick) * 1000 / Stopwatch.Frequency > (moved ? 150 : 700))
+            if ((now - _lastPlanTick) * 1000 / Stopwatch.Frequency > (moved ? 250 : 800))
             {
                 _lastPlanTick = now; _planOff = off; _planTarget = _target;
+                long p0 = Stopwatch.GetTimestamp();
                 _thumbs.PurgeStale();
                 BuildPlan(off, H, dpi);
                 BuildLookAhead(off, H, dpi);
+                _maxPlan = Math.Max(_maxPlan, (Stopwatch.GetTimestamp() - p0) * 1000.0 / Stopwatch.Frequency);
             }
             _thumbs.SetWanted(_visible[0] - 12, _visible[^1] + 12);   // requests for tiles that have scrolled away are dropped
         }
@@ -337,6 +342,7 @@ public sealed class MasonryView : FrameworkElement
         }
         _fadingNow = fading;
         LastRenderMs = sw.Elapsed.TotalMilliseconds;
+        _maxRender = Math.Max(_maxRender, LastRenderMs);
     }
 
     /// <summary>
@@ -348,7 +354,7 @@ public sealed class MasonryView : FrameworkElement
     {
         var layout = _layout!;
         bool flick = Math.Abs(_target - off) > H * 0.5;
-        double lo = Math.Min(off, _target) - H * 2, hi = Math.Max(off, _target) + H * 3.5;
+        double lo = Math.Min(off, _target) - H * 1.5, hi = Math.Max(off, _target) + H * 3;
         layout.GetVisible((float)lo, (float)hi, _zone);
 
         double viewTop = off, viewBottom = off + H;
@@ -377,8 +383,8 @@ public sealed class MasonryView : FrameworkElement
         {
             int wPx = (int)Math.Round(layout.W[i] * dpi), hPx = (int)Math.Round(layout.H[i] * dpi);
             long bytes = (long)wPx * hPx * 4;
-            if (used + bytes <= budget && _planItems.Count < 4000) { used += bytes; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, true, allowLarge && n++ < 24); }
-            else if (encodedOnly < 6000) { int before = _planItems.Count; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, false, false); encodedOnly += _planItems.Count - before; }
+            if (used + bytes <= budget && _planItems.Count < 2000) { used += bytes; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, true, allowLarge && n++ < 24); }
+            else if (encodedOnly < 3000) { int before = _planItems.Count; _thumbs!.AppendPlan(i, wPx, hPx, _planItems, false, false); encodedOnly += _planItems.Count - before; }
             else break;
         }
         _thumbs!.SetPlan(_planItems.ToArray());

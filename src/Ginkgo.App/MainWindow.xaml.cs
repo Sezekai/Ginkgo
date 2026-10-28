@@ -43,6 +43,7 @@ public partial class MainWindow : Window
     // side menu
     private bool _sideOpen;
     private bool _diag;
+    private long _lastFrame; private double _worstGap;
 
     private const float TileMin = 60, TileMax = 1800;
     private static double SizeToSlider(float size) => Math.Log(Math.Clamp(size, TileMin, TileMax) / TileMin) / Math.Log(TileMax / TileMin);
@@ -94,7 +95,13 @@ public partial class MainWindow : Window
         View.ScrollChanged += () => Interlocked.Exchange(ref _engine.Pipe.LastUiActivity, Stopwatch.GetTimestamp());
         View.HoverChanged += i => StatusText.Text = i >= 0 && i < _paths.Length ? HoverText(i) : StatusLine();
         View.ItemActivated += OpenViewer;
-        CompositionTarget.Rendering += (_, _) => _frames++;
+        CompositionTarget.Rendering += (_, _) =>
+        {
+            _frames++;
+            long t = Stopwatch.GetTimestamp();
+            if (_lastFrame != 0) _worstGap = Math.Max(_worstGap, (t - _lastFrame) * 1000.0 / Stopwatch.Frequency);
+            _lastFrame = t;
+        };
         _searchDelay.Tick += (_, _) => { _searchDelay.Stop(); BuildView(false); };
         _folderDelay.Tick += (_, _) => { _folderDelay.Stop(); BuildView(false); };
 
@@ -307,8 +314,7 @@ public partial class MainWindow : Window
         string sharp = p.SharpTotal > 0 && p.SharpDone < p.SharpTotal ? $"  |  sharp versions {p.SharpDone:N0} of {p.SharpTotal:N0}" : "";
         bool busy = pipe.Length > 0 || back.Length > 0 || sharp.Length > 0 || p.Running || _engine.IdsRunning;
         string idle = !busy && _engine.IdsFinished ? "  |  file IDs done, nothing running in the background" : "";
-        string diag = _diag ? $"  |  {_fps:F0} fps, draw {View.LastRenderMs:F1} ms, {View.LastVisibleCount} tiles, memory {Process.GetCurrentProcess().WorkingSet64 / 1048576:N0} MB, pending {_loader?.PendingCount ?? 0}" : "";
-        return _engine.Status + pipe + back + sharp + idle + diag;
+        return _engine.Status + pipe + back + sharp + idle;
     }
 
     private void UpdateChangeIndicator()
@@ -323,6 +329,12 @@ public partial class MainWindow : Window
         long now = Stopwatch.GetTimestamp();
         _fps = _frames / ((now - _lastTick) / (double)Stopwatch.Frequency); _frames = 0; _lastTick = now;
         if (View.HoverIndex < 0) StatusText.Text = StatusLine();
+        if (_diag)
+        {
+            var (mr, mp) = View.TakeWorst();
+            DiagText.Text = $"{_fps:F0} fps | worst frame gap {_worstGap:F0} ms | draw max {mr:F1} ms | plan max {mp:F1} ms | {View.LastVisibleCount} tiles | cached {_loader?.CachedCount ?? 0} | pending {_loader?.PendingCount ?? 0} | GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)}";
+            _worstGap = 0;
+        }
         bool ids = _engine.IdsRunning && _engine.IdsTotal > 0;
         IdBar.Visibility = ids ? Visibility.Visible : Visibility.Collapsed;
         if (ids) IdBar.Value = _engine.IdsDone / (double)_engine.IdsTotal;
@@ -429,7 +441,7 @@ public partial class MainWindow : Window
             case Key.Enter: if (View.HoverIndex >= 0) { OpenViewer(View.HoverIndex); e.Handled = true; } break;
             case Key.OemQuestion: RevealBar(); SearchBox.Focus(); e.Handled = true; break;
             case Key.K: ShowKeys(false); e.Handled = true; break;
-            case Key.F3: _diag = !_diag; e.Handled = true; break;
+            case Key.F3: _diag = !_diag; DiagText.Visibility = _diag ? Visibility.Visible : Visibility.Collapsed; e.Handled = true; break;
             case Key.M: SetSidebar(!_sideOpen); e.Handled = true; break;
             case Key.H: if (_barManual) OnShowBar(this, e); else OnHideBar(this, e); e.Handled = true; break;
             case Key.G: GeneralBtn.IsChecked = GeneralBtn.IsChecked != true; OnFilterChanged(this, e); e.Handled = true; break;
@@ -493,7 +505,9 @@ public partial class MainWindow : Window
     {
         bool max = WindowState == WindowState.Maximized;
         MaxBtn.Content = max ? "\uE923" : "\uE922";
-        Root.Margin = max ? SystemParameters.WindowResizeBorderThickness : new Thickness(0);     // a maximised window overhangs the screen by its resize border
+        WindowEdge.Margin = max ? SystemParameters.WindowResizeBorderThickness : new Thickness(0);     // a maximised window overhangs the screen by its resize border
+        WindowEdge.BorderThickness = max ? new Thickness(0) : new Thickness(1);                         // outline round the whole window when it isn't maximised
+        TopBar.BorderThickness = max ? new Thickness(1) : new Thickness(0, 0, 0, 1);                      // maximised: the bar gets its own outline
     }
 
     // ---- top bar: slides away on scroll down, back on scroll up; H hides it for good until shown again ----
@@ -752,6 +766,13 @@ public partial class MainWindow : Window
         var s = TryMeasure(0, Math.Min(cap + 20, HW - 24));
         if (bottomFree > 0 && s.Height + 24 <= bottomFree) { Put(12, 12); return; }
         // 2. beside the picture on the left: narrow and tall
+        if (leftFree >= 150)
+        {
+            // wide strip: the normal block (2 lines normally) if it comes out short enough
+            s = TryMeasure(0, Math.Min(cap + 20, leftFree - 12));
+            double lineH = 17;
+            if (s.Width + 12 <= leftFree && s.Height <= (_infoMore ? 9 : 3) * lineH + 14 && s.Height + 12 <= HH) { Put(6, 6); return; }
+        }
         if (leftFree >= 56)
         {
             s = TryMeasure(2, leftFree - 10);

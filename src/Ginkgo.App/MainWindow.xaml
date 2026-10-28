@@ -8,6 +8,7 @@
     <shell:WindowChrome.WindowChrome>
         <shell:WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0" UseAeroCaptionButtons="False" CornerRadius="0"/>
     </shell:WindowChrome.WindowChrome>
+    <Border x:Name="WindowEdge" BorderBrush="#4A4A54" BorderThickness="1">
     <Grid x:Name="Root">
         <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
@@ -25,6 +26,7 @@
         <Border x:Name="StatusBar" Grid.Row="1" Background="{StaticResource Bar}" BorderBrush="#2A2A31" BorderThickness="0,1,0,0" Padding="14,6">
             <DockPanel>
                 <Button x:Name="UpdateBtn" DockPanel.Dock="Right" Content="Update view" Visibility="Collapsed" Margin="8,0,0,0" Padding="8,2" Click="OnUpdateView"/>
+                <TextBlock x:Name="DiagText" DockPanel.Dock="Right" Foreground="#E0B060" FontFamily="Consolas" Margin="12,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
                 <TextBlock x:Name="CountText" DockPanel.Dock="Right" Foreground="{StaticResource Text}" Margin="12,0,0,0" VerticalAlignment="Center"/>
                 <ProgressBar x:Name="IdBar" DockPanel.Dock="Right" Width="120" Minimum="0" Maximum="1" Margin="12,0,0,0" Visibility="Collapsed" VerticalAlignment="Center"/>
                 <TextBlock x:Name="StatusText" Foreground="{StaticResource Dim}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
@@ -34,7 +36,7 @@
         <!-- the top bar: also the window's title bar. It slides away when you scroll down. -->
         <StackPanel x:Name="BarHost" Grid.RowSpan="2" VerticalAlignment="Top">
             <StackPanel.RenderTransform><TranslateTransform x:Name="BarShift"/></StackPanel.RenderTransform>
-            <Border x:Name="TopBar" Background="{StaticResource Bar}" MouseLeftButtonDown="OnTitleDown" MouseMove="OnTitleMove" MouseLeftButtonUp="OnTitleUp">
+            <Border x:Name="TopBar" Background="#C81C1C20" BorderBrush="#4A4A54" BorderThickness="0,0,0,1" MouseLeftButtonDown="OnTitleDown" MouseMove="OnTitleMove" MouseLeftButtonUp="OnTitleUp">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
@@ -65,10 +67,10 @@
                         <Button x:Name="KeysBtn" Style="{StaticResource IconButton}" Content="&#xE765;" Height="32" Width="38" FontSize="14" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Keyboard shortcuts (K)" Click="OnKeysClick"/>
                         <Button x:Name="HideBarBtn" Style="{StaticResource IconButton}" Content="&#xE70E;" Height="32" Width="38" FontSize="14" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Hide this bar (H)" Click="OnHideBar"/>
                     </WrapPanel>
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
-                        <Button Style="{StaticResource IconButton}" Content="&#xE921;" Width="48" Height="44" FontSize="10" Click="OnMinimize"/>
-                        <Button x:Name="MaxBtn" Style="{StaticResource IconButton}" Content="&#xE922;" Width="48" Height="44" FontSize="10" Click="OnMaximize"/>
-                        <Button Style="{StaticResource CloseButton}" Content="&#xE8BB;" Width="48" Height="44" FontSize="10" Click="OnClose"/>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top" Margin="0,8,10,0">
+                        <Button Style="{StaticResource IconButton}" Content="&#xE921;" Width="34" Height="30" FontSize="7" Margin="2,0,0,0" Click="OnMinimize"/>
+                        <Button x:Name="MaxBtn" Style="{StaticResource IconButton}" Content="&#xE922;" Width="34" Height="30" FontSize="7" Margin="2,0,0,0" Click="OnMaximize"/>
+                        <Button Style="{StaticResource CloseButton}" Content="&#xE8BB;" Width="34" Height="30" FontSize="7" Margin="2,0,0,0" Click="OnClose"/>
                     </StackPanel>
                 </Grid>
             </Border>
@@ -152,4 +154,5 @@
             </Border>
         </Grid>
     </Grid>
+    </Border>
 </Window>
