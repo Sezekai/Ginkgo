@@ -162,7 +162,7 @@ public sealed class ThumbLoader : IDisposable
         _ui = ui; _onReady = onReady;
         _budget = decodedBudgetBytes; _encBudget = encodedBudgetBytes;
         for (int i = 0; i < 2; i++) new Thread(LookAheadLoop) { IsBackground = true, Name = "look-ahead", Priority = ThreadPriority.Lowest }.Start();
-        for (int i = 0; i < threads; i++) new Thread(Work) { IsBackground = true, Name = "thumb-decode", Priority = ThreadPriority.BelowNormal }.Start();
+        for (int i = 0; i < threads; i++) new Thread(Work) { IsBackground = true, Name = "thumb-decode", Priority = ThreadPriority.Normal }.Start();
     }
 
     public void SetWanted(int lo, int hi) { _lo = lo; _hi = hi; }
@@ -465,7 +465,8 @@ public sealed class ThumbLoader : IDisposable
         }
         var t = _tiers[tier];
         if (tier == 3 && Volatile.Read(ref t.Len[index]) == 0) return MakeLarge(index);
-        var plan = tier == 0 ? ReadPlanner.Make(t.Pack, t.Off, t.Len, index, 64, 256)
+        var plan = t.Store.IsInMemory(t.Pack[index]) ? ReadPlanner.Make(t.Pack, t.Off, t.Len, index, 0, 0)      // in memory: no point fetching neighbours
+                 : tier == 0 ? ReadPlanner.Make(t.Pack, t.Off, t.Len, index, 64, 256)
                  : tier == 1 ? ReadPlanner.Make(t.Pack, t.Off, t.Len, index, 16, 64)
                  : ReadPlanner.Make(t.Pack, t.Off, t.Len, index);
         long t0 = Stopwatch.GetTimestamp();

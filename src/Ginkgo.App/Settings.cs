@@ -11,7 +11,7 @@ public sealed class AppSettings
     /// <summary>The small thumbnails are kept here, on the computer's own (fast) drive: a hard drive manages only a few dozen random lookups a second, which is what a shuffled grid needs.</summary>
     public string FastCacheDir { get; set; } = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ginkgo", "fast");
     public bool UseFastCache { get; set; }
-    /// <summary>Read the thumbnail files once in the background so Windows keeps them in its file cache (instant lookups afterwards).</summary>
+    /// <summary>Keep the thumbnail files in memory (instant lookups), using free memory and leaving a reserve for other programs.</summary>
     public bool WarmCache { get; set; } = true;
 
     // content levels. NSFW and Very are never remembered: the app always starts with them off.
@@ -37,7 +37,10 @@ public sealed class AppSettings
     public float TileSize { get; set; } = 220;
 
     // speed and memory
-    public int CacheProfile { get; set; }      // 0 = smallest ... 5 = largest
+    public int CacheProfile { get; set; } = AutoProfile;     // 0 = smallest ... 5 = largest, 6 = automatic
+    public const int AutoProfile = 6;
+    /// <summary>1 = memory choices were moved to "Automatic" once.</summary>
+    public int MemoryRulesVersion { get; set; } = 1;
     public int LookAheadWindows { get; set; } = 1;
     public bool FadeSharpening { get; set; } = true;
 
@@ -55,6 +58,7 @@ public sealed class AppSettings
                 string text = File.ReadAllText(FilePath);
                 var s = JsonSerializer.Deserialize<AppSettings>(text) ?? new();
                 if (!text.Contains("FolderRulesVersion")) s.FolderRulesVersion = 1;
+                if (!text.Contains("MemoryRulesVersion")) { if (s.CacheProfile == 0) s.CacheProfile = AutoProfile; s.MemoryRulesVersion = 1; }
                 return s;
             }
         }
@@ -78,5 +82,6 @@ public sealed class AppSettings
     {
         ("Smallest (96 / 48 MB)", 96, 48), ("Small (128 / 64 MB)", 128, 64), ("Medium (200 / 150 MB)", 200, 150),
         ("Large (320 / 200 MB)", 320, 200), ("Larger (512 / 256 MB)", 512, 256), ("Largest (768 / 384 MB)", 768, 384),
+        ("Automatic (uses free memory)", -1, -1),
     };
 }

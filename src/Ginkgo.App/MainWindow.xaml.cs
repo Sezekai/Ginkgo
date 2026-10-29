@@ -127,6 +127,9 @@ public partial class MainWindow : Window
         SearchBox.LostKeyboardFocus += (_, _) => ApplyBar();
         TopBar.MouseLeave += (_, _) => _ignoreOverUntil = 0;
         Loaded += (_, _) => { _engine.Start(); UpdateInset(); ApplyBar(); };
+        // while Ginkgo is the window in use, it comes first; in the background it is an ordinary program again
+        Activated += (_, _) => { try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.AboveNormal; } catch { } };
+        Deactivated += (_, _) => { try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.Normal; } catch { } };
         Closing += (_, _) =>
         {
             _settings.BarHidden = _barManual;
@@ -217,6 +220,13 @@ public partial class MainWindow : Window
     private (long decoded, long encoded) CacheBudgets()
     {
         var p = AppSettings.CacheProfiles[Math.Clamp(_settings.CacheProfile, 0, AppSettings.CacheProfiles.Length - 1)];
+        if (p.decoded < 0)
+        {
+            // automatic: a share of the memory that is free right now (pictures are the size of the tiles, so this is many screens' worth)
+            long free = CacheWarmer.AvailableBytes();
+            long decoded = Math.Clamp(free / 6, 160L << 20, 1536L << 20);
+            return (decoded, 96L << 20);
+        }
         return (p.decoded * 1024L * 1024, p.encoded * 1024L * 1024);
     }
 
@@ -321,7 +331,7 @@ public partial class MainWindow : Window
             : "";
         string back = p.BackfillTotal > 0 && p.BackfillDone < p.BackfillTotal ? $"  |  small sizes {p.BackfillDone:N0} of {p.BackfillTotal:N0}" : "";
         string sharp = p.SharpTotal > 0 && p.SharpDone < p.SharpTotal ? $"  |  sharp versions {p.SharpDone:N0} of {p.SharpTotal:N0}" : "";
-        string warm = _engine.Warmer.Running && _engine.Warmer.Total > 0 ? $"  |  loading thumbnails into the system cache {_engine.Warmer.Done * 100 / _engine.Warmer.Total}%" : "";
+        string warm = _engine.Warmer.Running && _engine.Warmer.Total > 0 ? $"  |  loading thumbnails into memory {_engine.Warmer.Done * 100 / _engine.Warmer.Total}%" : "";
         pipe += warm;
         bool busy = pipe.Length > 0 || back.Length > 0 || sharp.Length > 0 || p.Running || _engine.IdsRunning;
         string idle = !busy && _engine.IdsFinished ? "  |  file IDs done, nothing running in the background" : "";
@@ -340,11 +350,13 @@ public partial class MainWindow : Window
         long now = Stopwatch.GetTimestamp();
         _fps = _frames / ((now - _lastTick) / (double)Stopwatch.Frequency); _frames = 0; _lastTick = now;
         if (_syncPending) SyncBar();
+        double tilePx = View.TileTarget * VisualTreeHelper.GetDpi(View).PixelsPerDip;
+        _engine.Warmer.Preferred = tilePx <= 120 ? 0 : tilePx <= 200 ? 1 : 2;
         if (View.HoverIndex < 0) StatusText.Text = StatusLine();
         if (_diag)
         {
             var (mr, _) = View.TakeWorst();
-            DiagText.Text = $"{_fps:F0} fps | worst gap {_worstGap:F0} ms | slow {_slowFrames} (gc {_slowGc}, ours {_slowOurs}, other {_slowOther}) | gc pause {(GC.GetTotalPauseDuration() - _gcAtTick).TotalMilliseconds:F0} ms | draw {mr:F1} (prep {Perf.PrepMax:F1}, paint {Perf.PaintMax:F1}/{Perf.PaintedBands}) drain {Perf.DrainMax:F1} | {View.LastVisibleCount} tiles, cached {_loader?.CachedCount ?? 0}, pending {_loader?.PendingCount ?? 0} | GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)} | read {_loader?.AvgReadMs ?? 0:F1} ms, decode {_loader?.AvgDecodeMs ?? 0:F1} ms{(_engine.FastCacheNote.Length > 0 ? " | " + _engine.FastCacheNote : "")} | warm-up {(_engine.Warmer.Running ? "running " : "")}{(_engine.Warmer.Total > 0 ? _engine.Warmer.Done * 100 / _engine.Warmer.Total : 0)}% {_engine.Warmer.Note}";
+            DiagText.Text = $"{_fps:F0} fps | worst gap {_worstGap:F0} ms | slow {_slowFrames} (gc {_slowGc}, ours {_slowOurs}, other {_slowOther}) | gc pause {(GC.GetTotalPauseDuration() - _gcAtTick).TotalMilliseconds:F0} ms | draw {mr:F1} (prep {Perf.PrepMax:F1}, paint {Perf.PaintMax:F1}/{Perf.PaintedBands}) drain {Perf.DrainMax:F1} | {View.LastVisibleCount} tiles, cached {_loader?.CachedCount ?? 0}, pending {_loader?.PendingCount ?? 0} | GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)} | read {_loader?.AvgReadMs ?? 0:F1} ms, decode {_loader?.AvgDecodeMs ?? 0:F1} ms{(_engine.FastCacheNote.Length > 0 ? " | " + _engine.FastCacheNote : "")} | thumbs in memory {_engine.Warmer.InMemory / 1073741824.0:F1} GB ({(_engine.Warmer.Total > 0 ? _engine.Warmer.Done * 100 / _engine.Warmer.Total : 0)}%{(_engine.Warmer.Running ? ", loading" : "")}) {_engine.Warmer.Note} | free RAM {CacheWarmer.AvailableBytes() / 1073741824.0:F1} GB";
             _worstGap = 0; _slowFrames = _slowGc = _slowOurs = _slowOther = 0; _gcAtTick = GC.GetTotalPauseDuration(); Perf.Reset();
         }
         bool moving = _engine.Moving;

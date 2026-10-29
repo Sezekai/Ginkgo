@@ -365,6 +365,32 @@ Check(again.BackfillTotal == 0, "backfill has nothing left");
     stores3.Dispose();
 }
 
+// ---- packs held in memory ----
+{
+    var mdir = Path.Combine(tmp, "mem");
+    var ms = new ThumbStore(mdir, "micro");
+    var r = new Random(9);
+    var blobs = Enumerable.Range(0, 50).Select(i => { var b = new byte[100 + i * 37]; r.NextBytes(b); return b; }).ToList();
+    var locs = blobs.Select(b => ms.Append(b)).ToList();
+    ms.Flush();
+    var packs = ms.Packs();
+    Check(packs.Count == 1 && packs[0].size == blobs.Sum(b => b.Length), "packs listed with sizes");
+    Check(!ms.IsInMemory(locs[0].pack) && ms.MemoryBytes == 0, "nothing in memory at first");
+    Check(ms.LoadPack(locs[0].pack, null, CancellationToken.None) && ms.IsInMemory(locs[0].pack) && ms.MemoryBytes == packs[0].size, "pack loaded into memory");
+    bool same = true;
+    for (int i = 0; i < blobs.Count; i++) { var got = ms.Read(locs[i].pack, locs[i].offset, locs[i].length); if (got is null || !got.AsSpan().SequenceEqual(blobs[i])) same = false; }
+    Check(same, "reads from memory match what was written");
+    var extra = new byte[777]; r.NextBytes(extra);
+    var le = ms.Append(extra); ms.Flush();
+    var gotExtra = ms.Read(le.pack, le.offset, le.length);
+    Check(gotExtra is not null && gotExtra.AsSpan().SequenceEqual(extra), "a thumbnail added after loading is read from the drive");
+    ms.DropPack(locs[0].pack);
+    Check(!ms.IsInMemory(locs[0].pack) && ms.MemoryBytes == 0, "pack let go");
+    var again = ms.Read(locs[5].pack, locs[5].offset, locs[5].length);
+    Check(again is not null && again.AsSpan().SequenceEqual(blobs[5]), "after letting go, reads come from the drive again");
+    ms.Dispose();
+}
+
 // ---- moving the small thumbnails to a fast drive ----
 {
     var from = Path.Combine(tmp, "mv-old"); var to = Path.Combine(tmp, "mv-fast");

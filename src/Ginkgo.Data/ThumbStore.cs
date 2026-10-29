@@ -50,6 +50,7 @@ public sealed class ThumbStore : IDisposable
             {
                 if (!int.TryParse(Path.GetFileNameWithoutExtension(f).AsSpan(_prefix.Length + 1), out int n) || n >= firstKept) continue;
                 if (_readers.TryRemove(n, out var h)) h.Dispose();
+                DropPack(n);
                 try { File.Delete(f); } catch { }
             }
             Interlocked.Exchange(ref _size, -1);
@@ -93,9 +94,62 @@ public sealed class ThumbStore : IDisposable
     /// <summary>Makes sure everything appended so far is really in the file. Call before recording locations in the index.</summary>
     public void Flush() { lock (_lock) { _writer?.Flush(); _dirty = false; } }
 
+    // ---- whole pack files held in memory: lookups then never touch the drive ----
+    private readonly ConcurrentDictionary<int, byte[]> _mem = new();
+    private long _memBytes;
+    /// <summary>Bytes of this store currently held in memory.</summary>
+    public long MemoryBytes => Interlocked.Read(ref _memBytes);
+
+    /// <summary>The pack files of this store, oldest first, with their sizes.</summary>
+    public List<(int pack, long size)> Packs()
+    {
+        var list = new List<(int, long)>();
+        if (!System.IO.Directory.Exists(_dir)) return list;
+        foreach (var f in System.IO.Directory.EnumerateFiles(_dir, _prefix + "-*.bin"))
+            if (int.TryParse(Path.GetFileNameWithoutExtension(f).AsSpan(_prefix.Length + 1), out int n)) list.Add((n, new FileInfo(f).Length));
+        list.Sort((a, b) => a.Item1.CompareTo(b.Item1));
+        return list;
+    }
+
+    public bool IsInMemory(int pack) => _mem.ContainsKey(pack);
+
+    /// <summary>Reads a whole pack file into memory in one long sequential read (fast even on a hard drive).</summary>
+    public bool LoadPack(int pack, Action<long>? progress, CancellationToken ct)
+    {
+        if (_mem.ContainsKey(pack)) return true;
+        if (_dirty) Flush();
+        string path = PackPath(pack);
+        if (!File.Exists(path)) return false;
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 20, FileOptions.SequentialScan);
+        long size = fs.Length;
+        if (size <= 0 || size > int.MaxValue - 64) return false;
+        var data = GC.AllocateUninitializedArray<byte>((int)size);
+        int pos = 0;
+        while (pos < size)
+        {
+            ct.ThrowIfCancellationRequested();
+            int n = fs.Read(data, pos, (int)Math.Min(8 << 20, size - pos));
+            if (n <= 0) break;
+            pos += n; progress?.Invoke(n);
+        }
+        if (pos < size) return false;
+        if (_mem.TryAdd(pack, data)) Interlocked.Add(ref _memBytes, size);
+        return true;
+    }
+
+    /// <summary>Lets go of a pack held in memory (lookups go back to the drive).</summary>
+    public void DropPack(int pack) { if (_mem.TryRemove(pack, out var a)) Interlocked.Add(ref _memBytes, -a.Length); }
+    public void DropAll() { foreach (var k in _mem.Keys.ToList()) DropPack(k); }
+
     public byte[]? Read(int pack, long offset, int length)
     {
         if (length <= 0) return null;
+        if (_mem.TryGetValue(pack, out var m) && offset >= 0 && offset + length <= m.Length)
+        {
+            var copy = new byte[length];
+            Buffer.BlockCopy(m, (int)offset, copy, 0, length);
+            return copy;
+        }
         if (_dirty) Flush(); // a thumbnail written a moment ago may not be in the file yet
         var handle = _readers.GetOrAdd(pack, p =>
             File.OpenHandle(PackPath(p), FileMode.Open, FileAccess.Read, FileShare.ReadWrite));
