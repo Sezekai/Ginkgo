@@ -5,11 +5,12 @@ using Ginkgo.App;
 using Ginkgo.Data;
 using SkiaSharp;
 
+static class Program {
 [STAThread]
 static int Main(string[] args)
 {
     int total = 30000, screen = 700;
-    var dir = Path.Combine(Path.GetTempPath(), "ginkgo-bench-" + Guid.NewGuid().ToString("N"));
+    var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ginkgo-bench-" + Guid.NewGuid().ToString("N"));
     var stores = new ThumbStores(dir);
     var rnd = new Random(5);
     // a handful of distinct pictures (noisy so they compress like photos), three sizes each
@@ -84,4 +85,6 @@ static void Run(bool shuffled, int tileW, ThumbLoader.TierData[] tiers, string[]
     Console.WriteLine($"::notice::shuffled={shuffled} tileW={tileW}: {ready}/{screen} in {sw.ElapsedMilliseconds} ms = {ready * 1000.0 / Math.Max(1, sw.ElapsedMilliseconds):F0}/s | read {loader.AvgReadMs:F2} ms, decode {loader.AvgDecodeMs:F2} ms, thumbs/read {loader.ThumbsPerRead:F1} | {string.Join(" ", marks)}");
     loader.Dispose();
     Thread.Sleep(300);
+}
+
 }
