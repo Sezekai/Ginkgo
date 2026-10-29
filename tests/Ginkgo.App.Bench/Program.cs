@@ -24,7 +24,7 @@ static int Main(string[] args)
     }
     var aspects = new[] { 0.6, 0.75, 1.0, 1.33, 1.6, 1.78 };
     var pics = aspects.Select(a => (full: Enc(320, (int)(320 / a), 72), small: Enc(192, (int)(192 / a), 70), micro: Enc(112, (int)(112 / a), 62), a)).ToArray();
-    Console.WriteLine($"thumb sizes: full {pics[2].full.Length} B, small {pics[2].small.Length} B, micro {pics[2].micro.Length} B");
+    Console.WriteLine($"::notice::thumb sizes: full {pics[2].full.Length} B, small {pics[2].small.Length} B, micro {pics[2].micro.Length} B");
 
     var tiers = new ThumbLoader.TierData[4];
     var st = new[] { stores.Micro, stores.Small, stores.Full, stores.Large };
@@ -81,7 +81,7 @@ static void Run(bool shuffled, int tileW, ThumbLoader.TierData[] tiers, string[]
     };
     timer.Start();
     Dispatcher.Run();
-    Console.WriteLine($"shuffled={shuffled} tileW={tileW}: {ready}/{screen} in {sw.ElapsedMilliseconds} ms = {ready * 1000.0 / Math.Max(1, sw.ElapsedMilliseconds):F0}/s | read {loader.AvgReadMs:F2} ms, decode {loader.AvgDecodeMs:F2} ms, thumbs/read {loader.ThumbsPerRead:F1} | {string.Join(" ", marks)}");
+    Console.WriteLine($"::notice::shuffled={shuffled} tileW={tileW}: {ready}/{screen} in {sw.ElapsedMilliseconds} ms = {ready * 1000.0 / Math.Max(1, sw.ElapsedMilliseconds):F0}/s | read {loader.AvgReadMs:F2} ms, decode {loader.AvgDecodeMs:F2} ms, thumbs/read {loader.ThumbsPerRead:F1} | {string.Join(" ", marks)}");
     loader.Dispose();
     Thread.Sleep(300);
 }
