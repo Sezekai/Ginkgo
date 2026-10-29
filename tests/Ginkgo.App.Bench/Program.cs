@@ -49,9 +49,10 @@ static int Main(string[] args)
         for (int d = 0; d < total; d++)
             for (int t = 0; t < 3; t++) { var l = libLoc[t][order[d]]; tr[t].Pack[d] = l.pack; tr[t].Off[d] = l.off; tr[t].Len[d] = l.len; }
         var paths = new string[total]; var origW = new int[total]; Array.Fill(origW, 2000);
-        foreach (int tileW in new[] { 150, 260 })
+        foreach (int tileW in new[] { 70, 150, 260 })
         {
-            Run(shuffled, tileW, tr, paths, origW, kind, order, pics.Select(p => p.a).ToArray(), stores, screen);
+            var asp = pics.Select(p => p.a).ToArray(); bool sh = shuffled; int tw = tileW;
+            var th = new Thread(() => Run(sh, tw, tr, paths, origW, kind, order, asp, stores, screen)); th.SetApartmentState(ApartmentState.STA); th.Start(); th.Join();
         }
     }
     return 0;
