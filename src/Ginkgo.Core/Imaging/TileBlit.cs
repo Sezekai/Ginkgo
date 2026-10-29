@@ -75,13 +75,11 @@ public static class TileBlit
 
     private static uint Mix(uint from, uint to, int alpha)
     {
-        uint r = 0;
-        for (int shift = 0; shift < 32; shift += 8)
-        {
-            int f = (int)((from >> shift) & 0xFF), t = (int)((to >> shift) & 0xFF);
-            r |= (uint)(f + (((t - f) * alpha) >> 8)) << shift;
-        }
-        return r;
+        // two colour channels at a time: (from * (256 - alpha) + to * alpha) / 256
+        uint ua = (uint)alpha, ia = 256 - ua;
+        uint rb = ((from & 0x00FF00FFu) * ia + (to & 0x00FF00FFu) * ua >> 8) & 0x00FF00FFu;
+        uint ag = (((from >> 8) & 0x00FF00FFu) * ia + ((to >> 8) & 0x00FF00FFu) * ua) & 0xFF00FF00u;
+        return rb | ag;
     }
 
     public static uint Pack(byte r, byte g, byte b) => 0xFF000000u | ((uint)r << 16) | ((uint)g << 8) | b;
