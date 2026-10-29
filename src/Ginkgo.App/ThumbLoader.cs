@@ -465,7 +465,7 @@ public sealed class ThumbLoader : IDisposable
         }
         var t = _tiers[tier];
         if (tier == 3 && Volatile.Read(ref t.Len[index]) == 0) return MakeLarge(index);
-        var plan = t.Store.IsInMemory(t.Pack[index]) ? ReadPlanner.Make(t.Pack, t.Off, t.Len, index, 0, 0)      // in memory: no point fetching neighbours
+        var plan = t.Store.IsInMemory(t.Pack[index], (int)(t.Off[index] / ThumbStore.SegSize)) ? ReadPlanner.Make(t.Pack, t.Off, t.Len, index, 0, 0)      // in memory: no point fetching neighbours
                  : tier == 0 ? ReadPlanner.Make(t.Pack, t.Off, t.Len, index, 64, 256)
                  : tier == 1 ? ReadPlanner.Make(t.Pack, t.Off, t.Len, index, 16, 64)
                  : ReadPlanner.Make(t.Pack, t.Off, t.Len, index);

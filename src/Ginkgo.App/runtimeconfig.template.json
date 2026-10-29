@@ -1,6 +1,5 @@
 {
   "configProperties": {
-    "System.GC.Concurrent": true,
-    "System.GC.RetainVM": true
+    "System.GC.Concurrent": true
   }
 }

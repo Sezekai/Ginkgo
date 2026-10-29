@@ -23,8 +23,8 @@ public sealed class CacheWarmer
     public static long AvailableBytes() { var m = new MemStatus { Length = (uint)Marshal.SizeOf<MemStatus>() }; return GlobalMemoryStatusEx(ref m) ? (long)m.AvailPhys : long.MaxValue; }
     public static long TotalBytes() { var m = new MemStatus { Length = (uint)Marshal.SizeOf<MemStatus>() }; return GlobalMemoryStatusEx(ref m) ? (long)m.TotalPhys : 0; }
 
-    private const long Reserve = 1024L << 20;      // keep this much free for everything else
-    private const long DropBelow = 500L << 20;     // let go of thumbnails if free memory falls this low
+    private const long Reserve = 512L << 20;      // keep this much free for everything else
+    private const long DropBelow = 300L << 20;    // let go of thumbnails if free memory falls this low
 
     public void Start(ThumbStores stores, CancellationToken ct)
     {
@@ -34,40 +34,65 @@ public sealed class CacheWarmer
 
     private void Run(ThumbStores stores, CancellationToken ct)
     {
-        var order = new[] { stores.Micro, stores.Small, stores.Full };       // smallest (cheapest, used for small tiles) first
-        var loaded = new List<(ThumbStore store, int pack)>();
+        var tiers = new[] { stores.Micro, stores.Small, stores.Full };
         try
         {
             while (!ct.IsCancellationRequested)
             {
                 int pref = Math.Clamp(Preferred, 0, 2);
-                var ranked = new[] { order[pref] }.Concat(order.Where((_, i) => i != pref)).ToArray();
-                var todo = ranked.SelectMany(st => st.Packs().Select(p => (st, p.pack, p.size))).ToList();
-                Total = todo.Sum(x => x.size);
-                Done = todo.Where(x => x.st.IsInMemory(x.pack)).Sum(x => x.size);
-                bool stopped = false;
-                foreach (var (st, pack, size) in todo)
+                // every piece, most wanted first: pieces holding what was looked up lately, the size on screen first, then the rest in order
+                var all = new List<(ThumbStore st, int pack, int seg, int size, double score, bool loaded)>();
+                for (int t = 0; t < 3; t++)
                 {
-                    if (st.IsInMemory(pack)) continue;
-                    if (AvailableBytes() - size < Reserve) { Note = "paused: memory is full (resumes when some is free)"; stopped = true; break; }
-                    Running = true; Note = "";
-                    if (st.LoadPack(pack, n => Done += n, ct)) { loaded.Add((st, pack)); }
+                    var st = tiers[t];
+                    int order = t == pref ? 0 : 1 + Math.Abs(t - pref);
+                    var segs = st.Segments();
+                    for (int k = 0; k < segs.Count; k++)
+                    {
+                        var (pack, seg, size) = segs[k];
+                        double score = st.Hits(pack, seg) * (t == pref ? 4.0 : 1.0) * 1000 - order * 10 - k * 0.0001;
+                        all.Add((st, pack, seg, size, score, st.IsInMemory(pack, seg)));
+                    }
+                }
+                Total = all.Sum(x => (long)x.size);
+                Done = all.Where(x => x.loaded).Sum(x => (long)x.size);
+                var wanted = all.Where(x => !x.loaded).OrderByDescending(x => x.score).ToList();
+                var held = all.Where(x => x.loaded).OrderBy(x => x.score).ToList();      // least wanted first
+                int swaps = 0; bool full = false;
+                foreach (var w in wanted)
+                {
+                    if (ct.IsCancellationRequested) break;
+                    if (AvailableBytes() - w.size < Reserve)
+                    {
+                        // memory is full: swap out a piece nobody is looking at for one that is wanted much more
+                        if (held.Count > 0 && w.score > held[0].score + 1000 && swaps < 6)
+                        {
+                            var cold = held[0]; held.RemoveAt(0);
+                            cold.st.DropSegment(cold.pack, cold.seg); Done -= cold.size; swaps++;
+                            GC.Collect(2, GCCollectionMode.Forced, true, true);
+                            if (AvailableBytes() - w.size < Reserve) { full = true; break; }
+                        }
+                        else { full = true; break; }
+                    }
+                    Running = true;
+                    if (w.st.LoadSegment(w.pack, w.seg, ct)) Done += w.size;
                 }
                 Running = false;
-                if (!stopped && Done >= Total) Note = "";
-                InMemory = order.Sum(s => s.MemoryBytes);
-                // wait, keeping an eye on memory: let go of the last-loaded files if other programs need the room
-                for (int i = 0; i < 25 && !ct.IsCancellationRequested; i++)
+                Note = full ? "memory is full: the most-viewed thumbnails are kept" : "";
+                InMemory = tiers.Sum(s => s.MemoryBytes);
+                foreach (var st in tiers) st.DecayHits();
+                // keep an eye on memory for a couple of seconds: give room back if other programs need it
+                for (int i = 0; i < 10 && !ct.IsCancellationRequested; i++)
                 {
                     Thread.Sleep(200);
-                    while (AvailableBytes() < DropBelow && loaded.Count > 0)
+                    if (AvailableBytes() < DropBelow)
                     {
-                        var (st, pack) = loaded[^1]; loaded.RemoveAt(loaded.Count - 1);
-                        st.DropPack(pack);
-                        GC.Collect(2, GCCollectionMode.Optimized, false);
-                        Note = "gave memory back to other programs";
+                        var heldNow = all.Where(x => x.st.IsInMemory(x.pack, x.seg)).OrderBy(x => x.score).ToList();
+                        int n = 0;
+                        while (AvailableBytes() < DropBelow + (256L << 20) && n < heldNow.Count) { var c = heldNow[n++]; c.st.DropSegment(c.pack, c.seg); }
+                        if (n > 0) { GC.Collect(2, GCCollectionMode.Forced, true, true); Note = "gave memory back to other programs"; }
                     }
-                    InMemory = order.Sum(s => s.MemoryBytes);
+                    InMemory = tiers.Sum(s => s.MemoryBytes);
                 }
             }
         }

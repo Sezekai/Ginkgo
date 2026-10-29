@@ -391,6 +391,27 @@ Check(again.BackfillTotal == 0, "backfill has nothing left");
     ms.Dispose();
 }
 
+// ---- pieces across a 32 MB boundary ----
+{
+    var bdir = Path.Combine(tmp, "mem2");
+    var bs = new ThumbStore(bdir, "small");
+    var filler = new byte[ThumbStore.SegSize - 1000];
+    bs.Append(filler);
+    var cross = new byte[5000]; new Random(4).NextBytes(cross);
+    var lc = bs.Append(cross); bs.Flush();
+    Check(bs.Segments().Count == 2, "a pack over 32 MB has two pieces");
+    bs.LoadSegment(lc.pack, 0, CancellationToken.None);
+    var r1 = bs.Read(lc.pack, lc.offset, lc.length);
+    Check(r1 is not null && r1.AsSpan().SequenceEqual(cross), "a thumbnail across two pieces, one in memory, is read correctly");
+    bs.LoadSegment(lc.pack, 1, CancellationToken.None);
+    var r2 = bs.Read(lc.pack, lc.offset, lc.length);
+    Check(r2 is not null && r2.AsSpan().SequenceEqual(cross) && bs.IsInMemory(lc.pack, 1), "a thumbnail across two pieces in memory is joined correctly");
+    Check(bs.Hits(lc.pack, 0) >= 2, "lookups are counted per piece");
+    bs.DropSegment(lc.pack, 0);
+    Check(!bs.IsInMemory(lc.pack, 0) && bs.IsInMemory(lc.pack, 1), "one piece let go");
+    bs.Dispose();
+}
+
 // ---- moving the small thumbnails to a fast drive ----
 {
     var from = Path.Combine(tmp, "mv-old"); var to = Path.Combine(tmp, "mv-fast");

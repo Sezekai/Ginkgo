@@ -94,9 +94,13 @@ public sealed class ThumbStore : IDisposable
     /// <summary>Makes sure everything appended so far is really in the file. Call before recording locations in the index.</summary>
     public void Flush() { lock (_lock) { _writer?.Flush(); _dirty = false; } }
 
-    // ---- whole pack files held in memory: lookups then never touch the drive ----
-    private readonly ConcurrentDictionary<int, byte[]> _mem = new();
+    // ---- pieces of the pack files held in memory: lookups there never touch the drive. Pieces (32 MB) rather than whole
+    // files, so whatever memory is free can be used, and the pieces holding what is being looked at can be chosen. ----
+    public const int SegSize = 32 << 20;
+    private readonly ConcurrentDictionary<long, byte[]> _mem = new();
+    private readonly ConcurrentDictionary<long, int> _hits = new();
     private long _memBytes;
+    private static long Key(int pack, int seg) => ((long)pack << 20) | (uint)seg;
     /// <summary>Bytes of this store currently held in memory.</summary>
     public long MemoryBytes => Interlocked.Read(ref _memBytes);
 
@@ -111,44 +115,88 @@ public sealed class ThumbStore : IDisposable
         return list;
     }
 
-    public bool IsInMemory(int pack) => _mem.ContainsKey(pack);
-
-    /// <summary>Reads a whole pack file into memory in one long sequential read (fast even on a hard drive).</summary>
-    public bool LoadPack(int pack, Action<long>? progress, CancellationToken ct)
+    /// <summary>Every 32 MB piece of every pack: (pack, piece, size).</summary>
+    public List<(int pack, int seg, int size)> Segments()
     {
-        if (_mem.ContainsKey(pack)) return true;
+        var list = new List<(int, int, int)>();
+        foreach (var (pack, size) in Packs())
+            for (long o = 0; o < size; o += SegSize) list.Add((pack, (int)(o / SegSize), (int)Math.Min(SegSize, size - o)));
+        return list;
+    }
+
+    public bool IsInMemory(int pack, int seg) => _mem.ContainsKey(Key(pack, seg));
+    public bool IsInMemory(int pack) => _mem.Keys.Any(k => (int)(k >> 20) == pack);
+    /// <summary>How often a piece was asked for lately (decays when <see cref="DecayHits"/> is called).</summary>
+    public int Hits(int pack, int seg) => _hits.TryGetValue(Key(pack, seg), out int h) ? h : 0;
+    public void DecayHits() { foreach (var k in _hits.Keys) _hits.AddOrUpdate(k, 0, (_, v) => v / 2); }
+
+    /// <summary>Reads one piece of a pack into memory (a single sequential read: fast even on a hard drive).</summary>
+    public bool LoadSegment(int pack, int seg, CancellationToken ct)
+    {
+        long key = Key(pack, seg);
+        if (_mem.ContainsKey(key)) return true;
         if (_dirty) Flush();
         string path = PackPath(pack);
         if (!File.Exists(path)) return false;
         using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 20, FileOptions.SequentialScan);
-        long size = fs.Length;
-        if (size <= 0 || size > int.MaxValue - 64) return false;
-        var data = GC.AllocateUninitializedArray<byte>((int)size);
+        long start = (long)seg * SegSize;
+        int size = (int)Math.Min(SegSize, fs.Length - start);
+        if (size <= 0) return false;
+        var data = GC.AllocateUninitializedArray<byte>(size);
+        fs.Position = start;
         int pos = 0;
         while (pos < size)
         {
             ct.ThrowIfCancellationRequested();
-            int n = fs.Read(data, pos, (int)Math.Min(8 << 20, size - pos));
+            int n = fs.Read(data, pos, Math.Min(4 << 20, size - pos));
             if (n <= 0) break;
-            pos += n; progress?.Invoke(n);
+            pos += n;
         }
         if (pos < size) return false;
-        if (_mem.TryAdd(pack, data)) Interlocked.Add(ref _memBytes, size);
+        if (_mem.TryAdd(key, data)) Interlocked.Add(ref _memBytes, size);
         return true;
     }
 
-    /// <summary>Lets go of a pack held in memory (lookups go back to the drive).</summary>
-    public void DropPack(int pack) { if (_mem.TryRemove(pack, out var a)) Interlocked.Add(ref _memBytes, -a.Length); }
-    public void DropAll() { foreach (var k in _mem.Keys.ToList()) DropPack(k); }
+    /// <summary>Lets go of a piece held in memory (lookups there go back to the drive).</summary>
+    public void DropSegment(int pack, int seg) { if (_mem.TryRemove(Key(pack, seg), out var a)) Interlocked.Add(ref _memBytes, -a.Length); }
+    public void DropPack(int pack) { foreach (var k in _mem.Keys.Where(k => (int)(k >> 20) == pack).ToList()) if (_mem.TryRemove(k, out var a)) Interlocked.Add(ref _memBytes, -a.Length); }
+    public void DropAll() { foreach (var k in _mem.Keys.ToList()) if (_mem.TryRemove(k, out var a)) Interlocked.Add(ref _memBytes, -a.Length); }
+
+    /// <summary>Test helper: loads every piece of one pack.</summary>
+    public bool LoadPack(int pack, Action<long>? progress, CancellationToken ct)
+    {
+        foreach (var (p, seg, size) in Segments()) if (p == pack) { if (!LoadSegment(p, seg, ct)) return false; progress?.Invoke(size); }
+        return true;
+    }
 
     public byte[]? Read(int pack, long offset, int length)
     {
         if (length <= 0) return null;
-        if (_mem.TryGetValue(pack, out var m) && offset >= 0 && offset + length <= m.Length)
+        if (offset >= 0)
         {
-            var copy = new byte[length];
-            Buffer.BlockCopy(m, (int)offset, copy, 0, length);
-            return copy;
+            int seg = (int)(offset / SegSize), segEnd = (int)((offset + length - 1) / SegSize);
+            _hits.AddOrUpdate(Key(pack, seg), 1, (_, v) => v + 1);
+            if (_mem.TryGetValue(Key(pack, seg), out var m))
+            {
+                int inSeg = (int)(offset - (long)seg * SegSize);
+                if (segEnd == seg && inSeg + length <= m.Length)
+                {
+                    var copy = new byte[length];
+                    Buffer.BlockCopy(m, inSeg, copy, 0, length);
+                    return copy;
+                }
+                if (segEnd == seg + 1 && _mem.TryGetValue(Key(pack, segEnd), out var m2))
+                {
+                    int first = m.Length - inSeg;
+                    if (first > 0 && length - first <= m2.Length)
+                    {
+                        var copy = new byte[length];
+                        Buffer.BlockCopy(m, inSeg, copy, 0, first);
+                        Buffer.BlockCopy(m2, 0, copy, first, length - first);
+                        return copy;
+                    }
+                }
+            }
         }
         if (_dirty) Flush(); // a thumbnail written a moment ago may not be in the file yet
         var handle = _readers.GetOrAdd(pack, p =>
