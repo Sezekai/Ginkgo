@@ -97,7 +97,10 @@ public sealed class ThumbStore : IDisposable
     // ---- pieces of the pack files held in memory: lookups there never touch the drive. Pieces (32 MB) rather than whole
     // files, so whatever memory is free can be used, and the pieces holding what is being looked at can be chosen. ----
     public const int SegSize = 32 << 20;
-    private readonly ConcurrentDictionary<long, byte[]> _mem = new();
+    // Pieces live outside the garbage-collected heap, so letting one go hands the memory straight back to Windows.
+    private sealed class Seg { public IntPtr P; public int Len; }
+    private readonly ConcurrentDictionary<long, Seg> _mem = new();
+    private readonly ReaderWriterLockSlim _memLock = new(LockRecursionPolicy.NoRecursion);
     private readonly ConcurrentDictionary<long, int> _hits = new();
     private long _memBytes;
     private static long Key(int pack, int seg) => ((long)pack << 20) | (uint)seg;
@@ -142,25 +145,38 @@ public sealed class ThumbStore : IDisposable
         long start = (long)seg * SegSize;
         int size = (int)Math.Min(SegSize, fs.Length - start);
         if (size <= 0) return false;
-        var data = GC.AllocateUninitializedArray<byte>(size);
-        fs.Position = start;
-        int pos = 0;
-        while (pos < size)
+        IntPtr ptr;
+        unsafe { ptr = (IntPtr)System.Runtime.InteropServices.NativeMemory.Alloc((nuint)size); }
+        try
         {
-            ct.ThrowIfCancellationRequested();
-            int n = fs.Read(data, pos, Math.Min(4 << 20, size - pos));
-            if (n <= 0) break;
-            pos += n;
+            fs.Position = start;
+            int pos = 0;
+            while (pos < size)
+            {
+                ct.ThrowIfCancellationRequested();
+                int n;
+                unsafe { n = fs.Read(new Span<byte>((byte*)ptr + pos, Math.Min(4 << 20, size - pos))); }
+                if (n <= 0) break;
+                pos += n;
+            }
+            if (pos < size) { Free(ptr); return false; }
         }
-        if (pos < size) return false;
-        if (_mem.TryAdd(key, data)) Interlocked.Add(ref _memBytes, size);
+        catch { Free(ptr); throw; }
+        if (_mem.TryAdd(key, new Seg { P = ptr, Len = size })) Interlocked.Add(ref _memBytes, size); else Free(ptr);
         return true;
     }
 
     /// <summary>Lets go of a piece held in memory (lookups there go back to the drive).</summary>
-    public void DropSegment(int pack, int seg) { if (_mem.TryRemove(Key(pack, seg), out var a)) Interlocked.Add(ref _memBytes, -a.Length); }
-    public void DropPack(int pack) { foreach (var k in _mem.Keys.Where(k => (int)(k >> 20) == pack).ToList()) if (_mem.TryRemove(k, out var a)) Interlocked.Add(ref _memBytes, -a.Length); }
-    public void DropAll() { foreach (var k in _mem.Keys.ToList()) if (_mem.TryRemove(k, out var a)) Interlocked.Add(ref _memBytes, -a.Length); }
+    public void DropSegment(int pack, int seg) => DropKey(Key(pack, seg));
+    public void DropPack(int pack) { foreach (var k in _mem.Keys.Where(k => (int)(k >> 20) == pack).ToList()) DropKey(k); }
+    public void DropAll() { foreach (var k in _mem.Keys.ToList()) DropKey(k); }
+    private void DropKey(long k)
+    {
+        _memLock.EnterWriteLock();      // nobody is copying out of it while it goes
+        try { if (_mem.TryRemove(k, out var a)) { Interlocked.Add(ref _memBytes, -a.Len); Free(a.P); } }
+        finally { _memLock.ExitWriteLock(); }
+    }
+    private static unsafe void Free(IntPtr p) => System.Runtime.InteropServices.NativeMemory.Free((void*)p);
 
     /// <summary>Test helper: loads every piece of one pack.</summary>
     public bool LoadPack(int pack, Action<long>? progress, CancellationToken ct)
@@ -176,26 +192,37 @@ public sealed class ThumbStore : IDisposable
         {
             int seg = (int)(offset / SegSize), segEnd = (int)((offset + length - 1) / SegSize);
             _hits.AddOrUpdate(Key(pack, seg), 1, (_, v) => v + 1);
-            if (_mem.TryGetValue(Key(pack, seg), out var m))
+            if (_mem.ContainsKey(Key(pack, seg)))
             {
-                int inSeg = (int)(offset - (long)seg * SegSize);
-                if (segEnd == seg && inSeg + length <= m.Length)
+                _memLock.EnterReadLock();
+                try
                 {
-                    var copy = new byte[length];
-                    Buffer.BlockCopy(m, inSeg, copy, 0, length);
-                    return copy;
-                }
-                if (segEnd == seg + 1 && _mem.TryGetValue(Key(pack, segEnd), out var m2))
-                {
-                    int first = m.Length - inSeg;
-                    if (first > 0 && length - first <= m2.Length)
+                    if (_mem.TryGetValue(Key(pack, seg), out var m))
                     {
-                        var copy = new byte[length];
-                        Buffer.BlockCopy(m, inSeg, copy, 0, first);
-                        Buffer.BlockCopy(m2, 0, copy, first, length - first);
-                        return copy;
+                        int inSeg = (int)(offset - (long)seg * SegSize);
+                        if (segEnd == seg && inSeg + length <= m.Len)
+                        {
+                            var copy = new byte[length];
+                            unsafe { new ReadOnlySpan<byte>((byte*)m.P + inSeg, length).CopyTo(copy); }
+                            return copy;
+                        }
+                        if (segEnd == seg + 1 && _mem.TryGetValue(Key(pack, segEnd), out var m2))
+                        {
+                            int first = m.Len - inSeg;
+                            if (first > 0 && length - first <= m2.Len)
+                            {
+                                var copy = new byte[length];
+                                unsafe
+                                {
+                                    new ReadOnlySpan<byte>((byte*)m.P + inSeg, first).CopyTo(copy);
+                                    new ReadOnlySpan<byte>((byte*)m2.P, length - first).CopyTo(copy.AsSpan(first));
+                                }
+                                return copy;
+                            }
+                        }
                     }
                 }
+                finally { _memLock.ExitReadLock(); }
             }
         }
         if (_dirty) Flush(); // a thumbnail written a moment ago may not be in the file yet
@@ -218,6 +245,7 @@ public sealed class ThumbStore : IDisposable
         lock (_lock) { _writer?.Flush(); _writer?.Dispose(); _writer = null; }
         foreach (var h in _readers.Values) h.Dispose();
         _readers.Clear();
+        DropAll();
     }
 }
 

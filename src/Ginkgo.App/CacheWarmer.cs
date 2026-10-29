@@ -35,12 +35,15 @@ public sealed class CacheWarmer
     private void Run(ThumbStores stores, CancellationToken ct)
     {
         var tiers = new[] { stores.Micro, stores.Small, stores.Full };
+        // How much may be held. When other programs need room, the ceiling comes down to what is held after giving some back,
+        // so loading does not race straight back up and get thrown out again. It only rises again once there is clear room to spare.
+        long ceiling = long.MaxValue;
+        long lastSqueeze = 0;
         try
         {
             while (!ct.IsCancellationRequested)
             {
                 int pref = Math.Clamp(Preferred, 0, 2);
-                // every piece, most wanted first: pieces holding what was looked up lately, the size on screen first, then the rest in order
                 var all = new List<(ThumbStore st, int pack, int seg, int size, double score, bool loaded)>();
                 for (int t = 0; t < 3; t++)
                 {
@@ -55,44 +58,55 @@ public sealed class CacheWarmer
                     }
                 }
                 Total = all.Sum(x => (long)x.size);
-                Done = all.Where(x => x.loaded).Sum(x => (long)x.size);
+                long held = tiers.Sum(s => s.MemoryBytes);
+                long sinceSqueeze = Environment.TickCount64 - lastSqueeze;
+                if (ceiling != long.MaxValue && sinceSqueeze > 20_000 && AvailableBytes() > Reserve + (1L << 30))
+                    ceiling = held + (256L << 20);                    // plenty of room again: allow a little more
+                if (ceiling != long.MaxValue && sinceSqueeze > 120_000 && AvailableBytes() > Reserve + (2L << 30))
+                    ceiling = long.MaxValue;
+
                 var wanted = all.Where(x => !x.loaded).OrderByDescending(x => x.score).ToList();
-                var held = all.Where(x => x.loaded).OrderBy(x => x.score).ToList();      // least wanted first
+                var heldList = all.Where(x => x.loaded).OrderBy(x => x.score).ToList();      // least wanted first
                 int swaps = 0; bool full = false;
                 foreach (var w in wanted)
                 {
                     if (ct.IsCancellationRequested) break;
-                    if (AvailableBytes() - w.size < Reserve)
+                    bool room = AvailableBytes() - w.size >= Reserve && held + w.size <= ceiling;
+                    if (!room)
                     {
-                        // memory is full: swap out a piece nobody is looking at for one that is wanted much more
-                        if (held.Count > 0 && w.score > held[0].score + 1000 && swaps < 6)
+                        // full: swap a piece nobody is looking at for one that is wanted much more (the total stays the same)
+                        if (heldList.Count > 0 && w.score > heldList[0].score + 1000 && swaps < 6 && AvailableBytes() >= Reserve / 2)
                         {
-                            var cold = held[0]; held.RemoveAt(0);
-                            cold.st.DropSegment(cold.pack, cold.seg); Done -= cold.size; swaps++;
-                            GC.Collect(2, GCCollectionMode.Forced, true, true);
-                            if (AvailableBytes() - w.size < Reserve) { full = true; break; }
+                            var cold = heldList[0]; heldList.RemoveAt(0);
+                            cold.st.DropSegment(cold.pack, cold.seg); held -= cold.size; swaps++;
                         }
                         else { full = true; break; }
                     }
                     Running = true;
-                    if (w.st.LoadSegment(w.pack, w.seg, ct)) Done += w.size;
+                    if (w.st.LoadSegment(w.pack, w.seg, ct)) held += w.size;
                 }
                 Running = false;
+                Done = tiers.Sum(s => s.MemoryBytes);
                 Note = full ? "memory is full: the most-viewed thumbnails are kept" : "";
-                InMemory = tiers.Sum(s => s.MemoryBytes);
+                InMemory = Done;
                 foreach (var st in tiers) st.DecayHits();
-                // keep an eye on memory for a couple of seconds: give room back if other programs need it
+
+                // watch memory for a couple of seconds; if other programs need room, give back just enough (least-viewed first)
                 for (int i = 0; i < 10 && !ct.IsCancellationRequested; i++)
                 {
                     Thread.Sleep(200);
-                    if (AvailableBytes() < DropBelow)
+                    long avail = AvailableBytes();
+                    if (avail < DropBelow)
                     {
+                        long need = Reserve - avail;                   // back up to the reserve, no further
                         var heldNow = all.Where(x => x.st.IsInMemory(x.pack, x.seg)).OrderBy(x => x.score).ToList();
-                        int n = 0;
-                        while (AvailableBytes() < DropBelow + (256L << 20) && n < heldNow.Count) { var c = heldNow[n++]; c.st.DropSegment(c.pack, c.seg); }
-                        if (n > 0) { GC.Collect(2, GCCollectionMode.Forced, true, true); Note = "gave memory back to other programs"; }
+                        long freed = 0; int n = 0;
+                        while (freed < need && n < heldNow.Count) { var c = heldNow[n++]; c.st.DropSegment(c.pack, c.seg); freed += c.size; }
+                        ceiling = Math.Max(0, tiers.Sum(s => s.MemoryBytes));
+                        lastSqueeze = Environment.TickCount64;
+                        if (n > 0) Note = $"gave {freed / 1048576} MB back to other programs";
                     }
-                    InMemory = tiers.Sum(s => s.MemoryBytes);
+                    InMemory = Done = tiers.Sum(s => s.MemoryBytes);
                 }
             }
         }
