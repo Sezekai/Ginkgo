@@ -314,7 +314,7 @@ public partial class MainWindow : Window
         string sharp = p.SharpTotal > 0 && p.SharpDone < p.SharpTotal ? $"  |  sharp versions {p.SharpDone:N0} of {p.SharpTotal:N0}" : "";
         bool busy = pipe.Length > 0 || back.Length > 0 || sharp.Length > 0 || p.Running || _engine.IdsRunning;
         string idle = !busy && _engine.IdsFinished ? "  |  file IDs done, nothing running in the background" : "";
-        return _engine.Status + pipe + back + sharp + idle;
+        return _engine.Status + pipe + back + sharp + idle + (_engine.FastCacheNote.Length > 0 ? "  |  " + _engine.FastCacheNote : "");
     }
 
     private void UpdateChangeIndicator()
