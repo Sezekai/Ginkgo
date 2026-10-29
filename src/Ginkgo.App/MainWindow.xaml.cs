@@ -43,7 +43,7 @@ public partial class MainWindow : Window
     // side menu
     private bool _sideOpen;
     private bool _diag;
-    private long _lastFrame; private double _worstGap;
+    private long _lastFrame; private double _worstGap; private TimeSpan _lastRenderTime; private int _slowFrames;
 
     private const float TileMin = 60, TileMax = 1800;
     private static double SizeToSlider(float size) => Math.Log(Math.Clamp(size, TileMin, TileMax) / TileMin) / Math.Log(TileMax / TileMin);
@@ -95,10 +95,13 @@ public partial class MainWindow : Window
         View.ScrollChanged += () => Interlocked.Exchange(ref _engine.Pipe.LastUiActivity, Stopwatch.GetTimestamp());
         View.HoverChanged += i => StatusText.Text = i >= 0 && i < _paths.Length ? HoverText(i) : StatusLine();
         View.ItemActivated += OpenViewer;
-        CompositionTarget.Rendering += (_, _) =>
+        CompositionTarget.Rendering += (_, e) =>
         {
+            // the event can come more than once per screen refresh: count each refresh once
+            if (e is RenderingEventArgs re) { if (re.RenderingTime == _lastRenderTime) return; _lastRenderTime = re.RenderingTime; }
             _frames++;
             long t = Stopwatch.GetTimestamp();
+            if (_lastFrame != 0 && (t - _lastFrame) * 1000 > 25 * Stopwatch.Frequency) _slowFrames++;
             if (_lastFrame != 0) _worstGap = Math.Max(_worstGap, (t - _lastFrame) * 1000.0 / Stopwatch.Frequency);
             _lastFrame = t;
         };
@@ -334,8 +337,8 @@ public partial class MainWindow : Window
         if (_diag)
         {
             var (mr, mp) = View.TakeWorst();
-            DiagText.Text = $"{_fps:F0} fps | render tier {RenderCapability.Tier >> 16} | worst frame gap {_worstGap:F0} ms | draw max {mr:F1} ms | plan max {mp:F1} ms | {View.LastVisibleCount} tiles | cached {_loader?.CachedCount ?? 0} | pending {_loader?.PendingCount ?? 0} | GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)} | thumbs from {System.IO.Path.GetPathRoot(_engine.ThumbDir)} read {_loader?.AvgReadMs ?? 0:F1} ms, decode {_loader?.AvgDecodeMs ?? 0:F1} ms{(_engine.FastCacheNote.Length > 0 ? " | " + _engine.FastCacheNote : "")}";
-            _worstGap = 0;
+            DiagText.Text = $"{_fps:F0} fps | render tier {RenderCapability.Tier >> 16} | worst frame gap {_worstGap:F0} ms | slow frames {_slowFrames} | draw max {mr:F1} ms | plan max {mp:F1} ms | {View.LastVisibleCount} tiles | cached {_loader?.CachedCount ?? 0} | pending {_loader?.PendingCount ?? 0} | GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)} | thumbs from {System.IO.Path.GetPathRoot(_engine.ThumbDir)} read {_loader?.AvgReadMs ?? 0:F1} ms, decode {_loader?.AvgDecodeMs ?? 0:F1} ms{(_engine.FastCacheNote.Length > 0 ? " | " + _engine.FastCacheNote : "")}";
+            _worstGap = 0; _slowFrames = 0;
         }
         bool moving = _engine.Moving;
         MoveLayer.Visibility = moving ? Visibility.Visible : Visibility.Collapsed;

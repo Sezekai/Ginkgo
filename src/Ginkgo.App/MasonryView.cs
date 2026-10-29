@@ -347,7 +347,9 @@ public sealed class MasonryView : FrameworkElement
         if (!ReferenceEquals(_layout, _lastLayout) || dpi != _lastDpi || pw != _bandW) ResetBands(pw);
         _lastLayout = _layout; _lastDpi = dpi;
         int k0 = Math.Max(0, (int)Math.Floor(topPx / (double)BandH)), k1 = Math.Max(k0, (int)Math.Floor((botPx - 1) / (double)BandH));
-        foreach (var k in _bands.Keys.Where(k => k < k0 || k > k1).ToList()) { _bandPool.Push(_bands[k].Bmp); _bands.Remove(k); }
+        _dropKeys.Clear();
+        foreach (var k in _bands.Keys) if (k < k0 || k > k1) _dropKeys.Add(k);
+        foreach (var k in _dropKeys) { _bandPool.Push(_bands[k].Bmp); _bands.Remove(k); }
         for (int k = k0; k <= k1; k++)
             if (!_bands.ContainsKey(k))
                 _bands[k] = new Band { K = k, Fresh = true, Bmp = _bandPool.Count > 0 ? _bandPool.Pop() : new WriteableBitmap(pw, BandH, 96, 96, PixelFormats.Pbgra32, null) };
@@ -368,7 +370,7 @@ public sealed class MasonryView : FrameworkElement
             if (e is not null && e.FadeSecs > 0)
             {
                 a = (tick - e.FadeStart) / (e.FadeSecs * Stopwatch.Frequency);
-                if (a >= 1) { a = 1; e.FadeSecs = 0; e.Prev = null; } else fading = true;
+                if (a >= 1) { a = 1; _thumbs!.EndFade(e); } else fading = true;
             }
             object? sig = e?.Pix;
             _sigNow[i] = sig;
@@ -400,11 +402,17 @@ public sealed class MasonryView : FrameworkElement
         _bands.Clear(); _sigPrev.Clear(); _bandW = pw;
     }
 
-    /// <summary>Repaints the strips that need it: new ones completely, the others only where a picture changed.</summary>
+    private readonly List<Band> _work = new();
+    private readonly List<(int band, int tile, long area)> _pieces = new();
+    private readonly List<int> _dropKeys = new();
+    private (IntPtr p, int stride)[] _ptrs = new (IntPtr, int)[16];
+
+    /// <summary>Repaints the strips that need it: new ones completely, the others only where a picture changed. Big jobs are shared across cores.</summary>
     private unsafe void PaintBands(int pw, int k0, int k1)
     {
         _paletteBgra ??= Enumerable.Range(0, 24).Select(i => { var c = HsvToColor(i * 15.0, 0.35, 0.55); return TileBlit.Pack(c.R, c.G, c.B); }).ToArray();
-        var work = new List<Band>();
+        _work.Clear(); _pieces.Clear();
+        long area = 0;
         foreach (var b in _bands.Values)
         {
             b.Work.Clear();
@@ -415,27 +423,37 @@ public sealed class MasonryView : FrameworkElement
                 if (t.Y >= bottom || t.Y + t.H <= top) continue;
                 if (b.Fresh || t.Changed) b.Work.Add(ti);
             }
-            if (b.Fresh || b.Work.Count > 0) work.Add(b);
-        }
-        if (work.Count == 0) return;
-        var ptrs = new (IntPtr p, int stride)[work.Count];
-        for (int w = 0; w < work.Count; w++) { work[w].Bmp.Lock(); ptrs[w] = (work[w].Bmp.BackBuffer, work[w].Bmp.BackBufferStride); }
-        void Paint(int w)
-        {
-            var b = work[w]; var (ptr, stride) = ptrs[w];
-            var buf = new Span<byte>((void*)ptr, stride * BandH);
-            int top = b.K * BandH;
-            if (b.Fresh) TileBlit.Fill(buf, stride, pw, BandH, 0, 0, pw, BandH, BgPixel);
+            if (!b.Fresh && b.Work.Count == 0) continue;
+            int bi = _work.Count;
+            _work.Add(b);
             foreach (int ti in b.Work)
             {
                 var t = _tiles[ti];
-                DrawTile(buf, stride, pw, BandH, t.X, t.Y - top, t.W, t.H, t.E, t.A, t.Index);
+                long a = (long)t.W * Math.Min(BandH, Math.Min(t.Y + t.H, bottom) - Math.Max(t.Y, top));
+                if (t.A < 1) a *= 4;                         // a fade costs more per pixel
+                else if (t.E is { } e && (e.Pix.W != t.W || e.Pix.H != t.H)) a *= 3;
+                _pieces.Add((bi, ti, a)); area += a;
             }
         }
-        if (work.Count > 2) Parallel.For(0, work.Count, Paint); else for (int w = 0; w < work.Count; w++) Paint(w);
-        for (int w = 0; w < work.Count; w++)
+        if (_work.Count == 0) return;
+        if (_ptrs.Length < _work.Count) _ptrs = new (IntPtr, int)[_work.Count * 2];
+        var ptrs = _ptrs;
+        for (int w = 0; w < _work.Count; w++) { _work[w].Bmp.Lock(); ptrs[w] = (_work[w].Bmp.BackBuffer, _work[w].Bmp.BackBufferStride); }
+        for (int w = 0; w < _work.Count; w++)
+            if (_work[w].Fresh) { var (p, st) = ptrs[w]; TileBlit.Fill(new Span<byte>((void*)p, st * BandH), st, pw, BandH, 0, 0, pw, BandH, BgPixel); }
+        void Piece(int k)
         {
-            var b = work[w];
+            var (bi, ti, _) = _pieces[k];
+            var (p, st) = ptrs[bi];
+            var t = _tiles[ti];
+            DrawTile(new Span<byte>((void*)p, st * BandH), st, pw, BandH, t.X, t.Y - _work[bi].K * BandH, t.W, t.H, t.E, t.A, t.Index);
+        }
+        // pieces never overlap (tiles don't, and a tile is cut into one piece per strip), so they can be painted side by side
+        if (area > 120_000 && _pieces.Count > 1) Parallel.For(0, _pieces.Count, Piece);
+        else for (int k = 0; k < _pieces.Count; k++) Piece(k);
+        for (int w = 0; w < _work.Count; w++)
+        {
+            var b = _work[w];
             if (b.Fresh) b.Bmp.AddDirtyRect(new Int32Rect(0, 0, pw, BandH));
             else
             {
@@ -455,9 +473,11 @@ public sealed class MasonryView : FrameworkElement
     {
         if (e is null) { TileBlit.Fill(buf, stride, pw, ph, x, y, wPx, hPx, _paletteBgra![(i * 7) % _paletteBgra.Length]); return; }   // plain placeholder: cheap
         var px = e.Pix;
+        if (px.Data.Length < px.W * px.H * 4) { TileBlit.Fill(buf, stride, pw, ph, x, y, wPx, hPx, FadePixel); return; }     // safety: picture already handed back
         if (a < 1)
         {
             var prev = e.Prev;
+            if (prev is not null && prev.Data.Length < prev.W * prev.H * 4) prev = null;
             TileBlit.Blend(buf, stride, pw, ph, x, y, wPx, hPx, px.Data, px.W, px.H,
                 prev is null ? ReadOnlySpan<byte>.Empty : prev.Data, prev?.W ?? 0, prev?.H ?? 0, (int)(a * 256), FadePixel);
         }

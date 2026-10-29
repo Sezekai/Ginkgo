@@ -96,17 +96,29 @@ public static class TileBlit
         var p = MemoryMarshal.Cast<byte, uint>(prev);
         bool hasPrev = pw > 0 && ph > 0 && !prev.IsEmpty;
         alpha = Math.Clamp(alpha, 0, 256);
-        for (int yy = y0; yy < y1; yy++)
+        int cols = x1 - x0;
+        var pool = System.Buffers.ArrayPool<int>.Shared;
+        var nx = pool.Rent(cols); var px = pool.Rent(cols);
+        try
         {
-            var drow = MemoryMarshal.Cast<byte, uint>(dst.Slice(yy * stride, dw * 4));
-            int ny = (int)((long)(yy - y) * nh / h) * nw, py = hasPrev ? (int)((long)(yy - y) * ph / h) * pw : 0;
-            for (int xx = x0; xx < x1; xx++)
+            for (int i = 0; i < cols; i++)        // source columns worked out once, not for every pixel
             {
-                uint a = n[ny + (int)((long)(xx - x) * nw / w)];
-                uint b = hasPrev ? p[py + (int)((long)(xx - x) * pw / w)] : plain;
-                drow[xx] = Mix(b, a, alpha);
+                nx[i] = (int)((long)(x0 + i - x) * nw / w);
+                px[i] = hasPrev ? (int)((long)(x0 + i - x) * pw / w) : 0;
+            }
+            for (int yy = y0; yy < y1; yy++)
+            {
+                var drow = MemoryMarshal.Cast<byte, uint>(dst.Slice(yy * stride, dw * 4)).Slice(x0, cols);
+                var nrow = n.Slice((int)((long)(yy - y) * nh / h) * nw, nw);
+                if (hasPrev)
+                {
+                    var prow = p.Slice((int)((long)(yy - y) * ph / h) * pw, pw);
+                    for (int i = 0; i < cols; i++) drow[i] = Mix(prow[px[i]], nrow[nx[i]], alpha);
+                }
+                else for (int i = 0; i < cols; i++) drow[i] = Mix(plain, nrow[nx[i]], alpha);
             }
         }
+        finally { pool.Return(nx); pool.Return(px); }
     }
 
     private static uint Mix(uint from, uint to, int alpha)

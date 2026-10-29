@@ -1,7 +1,6 @@
 {
   "configProperties": {
     "System.GC.Concurrent": true,
-    "System.GC.LOHThreshold": 4000000,
     "System.GC.RetainVM": true
   }
 }

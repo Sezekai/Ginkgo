@@ -22,6 +22,45 @@ public sealed class ThumbLoader : IDisposable
     /// <summary>A tile's pixels (premultiplied BGRA), already the size of the tile on screen. SrcW is the width of the thumbnail it was made from.</summary>
     public sealed class Pix { public byte[] Data = Array.Empty<byte>(); public int W, H, SrcW; }
 
+    /// <summary>
+    /// Re-uses the memory of tile pictures. Making a fresh array for every decoded thumbnail (hundreds a second while scrolling)
+    /// kept the garbage collector busy, and its pauses were the frame-rate dips. Arrays are handed back when a picture leaves the cache.
+    /// </summary>
+    public static class PixPool
+    {
+        private static readonly object L = new();
+        private static readonly Dictionary<int, Stack<byte[]>> Buckets = new();
+        private static long _held;
+        private const long Cap = 64L << 20;
+        /// <summary>Rounds up to 1, 1.25, 1.5 or 1.75 times a power of two (at most a quarter wasted), so similar sizes share arrays.</summary>
+        private static int Bucket(int n)
+        {
+            if (n <= 4096) return 4096;
+            int p = 1 << (31 - System.Numerics.BitOperations.LeadingZeroCount((uint)n));
+            if (p == n) return n;
+            int q = p >> 2;
+            return p + ((n - p + q - 1) / q) * q;
+        }
+        public static byte[] Rent(int n)
+        {
+            int b = Bucket(n);
+            lock (L) { if (Buckets.TryGetValue(b, out var st) && st.Count > 0) { _held -= b; return st.Pop(); } }
+            return GC.AllocateUninitializedArray<byte>(b);
+        }
+        public static void Return(Pix? p)
+        {
+            var a = p?.Data;
+            if (a is null || a.Length < 4096) return;
+            p!.Data = Array.Empty<byte>();
+            lock (L)
+            {
+                if (_held + a.Length > Cap) return;
+                if (!Buckets.TryGetValue(a.Length, out var st)) Buckets[a.Length] = st = new Stack<byte[]>();
+                st.Push(a); _held += a.Length;
+            }
+        }
+    }
+
     public sealed record TierData(ThumbStore Store, int[] Pack, long[] Off, int[] Len);   // 0 micro, 1 small, 2 full, 3 large
 
     public sealed class Entry
@@ -430,7 +469,7 @@ public sealed class ThumbLoader : IDisposable
                  : tier == 1 ? ReadPlanner.Make(t.Pack, t.Off, t.Len, index, 16, 64)
                  : ReadPlanner.Make(t.Pack, t.Off, t.Len, index);
         long t0 = Stopwatch.GetTimestamp();
-        var block = t.Store.Read(plan.Pack, plan.Start, plan.Length);
+        var block = t.Store.Read(plan.Pack, plan.Start, plan.Length);   // short-lived: sliced below
         Interlocked.Add(ref _readTicks, Stopwatch.GetTimestamp() - t0); Interlocked.Increment(ref _reads);
         if (block is null) return null;
         byte[]? mine = null;
@@ -528,12 +567,12 @@ public sealed class ThumbLoader : IDisposable
             use = conv; temp = conv;
         }
         int w = use.Width, h = use.Height, rowBytes = use.RowBytes;
-        var data = new byte[w * h * 4];
+        var data = PixPool.Rent(w * h * 4);
         var ptr = use.GetPixels();
-        if (rowBytes == w * 4) System.Runtime.InteropServices.Marshal.Copy(ptr, data, 0, data.Length);
+        if (rowBytes == w * 4) System.Runtime.InteropServices.Marshal.Copy(ptr, data, 0, w * h * 4);
         else for (int y = 0; y < h; y++) System.Runtime.InteropServices.Marshal.Copy(ptr + y * rowBytes, data, y * w * 4, w * 4);
         temp?.Dispose();
-        return (new Pix { Data = data, W = w, H = h, SrcW = srcEff }, data.Length);
+        return (new Pix { Data = data, W = w, H = h, SrcW = srcEff }, (long)w * h * 4);
     }
 
     /// <summary>For the picture viewer: a stored thumbnail as it is, as a picture WPF can show.</summary>
@@ -569,8 +608,9 @@ public sealed class ThumbLoader : IDisposable
             {
                 var o = old.Value;
                 bool sameLook = d.Tier <= o.Tier && Math.Abs(ne.PixelWidth - o.PixelWidth) <= o.PixelWidth * 0.08 && d.Pixels.W == o.Pix.W && d.Pixels.H == o.Pix.H;
-                if (sameLook) continue;                                   // nothing gained
-                if (d.Tier > o.Tier && o.Drawn && FadeEnabled) { ne.Prev = o.Pix; ne.FadeSecs = 0.15; }  // sharper version: fade over the old one
+                if (sameLook) { PixPool.Return(d.Pixels); continue; }     // nothing gained
+                if (d.Tier > o.Tier && o.Drawn && FadeEnabled) { ne.Prev = o.Pix; ne.FadeSecs = 0.15; PixPool.Return(o.Prev); }  // sharper version: fade over the old one
+                else { PixPool.Return(o.Pix); PixPool.Return(o.Prev); }
                 ne.Drawn = o.Drawn; ne.Touched = o.Touched;
                 _lru.Remove(old); _cache.Remove(d.Index); _bytes -= o.Bytes;
             }
@@ -580,10 +620,14 @@ public sealed class ThumbLoader : IDisposable
         while (_bytes > _budget && _lru.Last is { } last && Environment.TickCount64 - last.Value.Touched > 400)   // never throw out what is on screen (it would only be loaded again)
         {
             _lru.RemoveLast(); _cache.Remove(last.Value.Index); _bytes -= last.Value.Bytes;
+            PixPool.Return(last.Value.Pix); PixPool.Return(last.Value.Prev);
         }
         if (any) _onReady();
         if (!_done.IsEmpty && Interlocked.Exchange(ref _drainQueued, 1) == 0) _ui.BeginInvoke(DispatcherPriority.Input, Drain);
     }
+
+    /// <summary>UI thread. A fade has finished: the picture faded from is no longer needed.</summary>
+    public void EndFade(Entry e) { e.FadeSecs = 0; var p = e.Prev; e.Prev = null; PixPool.Return(p); }
 
     public void Dispose() { _cts.Cancel(); }
 }
