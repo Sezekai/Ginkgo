@@ -335,6 +335,13 @@ public sealed class MasonryView : FrameworkElement
                 _maxPlan = Math.Max(_maxPlan, (Stopwatch.GetTimestamp() - p0) * 1000.0 / Stopwatch.Frequency);
             }
             _thumbs.SetWanted(_visible[0] - 12, _visible[^1] + 12);   // requests for tiles that have scrolled away are dropped
+            int sLo = int.MaxValue, sHi = -1;
+            foreach (int i in _visible)
+            {
+                int ty = (int)Math.Round(_layout.Y[i] * dpi), th = (int)Math.Round((_layout.Y[i] + _layout.H[i]) * dpi);
+                if (th > offPx && ty < offPx + ph) { if (i < sLo) sLo = i; if (i > sHi) sHi = i; }
+            }
+            _thumbs.SetScreen(sLo, sHi);
         }
 
         if (!ReferenceEquals(_layout, _lastLayout) || dpi != _lastDpi || pw != _bandW) ResetBands(pw);

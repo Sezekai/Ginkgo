@@ -62,7 +62,7 @@ public sealed class ThumbLoader : IDisposable
 
     // shared with workers
     private readonly ConcurrentDictionary<long, byte> _inflight = new();   // key = index*4+tier: queued or being worked on
-    private readonly SweepQueue _urgent = new();                  // quick work for tiles on screen (reading a thumbnail): taken in the order the data lies on the drive
+    private readonly SweepQueue _urgent;                  // quick work for tiles on screen (reading a thumbnail): taken in the order the data lies on the drive
     private readonly ConcurrentStack<Req> _urgentLarge = new();   // slow work for tiles on screen (reading an original to make a sharp version)
     private int _quickActive;                                     // quick jobs being worked on right now
     private long _lastQuick;                                      // when quick work was last asked for or finished
@@ -118,6 +118,7 @@ public sealed class ThumbLoader : IDisposable
         Action<int, Loc> onLargeMade, Dispatcher ui, Action onReady,
         long decodedBudgetBytes, long encodedBudgetBytes, int threads = 4)
     {
+        _urgent = new SweepQueue(i => i >= _scrLo && i <= _scrHi);
         _tiers = tiers; _paths = paths; _origW = originalWidths; _large = largeStore; _largeCap = largeCapBytes; _onLargeMade = onLargeMade;
         _ui = ui; _onReady = onReady;
         _budget = decodedBudgetBytes; _encBudget = encodedBudgetBytes;
@@ -126,6 +127,10 @@ public sealed class ThumbLoader : IDisposable
     }
 
     public void SetWanted(int lo, int hi) { _lo = lo; _hi = hi; }
+
+    private int _scrLo, _scrHi = int.MaxValue;
+    /// <summary>The tiles actually on screen (the rest of the wanted range is just beyond the edges): these are read first.</summary>
+    public void SetScreen(int lo, int hi) { _scrLo = lo; _scrHi = hi; }
 
     /// <summary>Called whenever the view moves.</summary>
     public void NoteScroll() => Volatile.Write(ref _lastScroll, Stopwatch.GetTimestamp());
@@ -254,7 +259,9 @@ public sealed class ThumbLoader : IDisposable
         private readonly object _l = new();
         private readonly List<(long key, Req r)> _items = new();
         private readonly long[] _head = new long[4];
+        private readonly Func<int, bool> _onScreen;
         private int _count;
+        public SweepQueue(Func<int, bool> onScreen) { _onScreen = onScreen; }
         public bool IsEmpty => Volatile.Read(ref _count) == 0;
         public void Push(long key, Req r) { lock (_l) { _items.Add((key, r)); _count = _items.Count; } }
         public bool TryTake(out Req r)
@@ -266,7 +273,7 @@ public sealed class ThumbLoader : IDisposable
                 for (int i = 0; i < _items.Count; i++)
                 {
                     var (k, q) = _items[i];
-                    long score = ((long)q.Tier << 52) + (k >= _head[q.Tier] ? k : k + (1L << 50));
+                    long score = (_onScreen(q.Index) ? 0 : 1L << 58) + ((long)q.Tier << 52) + (k >= _head[q.Tier] ? k : k + (1L << 50));
                     if (score < bestScore) { bestScore = score; best = i; }
                 }
                 var (bk, br) = _items[best];
