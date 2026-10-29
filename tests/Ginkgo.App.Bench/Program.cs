@@ -4,11 +4,16 @@ using System.Windows.Threading;
 using Ginkgo.App;
 using Ginkgo.Data;
 using SkiaSharp;
+using System.Windows;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using Ginkgo.Core.Layout;
 
 static class Program {
 [STAThread]
 static int Main(string[] args)
 {
+    var rt = new Thread(RenderCheck); rt.SetApartmentState(ApartmentState.STA); rt.Start(); rt.Join();
     int total = 30000, screen = 700;
     var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ginkgo-bench-" + Guid.NewGuid().ToString("N"));
     var stores = new ThumbStores(dir);
@@ -57,6 +62,47 @@ static int Main(string[] args)
         }
     }
     return 0;
+}
+
+static void RenderCheck()
+{
+    try
+    {
+        var items = Enumerable.Range(0, 4000).Select(i => new ItemSpec(0.5f + (i % 9) * 0.25f)).ToArray();
+        var view = new MasonryView { Width = 900, Height = 600 };
+        view.Measure(new Size(900, 600)); view.Arrange(new Rect(0, 0, 900, 600)); view.UpdateLayout();
+        view.TileTarget = 120;
+        view.SetItems(items, null);
+        var lay = MasonryLayout.Compute(items, 900f, MasonryLayout.ColumnsFor(900f, 120f, 3f), 3f);
+        Color Hsv(double h, double s, double v)
+        {
+            double c = v * s, x = c * (1 - Math.Abs(h / 60 % 2 - 1)), m = v - c;
+            (double r, double g, double b) = h switch { < 60 => (c, x, 0.0), < 120 => (x, c, 0.0), < 180 => (0.0, c, x), < 240 => (0.0, x, c), < 300 => (x, 0.0, c), _ => (c, 0.0, x) };
+            return Color.FromRgb((byte)((r + m) * 255), (byte)((g + m) * 255), (byte)((b + m) * 255));
+        }
+        int bad = 0, checkedPx = 0; var log = new List<string>();
+        foreach (double off in new double[] { 0, 37, 255, 256, 257, 300, 513, 1000, 2047, 2048, 5000, 4999, 1000, 12, 20000 })
+        {
+            view.Offset = off; view.UpdateLayout();
+            double real = view.Offset;
+            var rtb = new RenderTargetBitmap(900, 600, 96, 96, PixelFormats.Pbgra32); rtb.Render(view);
+            var px = new byte[900 * 600 * 4]; rtb.CopyPixels(px, 900 * 4, 0);
+            int mine = 0, tot = 0;
+            for (int i = 0; i < items.Length; i++)
+            {
+                double cy = lay.Y[i] + lay.H[i] / 2 - Math.Round(real), cx = lay.X[i] + lay.W[i] / 2;
+                if (cy < 8 || cy > 590 || lay.H[i] < 12) continue;
+                var c = Hsv(((i * 7) % 24) * 15.0, 0.35, 0.55);
+                int o = ((int)cy * 900 + (int)cx) * 4;
+                tot++; checkedPx++;
+                if (Math.Abs(px[o + 2] - c.R) > 3 || Math.Abs(px[o + 1] - c.G) > 3 || Math.Abs(px[o] - c.B) > 3) { mine++; bad++; }
+            }
+            log.Add($"{real:F0}:{tot - mine}/{tot}");
+        }
+        Console.WriteLine($"::notice::grid render check (strips): {checkedPx - bad}/{checkedPx} tile centres right | {string.Join(" ", log)}");
+        if (bad > 0) Console.WriteLine($"::error::grid render check found {bad} wrong tile centres");
+    }
+    catch (Exception ex) { Console.WriteLine("::error::grid render check crashed: " + ex); }
 }
 
 static void Micro(byte[] full, byte[] small, byte[] micro)
