@@ -16,6 +16,9 @@ jobs:
         run: dotnet run --project tests/Ginkgo.Core.Tests -c Release
       - name: Data tests (scan, index, thumbnails on generated images)
         run: dotnet run --project tests/Ginkgo.Data.Tests -c Release
+      - name: Thumbnail loader benchmark
+        continue-on-error: true
+        run: dotnet run --project tests/Ginkgo.App.Bench -c Release
       - name: Publish prototype
         run: dotnet publish src/Ginkgo.Prototype -c Release -r win-x64 --self-contained true -o publish/Ginkgo.Prototype
       - name: Publish app
