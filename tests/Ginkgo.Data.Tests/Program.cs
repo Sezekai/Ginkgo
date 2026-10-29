@@ -386,8 +386,8 @@ Check(again.BackfillTotal == 0, "backfill has nothing left");
     Check(gotExtra is not null && gotExtra.AsSpan().SequenceEqual(extra), "a thumbnail added after loading is read from the drive");
     ms.DropPack(locs[0].pack);
     Check(!ms.IsInMemory(locs[0].pack) && ms.MemoryBytes == 0, "pack let go");
-    var again = ms.Read(locs[5].pack, locs[5].offset, locs[5].length);
-    Check(again is not null && again.AsSpan().SequenceEqual(blobs[5]), "after letting go, reads come from the drive again");
+    var backFromDrive = ms.Read(locs[5].pack, locs[5].offset, locs[5].length);
+    Check(backFromDrive is not null && backFromDrive.AsSpan().SequenceEqual(blobs[5]), "after letting go, reads come from the drive again");
     ms.Dispose();
 }
 
