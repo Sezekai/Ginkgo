@@ -553,7 +553,7 @@ public sealed class ThumbLoader : IDisposable
         Volatile.Write(ref _drainQueued, 0);
         bool any = false;
         long now = Stopwatch.GetTimestamp();
-        while ((Stopwatch.GetTimestamp() - now) * 1000 < 6 * Stopwatch.Frequency && _done.TryDequeue(out var d))      // at most ~6 ms at a time, so the screen and the mouse are never kept waiting
+        while ((Stopwatch.GetTimestamp() - now) * 1000 < 2 * Stopwatch.Frequency && _done.TryDequeue(out var d))      // at most ~2 ms at a time, so the screen and the mouse are never kept waiting
         {
             _inflight.TryRemove((long)d.Index * 4 + d.Tier, out _);
             if (d.Pixels is null) continue;

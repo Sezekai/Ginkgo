@@ -133,6 +133,22 @@ var (f, e) = g.VisibleRange(1e9f, 2e9f); Check(e == 1003 && f <= e, "grid clampe
     TileBlit.Blend(surf, st, dw, dh, 0, 0, 2, 2, white, 1, 1, ReadOnlySpan<byte>.Empty, 0, 0, 128, 0xFF000000);
     uint mid = Px(0, 0) & 0xFF;
     Check(mid >= 126 && mid <= 129, $"blit: blend halfway without previous (got {mid})");
+    // smooth (bilinear) scaling
+    {
+        var flat = new byte[4 * 4 * 4]; for (int i = 0; i < 16; i++) BitConverter.GetBytes(0xFF336699u).CopyTo(flat, i * 4);
+        TileBlit.Fill(surf, st, dw, dh, 0, 0, dw, dh, 0);
+        TileBlit.CopyScaledSmooth(surf, st, dw, dh, 1, 1, 6, 4, flat, 4, 4);
+        bool allSame = true; for (int yy = 1; yy < 5; yy++) for (int xx = 1; xx < 7; xx++) if (Px(xx, yy) != 0xFF336699) allSame = false;
+        Check(allSame && Px(0, 0) == 0 && Px(7, 5) == 0, "blit: smooth scale of a flat colour stays flat, stays inside its rectangle");
+        TileBlit.Fill(surf, st, dw, dh, 0, 0, dw, dh, 0);
+        TileBlit.CopyScaledSmooth(surf, st, dw, dh, 2, 1, 3, 2, tile, 3, 2);   // same size: identical to a plain copy
+        Check(Px(2, 1) == 0xFF000001 && Px(4, 1) == 0xFF000003 && Px(3, 2) == 0xFF000005, "blit: smooth scale at the same size is a plain copy");
+        var ramp = new byte[2 * 4]; BitConverter.GetBytes(0xFF000000u).CopyTo(ramp, 0); BitConverter.GetBytes(0xFF0000FFu).CopyTo(ramp, 4);
+        TileBlit.Fill(surf, st, dw, dh, 0, 0, dw, dh, 0);
+        TileBlit.CopyScaledSmooth(surf, st, dw, dh, 0, 0, 8, 1, ramp, 2, 1);   // 2 px black to white-ish blue stretched to 8
+        uint a0 = Px(0, 0) & 0xFF, a3 = Px(3, 0) & 0xFF, a4 = Px(4, 0) & 0xFF, a7 = Px(7, 0) & 0xFF;
+        Check(a0 == 0 && a7 == 255 && a3 > a0 && a4 > a3 && a7 >= a4, $"blit: smooth scale ramps evenly ({a0},{a3},{a4},{a7})");
+    }
 }
 
 Console.WriteLine($"{pass} passed, {fail} failed");

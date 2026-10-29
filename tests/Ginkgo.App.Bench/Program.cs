@@ -27,6 +27,7 @@ static int Main(string[] args)
     var pics = aspects.Select(a => (full: Enc(320, (int)(320 / a), 72), small: Enc(192, (int)(192 / a), 70), micro: Enc(112, (int)(112 / a), 62), a)).ToArray();
     Console.WriteLine($"::notice::thumb sizes: full {pics[2].full.Length} B, small {pics[2].small.Length} B, micro {pics[2].micro.Length} B");
 
+    Micro(pics[2].full, pics[2].small, pics[2].micro);
     var tiers = new ThumbLoader.TierData[4];
     var st = new[] { stores.Micro, stores.Small, stores.Full, stores.Large };
     for (int t = 0; t < 4; t++) tiers[t] = new ThumbLoader.TierData(st[t], new int[total], new long[total], new int[total]);
@@ -56,6 +57,30 @@ static int Main(string[] args)
         }
     }
     return 0;
+}
+
+static void Micro(byte[] full, byte[] small, byte[] micro)
+{
+    foreach (var (name, data, w0) in new[] { ("full", full, 320), ("small", small, 192), ("micro", micro, 112) })
+    foreach (int target in new[] { 70, 150, 260 })
+    {
+        if (target > w0 * 1.3) continue;
+        int th = (int)(target * 0.75);
+        double Time(Action a) { for (int i = 0; i < 20; i++) a(); var sw = Stopwatch.StartNew(); for (int i = 0; i < 300; i++) a(); return sw.Elapsed.TotalMilliseconds / 300; }
+        double plain = Time(() => { using var b = SKBitmap.Decode(data); });
+        double med = Time(() => { using var b = SKBitmap.Decode(data); using var r = b.Resize(new SKImageInfo(target, th, SKColorType.Bgra8888, SKAlphaType.Premul), SKFilterQuality.Medium); });
+        double low = Time(() => { using var b = SKBitmap.Decode(data); using var r = b.Resize(new SKImageInfo(target, th, SKColorType.Bgra8888, SKAlphaType.Premul), SKFilterQuality.Low); });
+        string dims = "";
+        double scaled = Time(() =>
+        {
+            using var codec = SKCodec.Create(new SKMemoryStream(data));
+            var d = codec.GetScaledDimensions(target / (float)w0);
+            using var bm = new SKBitmap(new SKImageInfo(d.Width, d.Height, SKColorType.Bgra8888, SKAlphaType.Premul));
+            codec.GetPixels(bm.Info, bm.GetPixels());
+            dims = $"{d.Width}x{d.Height}";
+        });
+        Console.WriteLine($"::notice::decode {name}->{target}px: decode only {plain:F2} ms | +resize medium {med:F2} | +resize low {low:F2} | codec scaled decode {scaled:F2} ms ({dims})");
+    }
 }
 
 static void Run(bool shuffled, int tileW, ThumbLoader.TierData[] tiers, string[] paths, int[] origW, int[] kind, int[] order, double[] aspects, ThumbStores stores, int screen)

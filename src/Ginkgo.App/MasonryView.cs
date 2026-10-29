@@ -30,6 +30,7 @@ public sealed class MasonryView : FrameworkElement
     private double _velocity;               // px/sec for autoscroll
     private bool _animating;
     private long _lastTick;
+    private double _lastRenderSecs;
     private bool _autoScroll;
     private double _autoAnchorY, _autoMouseY;
     private long _autoDownTick;
@@ -83,7 +84,7 @@ public sealed class MasonryView : FrameworkElement
     private void StartAnimating()
     {
         if (_animating) return;
-        _animating = true; _lastTick = Stopwatch.GetTimestamp();
+        _animating = true; _lastTick = 0;
         CompositionTarget.Rendering += OnFrame;
     }
 
@@ -95,9 +96,11 @@ public sealed class MasonryView : FrameworkElement
 
     private void OnFrame(object? sender, EventArgs e)
     {
-        long now = Stopwatch.GetTimestamp();
-        double dt = Math.Min(0.05, (now - _lastTick) / (double)Stopwatch.Frequency);
-        _lastTick = now;
+        // time between screen refreshes as the compositor counts it (steadier than reading the clock when our code happens to run)
+        double now = e is RenderingEventArgs re ? re.RenderingTime.TotalSeconds : Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
+        double dt = _lastTick == 0 ? 1.0 / 60 : Math.Clamp(now - _lastRenderSecs, 0, 0.05);
+        if (e is RenderingEventArgs && now == _lastRenderSecs) return;       // same refresh seen twice: nothing to move
+        _lastRenderSecs = now; _lastTick = 1;
         double max = MaxOffset;
         if (_autoScroll)
         {
@@ -281,17 +284,39 @@ public sealed class MasonryView : FrameworkElement
     public int LookAheadWindows { get; set; } = 3;
     private double _prevRenderOff = double.NaN;
 
+    // ---- drawing: the content is kept as a stack of 256-pixel-tall strips ("bands"), each a bitmap of its own. Scrolling only moves
+    // the strips (the graphics card does that, nothing is copied by the processor); a strip is repainted when it first comes
+    // into reach or when a picture in it arrives. ----
+    private const int BandH = 256;
+    private sealed class Band { public int K; public WriteableBitmap Bmp = null!; public bool Fresh; public readonly List<int> Work = new(); }
+    private readonly Dictionary<int, Band> _bands = new();
+    private readonly Stack<WriteableBitmap> _bandPool = new();
+    private int _bandW;
+    private object? _lastLayout;
+    private double _lastDpi;
+    private Dictionary<int, object?> _sigPrev = new(), _sigNow = new();
+    private readonly List<TileDraw> _tiles = new();
+    private readonly List<(Rect r, bool hovered, bool gif)> _overlay = new();
+    private static readonly uint BgPixel = TileBlit.Pack(18, 18, 20), FadePixel = TileBlit.Pack(40, 40, 46);
+    private uint[]? _paletteBgra;
+
+    private struct TileDraw { public int Index, X, Y, W, H; public ThumbLoader.Entry? E; public double A; public bool Changed; }
+
     protected override void OnRender(DrawingContext dc)
     {
         var sw = Stopwatch.StartNew();
         dc.DrawRectangle(Background, null, new Rect(0, 0, ActualWidth, ActualHeight));
         if (_layout is null) return;
         double dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
-        double offPx = Math.Round(_offset * dpi);       // scroll position in whole device pixels
+        int offPx = (int)Math.Round(_offset * dpi);       // scroll position in whole device pixels
         double off = offPx / dpi;
         double H = ActualHeight;
+        int pw = Math.Max(1, (int)Math.Round(ActualWidth * dpi)), ph = Math.Max(1, (int)Math.Round(H * dpi));
         if (double.IsNaN(_prevRenderOff) || Math.Abs(off - _prevRenderOff) > 0.5) { _thumbs?.NoteScroll(); _prevRenderOff = off; }
-        _layout.GetVisible((float)off - 200, (float)(off + H) + 200, _visible);
+
+        // the strips to keep: the screen plus one strip above and below
+        int topPx = offPx - BandH, botPx = offPx + ph + BandH;
+        _layout.GetVisible((float)(topPx / dpi), (float)(botPx / dpi), _visible);
         LastVisibleCount = _visible.Count;
 
         if (_thumbs is not null && _visible.Count > 0)
@@ -312,88 +337,24 @@ public sealed class MasonryView : FrameworkElement
             _thumbs.SetWanted(_visible[0] - 12, _visible[^1] + 12);   // requests for tiles that have scrolled away are dropped
         }
 
-        // All tiles are copied into one screen-sized picture, so the screen draws a single image per frame
-        // (WPF is slow at drawing hundreds of separate small images).
-        int pw = Math.Max(1, (int)Math.Round(ActualWidth * dpi)), ph = Math.Max(1, (int)Math.Round(H * dpi));
-        if (_surface is null || _surfW != pw || _surfH != ph)
-        {
-            _surface = new WriteableBitmap(pw, ph, 96, 96, PixelFormats.Pbgra32, null); _surfW = pw; _surfH = ph; _surfaceFresh = true;
-        }
+        if (!ReferenceEquals(_layout, _lastLayout) || dpi != _lastDpi || pw != _bandW) ResetBands(pw);
+        _lastLayout = _layout; _lastDpi = dpi;
+        int k0 = Math.Max(0, (int)Math.Floor(topPx / (double)BandH)), k1 = Math.Max(k0, (int)Math.Floor((botPx - 1) / (double)BandH));
+        foreach (var k in _bands.Keys.Where(k => k < k0 || k > k1).ToList()) { _bandPool.Push(_bands[k].Bmp); _bands.Remove(k); }
+        for (int k = k0; k <= k1; k++)
+            if (!_bands.ContainsKey(k))
+                _bands[k] = new Band { K = k, Fresh = true, Bmp = _bandPool.Count > 0 ? _bandPool.Pop() : new WriteableBitmap(pw, BandH, 96, 96, PixelFormats.Pbgra32, null) };
+
+        // what each tile shows now, and which ones differ from what is already painted
         bool fading = false;
         long tick = Stopwatch.GetTimestamp();
-        _overlay.Clear();
-        int offI = (int)offPx;
-        int dy = offI - _lastOffPx;
-        bool full = _surfaceFresh || !_lastValid || !ReferenceEquals(_layout, _lastLayout) || dpi != _lastDpi || Math.Abs(dy) >= ph / 2;
-        _surfaceFresh = false;
-        Int32Rect dirty = Int32Rect.Empty;
-        _surface.Lock();
-        try { fading = ComposeTiles(pw, ph, dpi, offPx, tick, full, dy, out dirty); }
-        finally { if (dirty.Width > 0 && dirty.Height > 0) _surface.AddDirtyRect(dirty); _surface.Unlock(); }
-        _lastValid = true; _lastOffPx = offI; _lastLayout = _layout; _lastDpi = dpi;
-        dc.DrawImage(_surface, new Rect(0, 0, pw / dpi, ph / dpi));
-        foreach (var (r, hovered, gif) in _overlay)
-        {
-            if (hovered) dc.DrawRectangle(null, _hover, r);
-            if (gif && r.Width > 70) DrawBadge(dc, r);
-        }
-        _fadingNow = fading;
-        LastRenderMs = sw.Elapsed.TotalMilliseconds;
-        _maxRender = Math.Max(_maxRender, LastRenderMs);
-    }
-
-    private WriteableBitmap? _surface;
-    private int _surfW, _surfH;
-    private readonly List<(Rect r, bool hovered, bool gif)> _overlay = new();
-    private static readonly uint BgPixel = TileBlit.Pack(18, 18, 20), FadePixel = TileBlit.Pack(40, 40, 46);
-    private uint[]? _paletteBgra;
-
-    private bool _surfaceFresh, _lastValid;
-    private int _lastOffPx;
-    private object? _lastLayout;
-    private double _lastDpi;
-    private Dictionary<int, object?> _sigPrev = new(), _sigNow = new();
-
-    /// <summary>
-    /// Draws the visible tiles into the surface. When only the scroll position changed, the picture already in the surface is
-    /// moved up or down and just the newly exposed strip, plus any tile whose picture changed, is drawn: scrolling then costs
-    /// in proportion to how far it moved, not to the size of the screen.
-    /// </summary>
-    private unsafe bool ComposeTiles(int pw, int ph, double dpi, double offPx, long tick, bool full, int dy, out Int32Rect dirty)
-    {
-        _paletteBgra ??= Enumerable.Range(0, 24).Select(i => { var c = HsvToColor(i * 15.0, 0.35, 0.55); return TileBlit.Pack(c.R, c.G, c.B); }).ToArray();
-        int stride = _surface!.BackBufferStride;
-        byte* basePtr = (byte*)_surface.BackBuffer;
-        var buf = new Span<byte>(basePtr, stride * ph);
-        int dx0 = int.MaxValue, dy0 = int.MaxValue, dx1 = 0, dy1 = 0;     // bounding box of everything drawn
-        void Dirty(int x0, int y0, int x1, int y1)
-        {
-            x0 = Math.Max(0, x0); y0 = Math.Max(0, y0); x1 = Math.Min(pw, x1); y1 = Math.Min(ph, y1);
-            if (x1 <= x0 || y1 <= y0) return;
-            dx0 = Math.Min(dx0, x0); dy0 = Math.Min(dy0, y0); dx1 = Math.Max(dx1, x1); dy1 = Math.Max(dy1, y1);
-        }
-
-        int stripTop = 0, stripH = 0;
-        if (full) { TileBlit.Fill(buf, stride, pw, ph, 0, 0, pw, ph, BgPixel); Dirty(0, 0, pw, ph); }
-        else if (dy != 0)
-        {
-            int n = Math.Abs(dy);
-            long keep = (long)stride * (ph - n);
-            if (dy > 0) { Buffer.MemoryCopy(basePtr + (long)stride * n, basePtr, keep, keep); stripTop = ph - n; }
-            else { Buffer.MemoryCopy(basePtr, basePtr + (long)stride * n, keep, keep); stripTop = 0; }
-            stripH = n;
-            TileBlit.Fill(buf.Slice(stripTop * stride, stripH * stride), stride, pw, stripH, 0, 0, pw, stripH, BgPixel);
-            Dirty(0, 0, pw, ph);
-        }
-
-        bool fading = false;
-        _sigNow.Clear();
+        _tiles.Clear(); _overlay.Clear(); _sigNow.Clear();
         for (int vi = _visible.Count - 1; vi >= 0; vi--)   // bottom to top, so the newest-first queue serves the top tiles first
         {
             int i = _visible[vi];
             // snap every edge to a whole device pixel, so a tile is always copied pixel-for-pixel
-            double l = Math.Round(_layout!.X[i] * dpi), t = Math.Round(_layout.Y[i] * dpi) - offPx;
-            double rr = Math.Round((_layout.X[i] + _layout.W[i]) * dpi), bb = Math.Round((_layout.Y[i] + _layout.H[i]) * dpi) - offPx;
+            double l = Math.Round(_layout.X[i] * dpi), t = Math.Round(_layout.Y[i] * dpi);
+            double rr = Math.Round((_layout.X[i] + _layout.W[i]) * dpi), bb = Math.Round((_layout.Y[i] + _layout.H[i]) * dpi);
             int x = (int)l, y = (int)t, wPx = (int)(rr - l), hPx = (int)(bb - t);
             var e = _thumbs?.Get(i, wPx, hPx);
             double a = 1;
@@ -404,20 +365,83 @@ public sealed class MasonryView : FrameworkElement
             }
             object? sig = e?.Pix;
             _sigNow[i] = sig;
-            bool onScreen = y < ph && y + hPx > 0 && x < pw && x + wPx > 0;
-            if (onScreen)
-            {
-                bool changed = full || a < 1 || !_sigPrev.TryGetValue(i, out var old) || !ReferenceEquals(old, sig);
-                if (changed) { DrawTile(buf, stride, pw, ph, x, y, wPx, hPx, e, a, i); Dirty(x, y, x + wPx, y + hPx); }
-                else if (stripH > 0 && y < stripTop + stripH && y + hPx > stripTop)
-                    DrawTile(buf.Slice(stripTop * stride, stripH * stride), stride, pw, stripH, x, y - stripTop, wPx, hPx, e, a, i);
-            }
+            bool changed = a < 1 || !_sigPrev.TryGetValue(i, out var old) || !ReferenceEquals(old, sig);
+            _tiles.Add(new TileDraw { Index = i, X = x, Y = y, W = wPx, H = hPx, E = e, A = a, Changed = changed });
             bool gif = e is not null && Badges is { } bd && i < bd.Length && bd[i] == 1;
-            if (i == _hoverIndex || gif) _overlay.Add((new Rect(x / dpi, y / dpi, wPx / dpi, hPx / dpi), i == _hoverIndex, gif));
+            if (i == _hoverIndex || gif) _overlay.Add((new Rect(x / dpi, (y - offPx) / dpi, wPx / dpi, hPx / dpi), i == _hoverIndex, gif));
         }
         (_sigPrev, _sigNow) = (_sigNow, _sigPrev);
-        dirty = dx1 > dx0 && dy1 > dy0 ? new Int32Rect(dx0, dy0, dx1 - dx0, dy1 - dy0) : Int32Rect.Empty;
-        return fading;
+
+        PaintBands(pw, k0, k1);
+
+        foreach (var kv in _bands.Values)
+            dc.DrawImage(kv.Bmp, new Rect(0, (kv.K * BandH - offPx) / dpi, pw / dpi, BandH / dpi));
+        foreach (var (r, hovered, gif) in _overlay)
+        {
+            if (hovered) dc.DrawRectangle(null, _hover, r);
+            if (gif && r.Width > 70) DrawBadge(dc, r);
+        }
+        _fadingNow = fading;
+        LastRenderMs = sw.Elapsed.TotalMilliseconds;
+        _maxRender = Math.Max(_maxRender, LastRenderMs);
+    }
+
+    private void ResetBands(int pw)
+    {
+        if (pw != _bandW) _bandPool.Clear();
+        else foreach (var b in _bands.Values) _bandPool.Push(b.Bmp);
+        _bands.Clear(); _sigPrev.Clear(); _bandW = pw;
+    }
+
+    /// <summary>Repaints the strips that need it: new ones completely, the others only where a picture changed.</summary>
+    private unsafe void PaintBands(int pw, int k0, int k1)
+    {
+        _paletteBgra ??= Enumerable.Range(0, 24).Select(i => { var c = HsvToColor(i * 15.0, 0.35, 0.55); return TileBlit.Pack(c.R, c.G, c.B); }).ToArray();
+        var work = new List<Band>();
+        foreach (var b in _bands.Values)
+        {
+            b.Work.Clear();
+            int top = b.K * BandH, bottom = top + BandH;
+            for (int ti = 0; ti < _tiles.Count; ti++)
+            {
+                var t = _tiles[ti];
+                if (t.Y >= bottom || t.Y + t.H <= top) continue;
+                if (b.Fresh || t.Changed) b.Work.Add(ti);
+            }
+            if (b.Fresh || b.Work.Count > 0) work.Add(b);
+        }
+        if (work.Count == 0) return;
+        var ptrs = new (IntPtr p, int stride)[work.Count];
+        for (int w = 0; w < work.Count; w++) { work[w].Bmp.Lock(); ptrs[w] = (work[w].Bmp.BackBuffer, work[w].Bmp.BackBufferStride); }
+        void Paint(int w)
+        {
+            var b = work[w]; var (ptr, stride) = ptrs[w];
+            var buf = new Span<byte>((void*)ptr, stride * BandH);
+            int top = b.K * BandH;
+            if (b.Fresh) TileBlit.Fill(buf, stride, pw, BandH, 0, 0, pw, BandH, BgPixel);
+            foreach (int ti in b.Work)
+            {
+                var t = _tiles[ti];
+                DrawTile(buf, stride, pw, BandH, t.X, t.Y - top, t.W, t.H, t.E, t.A, t.Index);
+            }
+        }
+        if (work.Count > 2) Parallel.For(0, work.Count, Paint); else for (int w = 0; w < work.Count; w++) Paint(w);
+        for (int w = 0; w < work.Count; w++)
+        {
+            var b = work[w];
+            if (b.Fresh) b.Bmp.AddDirtyRect(new Int32Rect(0, 0, pw, BandH));
+            else
+            {
+                int top = b.K * BandH;
+                foreach (int ti in b.Work)
+                {
+                    var t = _tiles[ti];
+                    int x0 = Math.Max(0, t.X), y0 = Math.Max(0, t.Y - top), x1 = Math.Min(pw, t.X + t.W), y1 = Math.Min(BandH, t.Y - top + t.H);
+                    if (x1 > x0 && y1 > y0) b.Bmp.AddDirtyRect(new Int32Rect(x0, y0, x1 - x0, y1 - y0));
+                }
+            }
+            b.Bmp.Unlock(); b.Fresh = false;
+        }
     }
 
     private void DrawTile(Span<byte> buf, int stride, int pw, int ph, int x, int y, int wPx, int hPx, ThumbLoader.Entry? e, double a, int i)
@@ -431,7 +455,7 @@ public sealed class MasonryView : FrameworkElement
                 prev is null ? ReadOnlySpan<byte>.Empty : prev.Data, prev?.W ?? 0, prev?.H ?? 0, (int)(a * 256), FadePixel);
         }
         else if (px.W == wPx && px.H == hPx) TileBlit.Copy(buf, stride, pw, ph, x, y, px.Data, px.W, px.H);
-        else TileBlit.CopyScaled(buf, stride, pw, ph, x, y, wPx, hPx, px.Data, px.W, px.H);       // only until the right size arrives
+        else TileBlit.CopyScaledSmooth(buf, stride, pw, ph, x, y, wPx, hPx, px.Data, px.W, px.H);       // only until the right size arrives
     }
 
     /// <summary>
