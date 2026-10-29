@@ -127,12 +127,14 @@ public sealed class ThumbStores : IDisposable
     public ThumbStore Full { get; }    // ~320 px wide
     public ThumbStore Large { get; }   // up to 960 px wide, made on demand when a tile is shown big
 
-    public ThumbStores(string directory)
+    /// <param name="directory">Where the micro, small and full thumbnails are kept (best on a fast drive).</param>
+    /// <param name="largeDirectory">Where the big sharp versions are kept (null = same place).</param>
+    public ThumbStores(string directory, string? largeDirectory = null)
     {
         Micro = new ThumbStore(directory, "micro");
         Small = new ThumbStore(directory, "small");
         Full = new ThumbStore(directory, "pack");
-        Large = new ThumbStore(directory, "large");
+        Large = new ThumbStore(largeDirectory ?? directory, "large");
     }
 
     public void Flush() { Micro.Flush(); Small.Flush(); Full.Flush(); Large.Flush(); }

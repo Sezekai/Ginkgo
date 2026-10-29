@@ -32,6 +32,7 @@ public sealed class ThumbLoader : IDisposable
         public long Bytes, FadeStart;
         public double FadeSecs;         // 0 = no fade
         public bool Drawn;
+        public long Touched;            // when the screen last asked for it (ms)
     }
 
     public readonly record struct PlanItem(int Index, int WidthPx, int HeightPx, int Tier, bool EncodedOnly);
@@ -253,7 +254,7 @@ public sealed class ThumbLoader : IDisposable
         if (!Resolve(index, widthPx, out int show, out bool large)) return null;
         if (show == 3 && !_laMade.IsEmpty && _laMade.TryRemove(index, out _)) Interlocked.Increment(ref LookAheadUsed);
         Entry? e = null;
-        if (_cache.TryGetValue(index, out var node)) { _lru.Remove(node); _lru.AddFirst(node); e = node.Value; e.Drawn = true; }
+        if (_cache.TryGetValue(index, out var node)) { _lru.Remove(node); _lru.AddFirst(node); e = node.Value; e.Drawn = true; e.Touched = Environment.TickCount64; }
         if (show >= 0 && (e is null || NeedsRefresh(e, show, widthPx, heightPx))) TryQueue(index, widthPx, heightPx, show);
         if (large && (e is null || e.Tier < 3)) TryQueue(index, widthPx, heightPx, 3);
         return e;
@@ -514,13 +515,13 @@ public sealed class ThumbLoader : IDisposable
                 bool sameLook = d.Tier <= o.Tier && Math.Abs(ne.PixelWidth - o.PixelWidth) <= o.PixelWidth * 0.08 && d.Pixels.W == o.Pix.W && d.Pixels.H == o.Pix.H;
                 if (sameLook) continue;                                   // nothing gained
                 if (d.Tier > o.Tier && o.Drawn && FadeEnabled) { ne.Prev = o.Pix; ne.FadeSecs = 0.15; }  // sharper version: fade over the old one
-                ne.Drawn = o.Drawn;
+                ne.Drawn = o.Drawn; ne.Touched = o.Touched;
                 _lru.Remove(old); _cache.Remove(d.Index); _bytes -= o.Bytes;
             }
             _cache[d.Index] = _lru.AddFirst(ne);
             _bytes += d.Bytes; any = true;
         }
-        while (_bytes > _budget && _lru.Last is { } last)
+        while (_bytes > _budget && _lru.Last is { } last && Environment.TickCount64 - last.Value.Touched > 400)   // never throw out what is on screen (it would only be loaded again)
         {
             _lru.RemoveLast(); _cache.Remove(last.Value.Index); _bytes -= last.Value.Bytes;
         }

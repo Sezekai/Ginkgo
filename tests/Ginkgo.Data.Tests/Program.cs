@@ -365,6 +365,45 @@ Check(again.BackfillTotal == 0, "backfill has nothing left");
     stores3.Dispose();
 }
 
+// ---- moving the small thumbnails to a fast drive ----
+{
+    var from = Path.Combine(tmp, "mv-old"); var to = Path.Combine(tmp, "mv-fast");
+    Directory.CreateDirectory(from);
+    var rnd = new Random(3);
+    byte[] Blob(int n) { var b = new byte[n]; rnd.NextBytes(b); return b; }
+    File.WriteAllBytes(Path.Combine(from, "micro-00000.bin"), Blob(1000));
+    File.WriteAllBytes(Path.Combine(from, "small-00000.bin"), Blob(5_000_000));
+    File.WriteAllBytes(Path.Combine(from, "pack-00000.bin"), Blob(300));
+    File.WriteAllBytes(Path.Combine(from, "pack-00001.bin"), Blob(7));
+    File.WriteAllBytes(Path.Combine(from, "large-00000.bin"), Blob(50));   // sharp versions stay where they are
+    var plan = CacheMigration.Plan(from);
+    Check(plan.Items.Count == 4 && plan.TotalBytes == 5_001_307, $"move plan counts the small packs only ({plan.Items.Count}, {plan.TotalBytes})");
+    Check(!CacheMigration.IsDone(to), "not done before the move");
+    long lastDone = 0; bool ok = true;
+    CacheMigration.Run(plan, to, (d, t) => { if (d < lastDone || t != plan.TotalBytes) ok = false; lastDone = d; }, CancellationToken.None);
+    Check(ok && lastDone == plan.TotalBytes, "progress only goes forward and ends at the total");
+    Check(CacheMigration.IsDone(to), "marker written");
+    Check(File.Exists(Path.Combine(to, "small-00000.bin")) && new FileInfo(Path.Combine(to, "small-00000.bin")).Length == 5_000_000, "files arrived whole");
+    Check(!File.Exists(Path.Combine(from, "micro-00000.bin")) && File.Exists(Path.Combine(from, "large-00000.bin")), "originals removed, large pack untouched");
+    Check(!Directory.EnumerateFiles(to, "*.part").Any(), "no half-copied files left");
+    // an interrupted move resumes: a file already there in full is skipped, the originals stay until the end
+    var from2 = Path.Combine(tmp, "mv-old2"); var to2 = Path.Combine(tmp, "mv-fast2");
+    Directory.CreateDirectory(from2); Directory.CreateDirectory(to2);
+    File.WriteAllBytes(Path.Combine(from2, "micro-00000.bin"), Blob(2000));
+    File.WriteAllBytes(Path.Combine(to2, "micro-00000.bin"), File.ReadAllBytes(Path.Combine(from2, "micro-00000.bin")));
+    File.WriteAllBytes(Path.Combine(from2, "small-00000.bin"), Blob(3000));
+    using var cts = new CancellationTokenSource(); cts.Cancel();
+    bool cancelled = false;
+    try { CacheMigration.Run(CacheMigration.Plan(from2), to2, null, cts.Token); } catch (OperationCanceledException) { cancelled = true; }
+    Check(cancelled && File.Exists(Path.Combine(from2, "small-00000.bin")) && !CacheMigration.IsDone(to2), "cancelled move keeps the originals and writes no marker");
+    CacheMigration.Run(CacheMigration.Plan(from2), to2, null, CancellationToken.None);
+    Check(CacheMigration.IsDone(to2) && new FileInfo(Path.Combine(to2, "small-00000.bin")).Length == 3000, "resumed move completes");
+    var empty = Path.Combine(tmp, "mv-empty");
+    Check(CacheMigration.Plan(Path.Combine(tmp, "does-not-exist")).Items.Count == 0, "missing old folder plans nothing");
+    CacheMigration.MarkEmpty(empty);
+    Check(CacheMigration.IsDone(empty), "empty move is marked");
+}
+
 stores.Dispose();
 try { Directory.Delete(tmp, true); } catch { }
 Console.WriteLine($"::notice::{pass} passed, {fail} failed");

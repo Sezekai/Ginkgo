@@ -52,13 +52,52 @@ public sealed class Engine : IDisposable
             Db = new IndexDb(AppSettings.IndexPath);
             if (Db.LargeInvalidated && Directory.Exists(Settings.CacheDir))
                 foreach (var f in Directory.EnumerateFiles(Settings.CacheDir, "large-*.bin")) { try { File.Delete(f); } catch { } }
-            Stores = new ThumbStores(Settings.CacheDir);
+            string thumbDir = ChooseThumbDir();
+            ThumbDir = thumbDir;
+            Stores = new ThumbStores(thumbDir, Settings.CacheDir);
             _saveTimer = new Timer(_ => SaveLargeBatch(), null, 2000, 2000);
             Opened?.Invoke();
             await Refresh(scan: true, confirmLargeRemoval: false);
             StartWatcher();
         }
         catch (Exception ex) { Status = "problem: " + ex.Message; }
+    }
+
+    /// <summary>Where the micro/small/full thumbnails are being read from and written to.</summary>
+    public volatile string ThumbDir = "";
+    /// <summary>Set while the small thumbnails are being copied to the fast drive (one time).</summary>
+    public volatile bool Moving; public long MoveDone, MoveTotal;
+    public volatile string FastCacheNote = "";
+
+    private static string Root(string path) { try { return System.IO.Path.GetPathRoot(System.IO.Path.GetFullPath(path)) ?? ""; } catch { return ""; } }
+
+    /// <summary>
+    /// Picks the folder for the small thumbnails. On the first start with a fast drive available they are copied there (one time,
+    /// with progress); if there is not enough room, or anything goes wrong, the old place keeps being used.
+    /// </summary>
+    private string ChooseThumbDir()
+    {
+        string old = Settings.CacheDir, fast = Settings.FastCacheDir;
+        try
+        {
+            if (!Settings.UseFastCache || string.IsNullOrWhiteSpace(fast) || string.Equals(Root(fast), Root(old), StringComparison.OrdinalIgnoreCase)) return old;
+            if (CacheMigration.IsDone(fast)) return fast;
+            var plan = CacheMigration.Plan(old);
+            if (plan.Items.Count == 0) { CacheMigration.MarkEmpty(fast); return fast; }      // nothing built yet: start on the fast drive
+            long free = new DriveInfo(Root(fast)).AvailableFreeSpace;
+            long need = plan.TotalBytes + (6L << 30);                                        // leave room to grow
+            if (free < need)
+            {
+                FastCacheNote = $"not enough room on {Root(fast)} to move the thumbnails ({plan.TotalBytes / 1048576.0 / 1024:F1} GB needed + 6 GB spare)";
+                return old;
+            }
+            MoveTotal = plan.TotalBytes; MoveDone = 0; Moving = true;
+            Status = "moving thumbnails to the computer's own drive (one time)...";
+            CacheMigration.Run(plan, fast, (d, t) => { MoveDone = d; MoveTotal = t; }, _cts.Token);
+            return fast;
+        }
+        catch (Exception ex) { FastCacheNote = "could not move the thumbnails: " + ex.Message; return old; }
+        finally { Moving = false; }
     }
 
     /// <summary>Scans the library (optional), makes missing thumbnails and fills in IDs.</summary>

@@ -18,7 +18,7 @@ public partial class SettingsWindow : Window
         Theme.DarkTitleBar(this);
         _main = main; _s = s; _engine = engine;
         LibraryBox.Text = s.LibraryRoot;
-        CacheLine.Text = "Cache and index: thumbnails are kept in " + s.CacheDir + " and the index in " + AppSettings.IndexPath;
+        CacheLine.Text = "Small thumbnails: " + (string.IsNullOrEmpty(engine.ThumbDir) ? s.FastCacheDir : engine.ThumbDir) + "   |   sharp versions: " + s.CacheDir + "   |   index: " + AppSettings.IndexPath + (engine.FastCacheNote.Length > 0 ? "   |   " + engine.FastCacheNote : "");
         foreach (var p in AppSettings.CacheProfiles) CacheBox.Items.Add(p.name);
         CacheBox.SelectedIndex = Math.Clamp(s.CacheProfile, 0, AppSettings.CacheProfiles.Length - 1);
         foreach (ComboBoxItem it in LookBox.Items) if (int.Parse((string)it.Tag) == s.LookAheadWindows) LookBox.SelectedItem = it;

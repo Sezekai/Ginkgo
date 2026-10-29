@@ -332,8 +332,16 @@ public partial class MainWindow : Window
         if (_diag)
         {
             var (mr, mp) = View.TakeWorst();
-            DiagText.Text = $"{_fps:F0} fps | render tier {RenderCapability.Tier >> 16} | worst frame gap {_worstGap:F0} ms | draw max {mr:F1} ms | plan max {mp:F1} ms | {View.LastVisibleCount} tiles | cached {_loader?.CachedCount ?? 0} | pending {_loader?.PendingCount ?? 0} | GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)}";
+            DiagText.Text = $"{_fps:F0} fps | render tier {RenderCapability.Tier >> 16} | worst frame gap {_worstGap:F0} ms | draw max {mr:F1} ms | plan max {mp:F1} ms | {View.LastVisibleCount} tiles | cached {_loader?.CachedCount ?? 0} | pending {_loader?.PendingCount ?? 0} | GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)} | thumbs from {System.IO.Path.GetPathRoot(_engine.ThumbDir)} read {_loader?.AvgReadMs ?? 0:F1} ms, decode {_loader?.AvgDecodeMs ?? 0:F1} ms{(_engine.FastCacheNote.Length > 0 ? " | " + _engine.FastCacheNote : "")}";
             _worstGap = 0;
+        }
+        bool moving = _engine.Moving;
+        MoveLayer.Visibility = moving ? Visibility.Visible : Visibility.Collapsed;
+        if (moving)
+        {
+            long total = Math.Max(1, _engine.MoveTotal);
+            MoveBar.Value = _engine.MoveDone / (double)total;
+            MoveText.Text = $"{_engine.MoveDone / 1073741824.0:F2} of {total / 1073741824.0:F2} GB";
         }
         bool ids = _engine.IdsRunning && _engine.IdsTotal > 0;
         IdBar.Visibility = ids ? Visibility.Visible : Visibility.Collapsed;

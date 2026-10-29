@@ -144,6 +144,15 @@
         </Grid>
 
         <!-- keyboard shortcuts -->
+        <Grid x:Name="MoveLayer" Grid.RowSpan="2" Background="#E6141418" Visibility="Collapsed">
+            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Width="460">
+                <TextBlock Text="Moving thumbnails to your computer's own drive" FontSize="18" FontWeight="SemiBold" Foreground="#E4E4E8" Margin="0,0,0,8"/>
+                <TextBlock TextWrapping="Wrap" Foreground="#9AA0A6" Margin="0,0,0,14"
+                           Text="One time only. The small thumbnails are being copied from the hard drive to this computer's fast drive, because a hard drive is very slow at fetching lots of thumbnails in a shuffled order. Ginkgo opens when it is done."/>
+                <ProgressBar x:Name="MoveBar" Height="10" Minimum="0" Maximum="1"/>
+                <TextBlock x:Name="MoveText" Foreground="#9AA0A6" Margin="0,8,0,0" FontFamily="Consolas"/>
+            </StackPanel>
+        </Grid>
         <Grid x:Name="KeysLayer" Grid.RowSpan="2" Background="#CC000000" Visibility="Collapsed" MouseLeftButtonDown="OnKeysLayerDown">
             <Border Background="#1E1E23" BorderBrush="#3A3A42" BorderThickness="1" CornerRadius="8" Padding="22,16" HorizontalAlignment="Center" VerticalAlignment="Center" MouseLeftButtonDown="OnKeysPanelDown">
                 <StackPanel>
