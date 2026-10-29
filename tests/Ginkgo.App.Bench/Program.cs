@@ -61,8 +61,11 @@ static int Main(string[] args)
             var th = new Thread(() => Run(sh, tw, tr, paths, origW, kind, order, asp, stores, screen)); th.SetApartmentState(ApartmentState.STA); th.Start(); th.Join();
         }
     }
+    Console.WriteLine("::notice::" + string.Join(" ;; ", _out.Select(x => x.Replace(" | read", " r").Replace("thumbs/read", "t/r"))));
     return 0;
 }
+static readonly List<string> _out = new();
+static void Out(string line) => _out.Add(line);
 
 static void RenderCheck()
 {
@@ -125,7 +128,7 @@ static void Micro(byte[] full, byte[] small, byte[] micro)
             codec.GetPixels(bm.Info, bm.GetPixels());
             dims = $"{d.Width}x{d.Height}";
         });
-        Console.WriteLine($"::notice::decode {name}->{target}px: decode only {plain:F2} ms | +resize medium {med:F2} | +resize low {low:F2} | codec scaled decode {scaled:F2} ms ({dims})");
+        Out($"decode {name}->{target}px: decode only {plain:F2} ms | +resize medium {med:F2} | +resize low {low:F2} | codec scaled decode {scaled:F2} ms ({dims})");
     }
 }
 
@@ -154,7 +157,7 @@ static void Run(bool shuffled, int tileW, ThumbLoader.TierData[] tiers, string[]
     };
     timer.Start();
     Dispatcher.Run();
-    Console.WriteLine($"::notice::shuffled={shuffled} tileW={tileW}: {ready}/{screen} in {sw.ElapsedMilliseconds} ms = {ready * 1000.0 / Math.Max(1, sw.ElapsedMilliseconds):F0}/s | read {loader.AvgReadMs:F2} ms, decode {loader.AvgDecodeMs:F2} ms, thumbs/read {loader.ThumbsPerRead:F1} | {string.Join(" ", marks)}");
+    Out($"shuffled={shuffled} tileW={tileW}: {ready}/{screen} in {sw.ElapsedMilliseconds} ms = {ready * 1000.0 / Math.Max(1, sw.ElapsedMilliseconds):F0}/s | read {loader.AvgReadMs:F2} ms, decode {loader.AvgDecodeMs:F2} ms, thumbs/read {loader.ThumbsPerRead:F1} | {string.Join(" ", marks)}");
     loader.Dispose();
     Thread.Sleep(300);
 }
