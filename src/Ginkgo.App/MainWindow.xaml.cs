@@ -312,6 +312,8 @@ public partial class MainWindow : Window
             : "";
         string back = p.BackfillTotal > 0 && p.BackfillDone < p.BackfillTotal ? $"  |  small sizes {p.BackfillDone:N0} of {p.BackfillTotal:N0}" : "";
         string sharp = p.SharpTotal > 0 && p.SharpDone < p.SharpTotal ? $"  |  sharp versions {p.SharpDone:N0} of {p.SharpTotal:N0}" : "";
+        string warm = _engine.Warmer.Running && _engine.Warmer.Total > 0 ? $"  |  loading thumbnails into the system cache {_engine.Warmer.Done * 100 / _engine.Warmer.Total}%" : "";
+        pipe += warm;
         bool busy = pipe.Length > 0 || back.Length > 0 || sharp.Length > 0 || p.Running || _engine.IdsRunning;
         string idle = !busy && _engine.IdsFinished ? "  |  file IDs done, nothing running in the background" : "";
         return _engine.Status + pipe + back + sharp + idle + (_engine.FastCacheNote.Length > 0 ? "  |  " + _engine.FastCacheNote : "");

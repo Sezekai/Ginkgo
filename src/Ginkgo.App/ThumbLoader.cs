@@ -62,7 +62,7 @@ public sealed class ThumbLoader : IDisposable
 
     // shared with workers
     private readonly ConcurrentDictionary<long, byte> _inflight = new();   // key = index*4+tier: queued or being worked on
-    private readonly ConcurrentStack<Req> _urgent = new();        // quick work for tiles on screen (reading a thumbnail): newest request first
+    private readonly SweepQueue _urgent = new();                  // quick work for tiles on screen (reading a thumbnail): taken in the order the data lies on the drive
     private readonly ConcurrentStack<Req> _urgentLarge = new();   // slow work for tiles on screen (reading an original to make a sharp version)
     private int _quickActive;                                     // quick jobs being worked on right now
     private long _lastQuick;                                      // when quick work was last asked for or finished
@@ -183,7 +183,8 @@ public sealed class ThumbLoader : IDisposable
     public void PurgeStale()
     {
         int lo = _lo, hi = _hi;
-        foreach (var stack in new[] { _urgent, _urgentLarge })
+        _urgent.RemoveWhere(r => r.Index < lo || r.Index > hi, r => _inflight.TryRemove((long)r.Index * 4 + r.Tier, out _));
+        foreach (var stack in new[] { _urgentLarge })
         {
             var items = new List<Req>();
             while (stack.TryPop(out var r)) items.Add(r);          // newest first
@@ -237,13 +238,61 @@ public sealed class ThumbLoader : IDisposable
         return w > need * 1.15 || w < need * 0.9;
     }
 
+    /// <summary>Where a thumbnail lies on the drive (pack number, then offset), so waiting reads can be done in one sweep instead of jumping back and forth.</summary>
+    private long PositionOf(Req r)
+    {
+        var t = _tiers[r.Tier];
+        return ((long)t.Pack[r.Index] << 34) + t.Off[r.Index];
+    }
+
+    /// <summary>
+    /// Waiting reads for what is on screen. A hard drive is slow at jumping about and fast when it moves in one direction, so the
+    /// next read taken is the one just past the previous one (per size), wrapping round at the end.
+    /// </summary>
+    private sealed class SweepQueue
+    {
+        private readonly object _l = new();
+        private readonly List<(long key, Req r)> _items = new();
+        private readonly long[] _head = new long[4];
+        private int _count;
+        public bool IsEmpty => Volatile.Read(ref _count) == 0;
+        public void Push(long key, Req r) { lock (_l) { _items.Add((key, r)); _count = _items.Count; } }
+        public bool TryTake(out Req r)
+        {
+            lock (_l)
+            {
+                if (_items.Count == 0) { r = default; return false; }
+                int best = 0; long bestScore = long.MaxValue;
+                for (int i = 0; i < _items.Count; i++)
+                {
+                    var (k, q) = _items[i];
+                    long score = ((long)q.Tier << 52) + (k >= _head[q.Tier] ? k : k + (1L << 50));
+                    if (score < bestScore) { bestScore = score; best = i; }
+                }
+                var (bk, br) = _items[best];
+                _head[br.Tier] = bk;
+                _items[best] = _items[^1]; _items.RemoveAt(_items.Count - 1); _count = _items.Count;
+                r = br; return true;
+            }
+        }
+        public void RemoveWhere(Func<Req, bool> drop, Action<Req> onDropped)
+        {
+            lock (_l)
+            {
+                for (int i = _items.Count - 1; i >= 0; i--)
+                    if (drop(_items[i].r)) { onDropped(_items[i].r); _items[i] = _items[^1]; _items.RemoveAt(_items.Count - 1); }
+                _count = _items.Count;
+            }
+        }
+    }
+
     private bool TryQueue(int index, int w, int h, int tier)
     {
         long key = (long)index * 4 + tier;
         if (!_inflight.TryAdd(key, 0)) return false;
         var req = new Req(index, w, h, tier, true, false);
         if (tier == 3 && Volatile.Read(ref _tiers[3].Len[index]) == 0) _urgentLarge.Push(req);
-        else { Volatile.Write(ref _lastQuick, Stopwatch.GetTimestamp()); _urgent.Push(req); }
+        else { Volatile.Write(ref _lastQuick, Stopwatch.GetTimestamp()); _urgent.Push(PositionOf(req), req); }
         WakeWorkers(1);
         return true;
     }
@@ -309,7 +358,7 @@ public sealed class ThumbLoader : IDisposable
         while (!_cts.IsCancellationRequested)
         {
             Req req = default; bool have = false; bool makingLarge = false, quick = false;
-            if (_urgent.TryPop(out req)) { have = true; quick = true; Interlocked.Increment(ref _quickActive); }   // thumbnails for what's on screen: always first
+            if (_urgent.TryTake(out req)) { have = true; quick = true; Interlocked.Increment(ref _quickActive); }   // thumbnails for what's on screen: always first
             else if (SharpMayStart() && _urgentLarge.TryPop(out req)) have = true;
             else
             {

@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO;
 using Ginkgo.Core;
 using Ginkgo.Data;
@@ -56,6 +57,9 @@ public sealed class Engine : IDisposable
             ThumbDir = thumbDir;
             Stores = new ThumbStores(thumbDir, Settings.CacheDir);
             _saveTimer = new Timer(_ => SaveLargeBatch(), null, 2000, 2000);
+            if (Settings.WarmCache)
+                Warmer.Start(thumbDir, () => (Stopwatch.GetTimestamp() - Volatile.Read(ref Pipe.LastUiActivity)) * 1000 / Stopwatch.Frequency < 400,
+                    3L << 30, _cts.Token);
             Opened?.Invoke();
             await Refresh(scan: true, confirmLargeRemoval: false);
             StartWatcher();
@@ -68,6 +72,7 @@ public sealed class Engine : IDisposable
     /// <summary>Set while the small thumbnails are being copied to the fast drive (one time).</summary>
     public volatile bool Moving; public long MoveDone, MoveTotal;
     public volatile string FastCacheNote = "";
+    public CacheWarmer Warmer { get; } = new();
 
     private static string Root(string path) { try { return System.IO.Path.GetPathRoot(System.IO.Path.GetFullPath(path)) ?? ""; } catch { return ""; } }
 

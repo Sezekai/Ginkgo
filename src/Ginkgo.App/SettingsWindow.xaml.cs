@@ -24,6 +24,7 @@ public partial class SettingsWindow : Window
         foreach (ComboBoxItem it in LookBox.Items) if (int.Parse((string)it.Tag) == s.LookAheadWindows) LookBox.SelectedItem = it;
         if (LookBox.SelectedItem is null) LookBox.SelectedIndex = 1;
         FadeBox.IsChecked = s.FadeSharpening;
+        WarmBox.IsChecked = s.WarmCache;
         _init = false;
         OnMeasure(this, new RoutedEventArgs());
     }
@@ -46,6 +47,7 @@ public partial class SettingsWindow : Window
         if (_init) return;
         _s.LookAheadWindows = int.Parse((string)((ComboBoxItem)LookBox.SelectedItem).Tag); _main.ApplySettings();
     }
+    private void OnWarmChanged(object s, RoutedEventArgs e) { _s.WarmCache = WarmBox.IsChecked == true; _main.ApplySettings(); Result.Text = "Takes effect the next time Ginkgo starts."; }
     private void OnFadeChanged(object s, RoutedEventArgs e) { _s.FadeSharpening = FadeBox.IsChecked == true; _main.ApplySettings(); }
 
     private async Task RunSharp(bool everything)

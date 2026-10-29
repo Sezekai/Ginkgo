@@ -10,7 +10,9 @@ public sealed class AppSettings
     public string CacheDir { get; set; } = @"E:\GinkgoCache";
     /// <summary>The small thumbnails are kept here, on the computer's own (fast) drive: a hard drive manages only a few dozen random lookups a second, which is what a shuffled grid needs.</summary>
     public string FastCacheDir { get; set; } = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ginkgo", "fast");
-    public bool UseFastCache { get; set; } = true;
+    public bool UseFastCache { get; set; }
+    /// <summary>Read the thumbnail files once in the background so Windows keeps them in its file cache (instant lookups afterwards).</summary>
+    public bool WarmCache { get; set; } = true;
 
     // content levels. NSFW and Very are never remembered: the app always starts with them off.
     public bool ShowGeneral { get; set; } = true;

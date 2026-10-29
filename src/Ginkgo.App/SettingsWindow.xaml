@@ -30,6 +30,7 @@
                     <ComboBoxItem Content="8 windows" Tag="8"/>
                 </ComboBox>
             </DockPanel>
+            <CheckBox x:Name="WarmBox" Content="Load the thumbnail files into the Windows file cache at start (makes shuffled grids fast; Windows gives the memory back when needed)" Foreground="#E4E4E8" Margin="0,0,0,6" Click="OnWarmChanged"/>
             <CheckBox x:Name="FadeBox" Content="Fade when a sharper picture replaces a soft one" Foreground="#E4E4E8" Margin="0,0,0,6" Click="OnFadeChanged"/>
 
             <TextBlock Text="Sharp pictures" FontSize="16" FontWeight="SemiBold" Margin="0,22,0,6"/>
