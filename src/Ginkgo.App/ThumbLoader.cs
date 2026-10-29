@@ -623,6 +623,7 @@ public sealed class ThumbLoader : IDisposable
             PixPool.Return(last.Value.Pix); PixPool.Return(last.Value.Prev);
         }
         if (any) _onReady();
+        long spent = Stopwatch.GetTimestamp() - now; Perf.Add(spent); Perf.DrainMax = Math.Max(Perf.DrainMax, Perf.Ms(spent));
         if (!_done.IsEmpty && Interlocked.Exchange(ref _drainQueued, 1) == 0) _ui.BeginInvoke(DispatcherPriority.Input, Drain);
     }
 

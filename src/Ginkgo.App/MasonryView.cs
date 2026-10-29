@@ -49,7 +49,9 @@ public sealed class MasonryView : FrameworkElement
 
     private ThumbLoader? _thumbs;
     public ThumbLoader? Thumbs { get => _thumbs; set { _thumbs = value; InvalidateVisual(); } }
-    public void Refresh() => InvalidateVisual();
+    /// <summary>New pictures arrived: redraw at the next screen refresh (at most once per refresh, however many arrive).</summary>
+    public void Refresh() => _needsRender = true;
+    private bool _needsRender;
 
     public MasonryView()
     {
@@ -96,6 +98,12 @@ public sealed class MasonryView : FrameworkElement
 
     private void OnFrame(object? sender, EventArgs e)
     {
+        long f0 = Stopwatch.GetTimestamp();
+        try { OnFrameCore(e); } finally { Perf.Add(Stopwatch.GetTimestamp() - f0); }
+    }
+
+    private void OnFrameCore(EventArgs e)
+    {
         // time between screen refreshes as the compositor counts it (steadier than reading the clock when our code happens to run)
         double now = e is RenderingEventArgs re ? re.RenderingTime.TotalSeconds : Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency;
         double dt = _lastTick == 0 ? 1.0 / 60 : Math.Clamp(now - _lastRenderSecs, 0, 0.05);
@@ -123,7 +131,7 @@ public sealed class MasonryView : FrameworkElement
         ScrollChanged?.Invoke();
     }
 
-    private void OnRefresh(object? sender, EventArgs e) { if (_fadingNow) { _fadingNow = false; InvalidateVisual(); } }
+    private void OnRefresh(object? sender, EventArgs e) { if (_fadingNow || _needsRender) { _fadingNow = false; _needsRender = false; InvalidateVisual(); } }
 
     public double TotalHeight => _layout is null ? 0 : _layout.TotalHeight + _inset;
     private float _inset;
@@ -380,8 +388,11 @@ public sealed class MasonryView : FrameworkElement
             if (i == _hoverIndex || gif) _overlay.Add((new Rect(x / dpi, (y - offPx) / dpi, wPx / dpi, hPx / dpi), i == _hoverIndex, gif));
         }
         (_sigPrev, _sigNow) = (_sigNow, _sigPrev);
+        Perf.PrepMax = Math.Max(Perf.PrepMax, sw.Elapsed.TotalMilliseconds);
 
+        long pt0 = Stopwatch.GetTimestamp();
         PaintBands(pw, k0, k1);
+        Perf.PaintMax = Math.Max(Perf.PaintMax, Perf.Ms(Stopwatch.GetTimestamp() - pt0));
 
         foreach (var kv in _bands.Values)
             dc.DrawImage(kv.Bmp, new Rect(0, (kv.K * BandH - offPx) / dpi, pw / dpi, BandH / dpi));
@@ -393,6 +404,7 @@ public sealed class MasonryView : FrameworkElement
         _fadingNow = fading;
         LastRenderMs = sw.Elapsed.TotalMilliseconds;
         _maxRender = Math.Max(_maxRender, LastRenderMs);
+        Perf.Add(sw.ElapsedTicks);
     }
 
     private void ResetBands(int pw)
@@ -436,6 +448,7 @@ public sealed class MasonryView : FrameworkElement
             }
         }
         if (_work.Count == 0) return;
+        Perf.PaintedBands += _work.Count;
         if (_ptrs.Length < _work.Count) _ptrs = new (IntPtr, int)[_work.Count * 2];
         var ptrs = _ptrs;
         for (int w = 0; w < _work.Count; w++) { _work[w].Bmp.Lock(); ptrs[w] = (_work[w].Bmp.BackBuffer, _work[w].Bmp.BackBufferStride); }

@@ -43,7 +43,7 @@ public partial class MainWindow : Window
     // side menu
     private bool _sideOpen;
     private bool _diag;
-    private long _lastFrame; private double _worstGap; private TimeSpan _lastRenderTime; private int _slowFrames;
+    private long _lastFrame; private double _worstGap; private TimeSpan _lastRenderTime; private int _slowFrames, _slowGc, _slowOurs, _slowOther; private long _busyAtFrame; private TimeSpan _gcAtFrame, _gcAtTick;
 
     private const float TileMin = 60, TileMax = 1800;
     private static double SizeToSlider(float size) => Math.Log(Math.Clamp(size, TileMin, TileMax) / TileMin) / Math.Log(TileMax / TileMin);
@@ -101,7 +101,13 @@ public partial class MainWindow : Window
             if (e is RenderingEventArgs re) { if (re.RenderingTime == _lastRenderTime) return; _lastRenderTime = re.RenderingTime; }
             _frames++;
             long t = Stopwatch.GetTimestamp();
-            if (_lastFrame != 0 && (t - _lastFrame) * 1000 > 25 * Stopwatch.Frequency) _slowFrames++;
+            long busy = Perf.BusyTicks - _busyAtFrame; _busyAtFrame = Perf.BusyTicks;
+            var gcNow = GC.GetTotalPauseDuration(); double gcMs = (gcNow - _gcAtFrame).TotalMilliseconds; _gcAtFrame = gcNow;
+            if (_lastFrame != 0 && (t - _lastFrame) * 1000 > 25 * Stopwatch.Frequency)
+            {
+                _slowFrames++;
+                if (gcMs > 8) _slowGc++; else if (Perf.Ms(busy) > 12) _slowOurs++; else _slowOther++;
+            }
             if (_lastFrame != 0) _worstGap = Math.Max(_worstGap, (t - _lastFrame) * 1000.0 / Stopwatch.Frequency);
             _lastFrame = t;
         };
@@ -333,12 +339,13 @@ public partial class MainWindow : Window
     {
         long now = Stopwatch.GetTimestamp();
         _fps = _frames / ((now - _lastTick) / (double)Stopwatch.Frequency); _frames = 0; _lastTick = now;
+        if (_syncPending) SyncBar();
         if (View.HoverIndex < 0) StatusText.Text = StatusLine();
         if (_diag)
         {
-            var (mr, mp) = View.TakeWorst();
-            DiagText.Text = $"{_fps:F0} fps | render tier {RenderCapability.Tier >> 16} | worst frame gap {_worstGap:F0} ms | slow frames {_slowFrames} | draw max {mr:F1} ms | plan max {mp:F1} ms | {View.LastVisibleCount} tiles | cached {_loader?.CachedCount ?? 0} | pending {_loader?.PendingCount ?? 0} | GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)} | thumbs from {System.IO.Path.GetPathRoot(_engine.ThumbDir)} read {_loader?.AvgReadMs ?? 0:F1} ms, decode {_loader?.AvgDecodeMs ?? 0:F1} ms{(_engine.FastCacheNote.Length > 0 ? " | " + _engine.FastCacheNote : "")}";
-            _worstGap = 0; _slowFrames = 0;
+            var (mr, _) = View.TakeWorst();
+            DiagText.Text = $"{_fps:F0} fps | worst gap {_worstGap:F0} ms | slow {_slowFrames} (gc {_slowGc}, ours {_slowOurs}, other {_slowOther}) | gc pause {(GC.GetTotalPauseDuration() - _gcAtTick).TotalMilliseconds:F0} ms | draw {mr:F1} (prep {Perf.PrepMax:F1}, paint {Perf.PaintMax:F1}/{Perf.PaintedBands}) drain {Perf.DrainMax:F1} | {View.LastVisibleCount} tiles, cached {_loader?.CachedCount ?? 0}, pending {_loader?.PendingCount ?? 0} | GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)} | read {_loader?.AvgReadMs ?? 0:F1} ms, decode {_loader?.AvgDecodeMs ?? 0:F1} ms{(_engine.FastCacheNote.Length > 0 ? " | " + _engine.FastCacheNote : "")} | warm-up {(_engine.Warmer.Running ? "running " : "")}{(_engine.Warmer.Total > 0 ? _engine.Warmer.Done * 100 / _engine.Warmer.Total : 0)}% {_engine.Warmer.Note}";
+            _worstGap = 0; _slowFrames = _slowGc = _slowOurs = _slowOther = 0; _gcAtTick = GC.GetTotalPauseDuration(); Perf.Reset();
         }
         bool moving = _engine.Moving;
         MoveLayer.Visibility = moving ? Visibility.Visible : Visibility.Collapsed;
@@ -402,9 +409,13 @@ public partial class MainWindow : Window
     private void OnBarChanged(object s, RoutedPropertyChangedEventArgs<double> e)
     {
         if (_syncing) return;
+        long sNow = Stopwatch.GetTimestamp();
+        if (!Scroll.IsMouseOver && !Scroll.IsMouseCaptureWithin && (sNow - _lastSync) * 1000 < 120 * Stopwatch.Frequency) { _syncPending = true; return; }   // the bar is hidden: no need to move it every frame
+        _lastSync = sNow; _syncPending = false;
         _syncing = true; View.Offset = e.NewValue; _syncing = false;
     }
 
+    private long _lastSync; private bool _syncPending;
     private void SyncBar()
     {
         if (_syncing) return;
