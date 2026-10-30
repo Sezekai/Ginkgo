@@ -96,6 +96,8 @@ public partial class MainWindow : Window
         View.HoverChanged += i => StatusText.Text = IsFolderTile(i) ? FolderHoverText(i) : i >= 0 && i < _paths.Length ? HoverText(i) : StatusLine();
         View.ItemActivated += i => { if (RecentlyNavigated()) return; if (IsFolderTile(i)) OpenFolder(_page!.Tiles[i].Path); else OpenViewer(i); };
         InitBrowse();
+        BarRow.MoreButton = MoreBtn;
+        SourceInitialized += (_, _) => { Theme.RoundedFrame(this, 0x4A, 0x4A, 0x54); OnStateChanged(this, EventArgs.Empty); };
         SizeChanged += (_, _) => Dispatcher.BeginInvoke(UpdateEdges, DispatcherPriority.Loaded);
         LocationChanged += (_, _) => Dispatcher.BeginInvoke(UpdateEdges, DispatcherPriority.Loaded);
         CompositionTarget.Rendering += (_, e) =>
@@ -549,15 +551,17 @@ public partial class MainWindow : Window
         d is System.Windows.Media.Visual || d is System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d);
 
     private Point _titleDown; private bool _titleArmed;
+    private FrameworkElement? _titleFrom;
 
-    /// <summary>The bar is also the title bar: drag it from anywhere that isn't a control to move the window (also out of maximised); double-click it to maximise.</summary>
+    /// <summary>The title bar and the menu bar move the window: drag from anywhere that isn't a control (also out of maximised); double-click maximises.</summary>
     private void OnTitleDown(object s, MouseButtonEventArgs e)
     {
-        for (var d = e.OriginalSource as DependencyObject; d != null && d != TopBar; d = ParentOf(d))
+        var host = (FrameworkElement)s;
+        for (var d = e.OriginalSource as DependencyObject; d != null && d != host; d = ParentOf(d))
             if (d is System.Windows.Controls.Primitives.ButtonBase or TextBox or Slider or ComboBox or System.Windows.Controls.Primitives.Thumb) return;
         if (e.ClickCount == 2) { OnMaximize(this, e); e.Handled = true; return; }
-        _titleArmed = true; _titleDown = e.GetPosition(this);
-        TopBar.CaptureMouse();
+        _titleArmed = true; _titleDown = e.GetPosition(this); _titleFrom = host;
+        host.CaptureMouse();
         e.Handled = true;
     }
 
@@ -568,7 +572,7 @@ public partial class MainWindow : Window
         var p = e.GetPosition(this);
         if (Math.Abs(p.X - _titleDown.X) < 4 && Math.Abs(p.Y - _titleDown.Y) < 4) return;
         _titleArmed = false;
-        TopBar.ReleaseMouseCapture();
+        _titleFrom?.ReleaseMouseCapture();
         if (WindowState == WindowState.Maximized)
         {
             // come out of maximised with the window under the mouse, like other apps
@@ -577,12 +581,35 @@ public partial class MainWindow : Window
             var m2d = src?.CompositionTarget?.TransformFromDevice ?? System.Windows.Media.Matrix.Identity;
             var screen = m2d.Transform(PointToScreen(_titleDown));
             WindowState = WindowState.Normal;
-            Left = screen.X - Width * frac; Top = Math.Max(0, screen.Y - Math.Min(_titleDown.Y, 24));
+            Left = screen.X - Width * frac; Top = Math.Max(0, screen.Y - Math.Min(_titleDown.Y, 14));
         }
         try { DragMove(); } catch { }
     }
 
-    private void OnTitleUp(object s, MouseButtonEventArgs e) { _titleArmed = false; if (TopBar.IsMouseCaptured) TopBar.ReleaseMouseCapture(); }
+    // ---- controls that did not fit in the bar live in a drop-down while it is open ----
+    private readonly List<(UIElement el, int index)> _moved = new();
+
+    private void OnMoreBar(object s, RoutedEventArgs e)
+    {
+        if (MorePopup.IsOpen) { MorePopup.IsOpen = false; return; }
+        _moved.Clear();
+        foreach (var el in BarRow.Overflow.ToList()) _moved.Add((el, BarRow.Children.IndexOf(el)));
+        if (_moved.Count == 0) return;
+        BarRow.KeepMore = true;
+        foreach (var (el, _) in _moved) { BarRow.Children.Remove(el); MorePanel.Children.Add(el); }
+        MorePopup.IsOpen = true;
+    }
+
+    private void OnMoreClosed(object? s, EventArgs e)
+    {
+        MorePanel.Children.Clear();
+        foreach (var (el, index) in _moved.OrderBy(m => m.index)) BarRow.Children.Insert(Math.Min(index, BarRow.Children.Count), el);
+        _moved.Clear();
+        BarRow.KeepMore = false;
+        BarRow.InvalidateMeasure();
+    }
+
+    private void OnTitleUp(object s, MouseButtonEventArgs e) { _titleArmed = false; if (_titleFrom?.IsMouseCaptured == true) _titleFrom.ReleaseMouseCapture(); }
 
     private void OnMinimize(object s, RoutedEventArgs e) => WindowState = WindowState.Minimized;
     private void OnMaximize(object s, RoutedEventArgs e) => WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
@@ -593,8 +620,8 @@ public partial class MainWindow : Window
         bool max = WindowState == WindowState.Maximized;
         MaxBtn.Content = max ? "\uE923" : "\uE922";
         UpdateEdges();
-        WindowEdge.BorderThickness = max ? new Thickness(0) : new Thickness(1);                         // outline round the whole window when it isn't maximised
-        TopBar.BorderThickness = max ? new Thickness(1) : new Thickness(0, 0, 0, 1);                      // maximised: the bar gets its own outline
+        // windowed: Windows draws the outline and rounds the corners (Windows 11); maximised or full screen: no outline
+        WindowEdge.BorderThickness = !max && !Theme.HasRoundedFrame ? new Thickness(1) : new Thickness(0);
     }
 
     // ---- a maximised or snapped window reaches past the visible screen by its (invisible) resize border: keep the content inside ----
@@ -1110,5 +1137,6 @@ public partial class MainWindow : Window
     {
         if (!_fullscreen) { _prevState = WindowState; _prevStyle = WindowStyle; WindowStyle = WindowStyle.None; WindowState = WindowState.Maximized; _fullscreen = true; }
         else { WindowStyle = _prevStyle; WindowState = _prevState; _fullscreen = false; }
+        TitleBar.Visibility = _fullscreen ? Visibility.Collapsed : Visibility.Visible;
     }
 }
