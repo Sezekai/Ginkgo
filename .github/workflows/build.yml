@@ -2,6 +2,8 @@ name: build
 on:
   push:
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: windows-latest
@@ -21,7 +23,18 @@ jobs:
         run: dotnet run --project tests/Ginkgo.App.Bench -c Release
       - name: Publish app
         run: dotnet publish src/Ginkgo.App -c Release -r win-x64 --self-contained true -o publish/Ginkgo
+      - name: Latest build as a download (Releases page)
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Compress-Archive -Path publish/Ginkgo/* -DestinationPath Ginkgo-win-x64.zip -Force
+          gh release delete latest --yes --cleanup-tag 2>$null
+          $global:LASTEXITCODE = 0
+          gh release create latest Ginkgo-win-x64.zip --prerelease --target $env:GITHUB_SHA --title "Latest build" --notes "Built from $env:GITHUB_SHA"
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: Ginkgo-win-x64
           path: publish/Ginkgo
