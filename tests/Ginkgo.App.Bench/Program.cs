@@ -13,6 +13,7 @@ static class Program {
 [STAThread]
 static int Main(string[] args)
 {
+    var bt = new Thread(BarCheck); bt.SetApartmentState(ApartmentState.STA); bt.Start(); bt.Join();
     var rt = new Thread(RenderCheck); rt.SetApartmentState(ApartmentState.STA); rt.Start(); rt.Join();
     int total = 30000, screen = 700;
     var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ginkgo-bench-" + Guid.NewGuid().ToString("N"));
@@ -66,6 +67,32 @@ static int Main(string[] args)
 }
 static readonly List<string> _out = new();
 static void Out(string line) => _out.Add(line);
+
+static void BarCheck()
+{
+    try
+    {
+        var bar = new BarPanel();
+        System.Windows.Controls.Button Fixed(double w) => new System.Windows.Controls.Button { Width = w, Height = 30, Margin = new Thickness(0, 0, 10, 0) };
+        for (int i = 0; i < 6; i++) bar.Children.Add(Fixed(80));                                      // 6 x 90 = 540
+        var search = new System.Windows.Controls.TextBox { MinWidth = 90, Margin = new Thickness(0, 0, 10, 0) };
+        BarPanel.SetPreferredWidth(search, 170); bar.Children.Add(search);                            // 180, can lose 80
+        var more = Fixed(38); BarPanel.SetPinned(more, true); bar.Children.Add(more); bar.MoreButton = more;   // 48
+        var hide = Fixed(38); BarPanel.SetPinned(hide, true); bar.Children.Add(hide);                 // 48
+        var res = new List<string>(); bool ok = true;
+        foreach (var (w, wantOverflow, wantSearch) in new (double, int, double)[] { (900, 0, 170), (700, 0, 112), (660, 0, 90), (600, 1, 90), (400, 3, 90) })
+        {
+            bar.Measure(new Size(w, 40)); bar.Arrange(new Rect(0, 0, w, 40));
+            double sw = search.ActualWidth;
+            bool good = bar.Overflow.Count == wantOverflow && Math.Abs(sw - wantSearch) < 1.5 && (wantOverflow > 0) == (more.ActualWidth > 0) && hide.ActualWidth > 0;
+            if (!good) ok = false;
+            res.Add($"{w}:{bar.Overflow.Count} over, search {sw:F0}, more {(more.ActualWidth > 0 ? "on" : "off")}");
+        }
+        Console.WriteLine($"::notice::bar check: {(ok ? "ok" : "WRONG")} | {string.Join(" | ", res)}");
+        if (!ok) Console.WriteLine("::error::bar check failed");
+    }
+    catch (Exception ex) { Console.WriteLine("::error::bar check crashed: " + ex); }
+}
 
 static void RenderCheck()
 {
