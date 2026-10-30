@@ -19,7 +19,7 @@
             <Button Style="{StaticResource CaptionClose}" Content="&#xE8BB;" Click="OnClose" ToolTip="Close"/>
         </StackPanel>
     </Grid>
-    <Grid x:Name="Root">
+    <Grid x:Name="Root" ClipToBounds="True">
         <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
@@ -48,12 +48,26 @@
             <StackPanel.RenderTransform><TranslateTransform x:Name="BarShift"/></StackPanel.RenderTransform>
             <Border x:Name="TopBar" BorderBrush="#4A4A54" BorderThickness="0,0,0,1" MouseLeftButtonDown="OnTitleDown" MouseMove="OnTitleMove" MouseLeftButtonUp="OnTitleUp">
                 <Border.Background>
-                    <!-- frosted look: nearly opaque, a little lighter at the top -->
-                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                        <GradientStop Color="#F226262C" Offset="0"/>
-                        <GradientStop Color="#EC1C1C21" Offset="1"/>
+                    <!-- colours along the bottom of the bar -->
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                        <GradientStop Color="#5A6BD8" Offset="0"/>
+                        <GradientStop Color="#C77DAE" Offset="0.3"/>
+                        <GradientStop Color="#F3A35B" Offset="0.6"/>
+                        <GradientStop Color="#4CC79A" Offset="1"/>
                     </LinearGradientBrush>
                 </Border.Background>
+                <Grid>
+                <!-- fading to solid black towards the top -->
+                <Border IsHitTestVisible="False">
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Color="#FF000000" Offset="0"/>
+                            <GradientStop Color="#F0000000" Offset="0.45"/>
+                            <GradientStop Color="#9A000000" Offset="0.8"/>
+                            <GradientStop Color="#55000000" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Border.Background>
+                </Border>
                 <local:BarPanel x:Name="BarRow" Margin="14,14,10,14" VerticalAlignment="Center">
                         <Button Style="{StaticResource IconButton}" Content="&#xE700;" Height="32" Width="38" FontSize="14" Margin="0,3,10,3" VerticalAlignment="Center" ToolTip="Menu (Ctrl+B)" Click="OnSidebarToggle"/>
                         <Button x:Name="FoldersBtn" Content="Select folders" Height="32" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnFolders"/>
@@ -80,8 +94,9 @@
                         <Button x:Name="MoreBtn" local:BarPanel.Pinned="True" Style="{StaticResource IconButton}" Content="&#xE712;" Height="32" Width="38" FontSize="14" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="More" Click="OnMoreBar"/>
                         <Button x:Name="HideBarBtn" local:BarPanel.Pinned="True" Style="{StaticResource IconButton}" Content="&#xE70E;" Height="32" Width="38" FontSize="14" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Hide this bar (H)" Click="OnHideBar"/>
                     </local:BarPanel>
+                </Grid>
             </Border>
-            <Border x:Name="BrowseBar" Background="#EC1A1A1F" BorderBrush="#4A4A54" BorderThickness="0,0,0,1" Padding="14,7" Visibility="Collapsed"
+            <Border x:Name="BrowseBar" Background="#141418" BorderBrush="#4A4A54" BorderThickness="0,0,0,1" Padding="14,7" Visibility="Collapsed"
                     MouseLeftButtonDown="OnTitleDown" MouseMove="OnTitleMove" MouseLeftButtonUp="OnTitleUp">
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
@@ -117,12 +132,6 @@
                 </DockPanel>
             </Border>
         </StackPanel>
-
-        <Popup x:Name="MorePopup" PlacementTarget="{Binding ElementName=MoreBtn}" Placement="Bottom" StaysOpen="False" AllowsTransparency="True" PopupAnimation="Fade" Closed="OnMoreClosed">
-            <Border Background="#202026" BorderBrush="#3A3A42" BorderThickness="1" CornerRadius="6" Padding="8,6" Margin="0,4,0,0">
-                <WrapPanel x:Name="MorePanel" MaxWidth="440" Orientation="Horizontal"/>
-            </Border>
-        </Popup>
 
         <!-- hover here to bring a hidden bar back; or use the little button -->
         <Border x:Name="HoverStrip" Grid.RowSpan="2" VerticalAlignment="Top" Height="6" Background="Transparent" Visibility="Collapsed"/>

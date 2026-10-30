@@ -23,8 +23,14 @@ public sealed class BarPanel : Panel
 
     /// <summary>The button that opens the drop-down with the controls that did not fit (one of the pinned children).</summary>
     public FrameworkElement? MoreButton { get; set; }
-    /// <summary>Keeps the more button shown (while its drop-down is open, the moved controls are not in the row).</summary>
-    public bool KeepMore { get; set; }
+    private bool _expanded;
+    /// <summary>The drop-down is open: the controls that did not fit are laid out in rows just under the bar (inside the window).</summary>
+    public bool Expanded { get => _expanded; set { if (_expanded == value) return; _expanded = value; InvalidateMeasure(); InvalidateVisual(); } }
+    private readonly Dictionary<UIElement, Rect> _extra = new();
+    private Rect _extraBounds = Rect.Empty;
+    private static readonly System.Windows.Media.Brush DropBack = Frozen(System.Windows.Media.Color.FromRgb(32, 32, 38));
+    private static readonly System.Windows.Media.Pen DropEdge = new(Frozen(System.Windows.Media.Color.FromRgb(58, 58, 66)), 1);
+    private static System.Windows.Media.Brush Frozen(System.Windows.Media.Color c) { var b = new System.Windows.Media.SolidColorBrush(c); b.Freeze(); return b; }
 
     /// <summary>Controls that did not fit at the last layout, in their order in the row.</summary>
     public List<UIElement> Overflow { get; } = new();
@@ -65,7 +71,7 @@ public sealed class BarPanel : Panel
 
         Overflow.Clear(); _width.Clear();
         double full = normal.Sum(c => nominal[c]) + pinnedW;
-        if (full <= maxW && !KeepMore)
+        if (full <= maxW)
         {
             foreach (var c in kids) _width[c] = nominal[c];
             if (MoreButton is not null) _width[MoreButton] = 0;
@@ -76,7 +82,7 @@ public sealed class BarPanel : Panel
             double canShrink = normal.Sum(c => nominal[c] - minimum[c]);
             var keep = new List<UIElement>(normal);
             double room = maxW - pinnedW;
-            bool needMore = KeepMore || total - canShrink > room;      // narrowing alone is not enough
+            bool needMore = total - canShrink > room;      // narrowing alone is not enough
             if (needMore)
             {
                 room -= moreW;
@@ -91,8 +97,31 @@ public sealed class BarPanel : Panel
             if (MoreButton is not null) _width[MoreButton] = needMore ? moreW : 0;
             foreach (var c in Overflow) _width[c] = 0;
         }
+        // the drop-down: the controls that did not fit, in rows right-aligned under the bar, never wider than the bar
+        _extra.Clear(); _extraBounds = Rect.Empty;
+        if (_expanded && Overflow.Count > 0)
+        {
+            double pad = 8, rowW = Math.Max(60, maxW - 2 * pad), x = 0, y = 0, rowH = 0, widest = 0;
+            var rows = new List<List<(UIElement c, double w)>>(); var row = new List<(UIElement, double)>();
+            foreach (var c in Overflow)
+            {
+                double w = Math.Min(nominal[c], rowW);
+                if (x > 0 && x + w > rowW) { rows.Add(row); row = new(); widest = Math.Max(widest, x); x = 0; }
+                row.Add((c, w)); x += w;
+            }
+            rows.Add(row); widest = Math.Max(widest, x);
+            double left = Math.Max(pad, maxW - pad - widest);
+            foreach (var r in rows)
+            {
+                rowH = r.Max(t => t.c.DesiredSize.Height);
+                double rx = left;
+                foreach (var (c, w) in r) { _extra[c] = new Rect(rx, h + 8 + pad + y, w, rowH); rx += w; }
+                y += rowH;
+            }
+            _extraBounds = new Rect(left - pad, h + 8, widest + 2 * pad, y + 2 * pad);
+        }
         double used = _width.Values.Sum();
-        return new Size(Math.Min(used, maxW), h);
+        return new Size(Math.Min(used, maxW), h);         // the drop-down hangs below without making the bar taller
     }
 
     protected override Size ArrangeOverride(Size final)
@@ -102,10 +131,24 @@ public sealed class BarPanel : Panel
         {
             if (c.Visibility == Visibility.Collapsed) continue;
             double w = _width.GetValueOrDefault(c);
-            if (w <= 0) { c.Arrange(new Rect(-10000, 0, 0, 0)); continue; }     // in the drop-down (or the more button, unused)
+            if (_extra.TryGetValue(c, out var er)) { c.Arrange(er); continue; }      // in the open drop-down
+            if (w <= 0) { c.Arrange(new Rect(-10000, 0, 0, 0)); continue; }     // in the closed drop-down (or the more button, unused)
             c.Arrange(new Rect(x, 0, w, final.Height));              // the width includes the control's margins
             x += w;
         }
         return final;
     }
+
+    protected override void OnRender(System.Windows.Media.DrawingContext dc)
+    {
+        base.OnRender(dc);
+        if (!_extraBounds.IsEmpty) dc.DrawRoundedRectangle(DropBack, DropEdge, _extraBounds, 6, 6);
+    }
+
+    /// <summary>The drop-down area, for hit testing (it lies outside the bar's own bounds).</summary>
+    public bool DropDownContains(Point p) => !_extraBounds.IsEmpty && _extraBounds.Contains(p);
+    public bool HasOverflow => Overflow.Count > 0;
+
+    protected override System.Windows.Media.HitTestResult? HitTestCore(System.Windows.Media.PointHitTestParameters p) =>
+        DropDownContains(p.HitPoint) ? new System.Windows.Media.PointHitTestResult(this, p.HitPoint) : base.HitTestCore(p);
 }

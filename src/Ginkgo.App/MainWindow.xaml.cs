@@ -97,6 +97,15 @@ public partial class MainWindow : Window
         View.ItemActivated += i => { if (RecentlyNavigated()) return; if (IsFolderTile(i)) OpenFolder(_page!.Tiles[i].Path); else OpenViewer(i); };
         InitBrowse();
         BarRow.MoreButton = MoreBtn;
+        // a click anywhere else closes the drop-down; it also closes when everything fits again
+        PreviewMouseDown += (_, e) =>
+        {
+            if (!BarRow.Expanded) return;
+            for (var d = e.OriginalSource as DependencyObject; d != null; d = ParentOf(d)) if (d == BarRow) return;
+            if (e.OriginalSource is DependencyObject o && IsInPopup(o)) return;      // a sort list opened from the drop-down
+            BarRow.Expanded = false;
+        };
+        BarRow.LayoutUpdated += (_, _) => { if (BarRow.Expanded && !BarRow.HasOverflow) BarRow.Expanded = false; };
         SourceInitialized += (_, _) => { Theme.RoundedFrame(this, 0x4A, 0x4A, 0x54); OnStateChanged(this, EventArgs.Empty); };
         SizeChanged += (_, _) => Dispatcher.BeginInvoke(UpdateEdges, DispatcherPriority.Loaded);
         LocationChanged += (_, _) => Dispatcher.BeginInvoke(UpdateEdges, DispatcherPriority.Loaded);
@@ -311,7 +320,10 @@ public partial class MainWindow : Window
         if (_folderPopup.IsOpen) { _folderPopup.IsOpen = false; return; }
         // clicking the button while the pop-out is open closes it (the pop-out closes itself on that same click)
         if ((Stopwatch.GetTimestamp() - _popupClosedAt) / (double)Stopwatch.Frequency < 0.25) return;
-        _folders.Width = Math.Min(WindowState == WindowState.Maximized ? 960 : 640, Math.Max(360, ActualWidth - 40));
+        _folders.Width = Math.Min(WindowState == WindowState.Maximized ? 960 : 640, Math.Max(300, ActualWidth - 48));
+        // keep the pop-out inside the window: slide it left if it would reach past the right edge
+        double x0 = FoldersBtn.TranslatePoint(new Point(0, 0), this).X;
+        _folderPopup.HorizontalOffset = Math.Min(0, ActualWidth - 10 - (_folders.Width + 26) - x0);
         _folders.Load(_model.FolderStats(CurrentQuery()), _settings.OffFolders);
         _folderPopup.IsOpen = true;
     }
@@ -547,6 +559,12 @@ public partial class MainWindow : Window
     // window bar, side menu, shortcut list
     // =========================================================================================================
 
+    private static bool IsInPopup(DependencyObject d)
+    {
+        for (var x = d; x != null; x = ParentOf(x)) if (x is System.Windows.Controls.Primitives.Popup || x.GetType().Name == "PopupRoot") return true;
+        return false;
+    }
+
     private static DependencyObject? ParentOf(DependencyObject d) =>
         d is System.Windows.Media.Visual || d is System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d);
 
@@ -586,28 +604,8 @@ public partial class MainWindow : Window
         try { DragMove(); } catch { }
     }
 
-    // ---- controls that did not fit in the bar live in a drop-down while it is open ----
-    private readonly List<(UIElement el, int index)> _moved = new();
-
-    private void OnMoreBar(object s, RoutedEventArgs e)
-    {
-        if (MorePopup.IsOpen) { MorePopup.IsOpen = false; return; }
-        _moved.Clear();
-        foreach (var el in BarRow.Overflow.ToList()) _moved.Add((el, BarRow.Children.IndexOf(el)));
-        if (_moved.Count == 0) return;
-        BarRow.KeepMore = true;
-        foreach (var (el, _) in _moved) { BarRow.Children.Remove(el); MorePanel.Children.Add(el); }
-        MorePopup.IsOpen = true;
-    }
-
-    private void OnMoreClosed(object? s, EventArgs e)
-    {
-        MorePanel.Children.Clear();
-        foreach (var (el, index) in _moved.OrderBy(m => m.index)) BarRow.Children.Insert(Math.Min(index, BarRow.Children.Count), el);
-        _moved.Clear();
-        BarRow.KeepMore = false;
-        BarRow.InvalidateMeasure();
-    }
+    // ---- controls that did not fit in the bar: the more button opens them in rows under the bar ----
+    private void OnMoreBar(object s, RoutedEventArgs e) => BarRow.Expanded = !BarRow.Expanded;
 
     private void OnTitleUp(object s, MouseButtonEventArgs e) { _titleArmed = false; if (_titleFrom?.IsMouseCaptured == true) _titleFrom.ReleaseMouseCapture(); }
 
@@ -653,7 +651,7 @@ public partial class MainWindow : Window
     // ---- top bar: slides away on scroll down, back on scroll up; H hides it for good until shown again ----
 
     private bool BarPinned =>
-        _folderPopup.IsOpen || _sideOpen || Banner.Visibility == Visibility.Visible || SearchBox.IsKeyboardFocused ||
+        _folderPopup.IsOpen || _sideOpen || BarRow.Expanded || Banner.Visibility == Visibility.Visible || SearchBox.IsKeyboardFocused ||
         (TopBar.IsMouseOver && Stopwatch.GetTimestamp() > _ignoreOverUntil) || HoverStrip.IsMouseOver;
 
     private void ApplyBar()
