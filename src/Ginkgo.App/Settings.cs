@@ -35,8 +35,10 @@ public sealed class AppSettings
 
     // Browse
     public bool BrowseOwnOnly { get; set; }
-    public string BrowseFolderSort { get; set; } = "Name";
-    public bool BrowseFolderReverse { get; set; }
+    /// <summary>Folders shown as a grid of equal book-cover tiles (true) or in the picture layout (false).</summary>
+    public bool BrowseCoverGrid { get; set; } = true;
+    /// <summary>Sort choices remembered for each folder ("" = the top of Browse).</summary>
+    public Dictionary<string, BrowsePrefs> BrowseFolders { get; set; } = new();
     public List<string> BrowseDetails { get; set; } = new() { "Images", "Gifs", "Videos", "Size" };
 
     public string Sort { get; set; } = "FirstSeen";
@@ -90,4 +92,11 @@ public sealed class AppSettings
         ("Large (320 / 200 MB)", 320, 200), ("Larger (512 / 256 MB)", 512, 256), ("Largest (768 / 384 MB)", 768, 384),
         ("Automatic (uses free memory)", -1, -1),
     };
+}
+
+public sealed class BrowsePrefs
+{
+    public string FolderSort { get; set; } = "Name";
+    public bool FolderReverse { get; set; }
+    public string FileSort { get; set; } = "Name";
 }

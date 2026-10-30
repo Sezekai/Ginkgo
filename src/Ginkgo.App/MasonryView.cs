@@ -15,7 +15,7 @@ public sealed class MasonryView : FrameworkElement
 {
     private MasonryResult? _layout;
     private ItemSpec[] _items = Array.Empty<ItemSpec>();
-    private string[]? _labels;
+    private string?[]? _labels;
     private double _offset;
     private float _tileTarget = 220;
     private const float Gap = 3;
@@ -163,8 +163,14 @@ public sealed class MasonryView : FrameworkElement
     /// <summary>false = equal-width columns; true = rows of equal height (the size is then the row height).</summary>
     public bool RowsMode { get => _rows; set { if (_rows == value) return; _rows = value; Relayout(); } }
 
-    public void SetItems(ItemSpec[] items, string[]? labels, bool keepPosition = false)
+    /// <summary>How many leading items are folder covers, shown as a grid of equal book-cover tiles with their names underneath.</summary>
+    public int CoverCount { get; private set; }
+    public const float CoverAspect = 0.7f, CaptionHeight = 50, CoverGap = 14, SectionGap = 28;
+    private float CoverTarget => Math.Clamp(_tileTarget, 110, 420);
+
+    public void SetItems(ItemSpec[] items, string?[]? labels, bool keepPosition = false, int coverCount = 0)
     {
+        CoverCount = Math.Clamp(coverCount, 0, items.Length);
         double keep = _offset;
         InRelayout = true;
         try
@@ -201,12 +207,18 @@ public sealed class MasonryView : FrameworkElement
         if (ActualWidth < 50 || _items.Length == 0) { _layout = null; InvalidateVisual(); ScrollChanged?.Invoke(); return; }
         // keep the same position in the content after a resize/zoom
         double frac = TotalHeight > 0 ? _offset / TotalHeight : 0;
-        if (_rows) _layout = JustifiedLayout.Compute(_items, (float)ActualWidth, _tileTarget, Gap);
-        else
+        MasonryResult Files(ItemSpec[] items)
         {
+            if (_rows) return JustifiedLayout.Compute(items, (float)ActualWidth, _tileTarget, Gap);
             int cols = MasonryLayout.ColumnsFor((float)ActualWidth, _tileTarget, Gap);
-            _layout = MasonryLayout.Compute(_items, (float)ActualWidth, cols, Gap);
+            return MasonryLayout.Compute(items, (float)ActualWidth, cols, Gap);
         }
+        if (CoverCount > 0)
+        {
+            var rest = CoverCount < _items.Length ? Files(_items[CoverCount..]) : null;
+            _layout = CoverGridLayout.Compose(CoverCount, (float)ActualWidth, CoverTarget, CoverAspect, CaptionHeight, CoverGap, rest, SectionGap);
+        }
+        else _layout = Files(_items);
         if (_inset > 0) for (int i = 0; i < _layout.Y.Length; i++) _layout.Y[i] += _inset;
         _offset = Math.Clamp(frac * TotalHeight, 0, Math.Max(0, TotalHeight - ActualHeight));
         _target = _offset;
@@ -398,7 +410,8 @@ public sealed class MasonryView : FrameworkElement
             bool changed = a < 1 || !_sigPrev.TryGetValue(i, out var old) || !ReferenceEquals(old, sig);
             _tiles.Add(new TileDraw { Index = i, X = x, Y = y, W = wPx, H = hPx, E = e, A = a, Changed = changed });
             bool gif = e is not null && Badges is { } bd && i < bd.Length && bd[i] == 1;
-            bool labelled = _labels is { } lb && i < lb.Length && lb[i] is not null && y < offPx + ph && y + hPx > offPx;
+            int below = i < CoverCount ? (int)(CaptionHeight * dpi) : 0;
+            bool labelled = _labels is { } lb && i < lb.Length && lb[i] is not null && y < offPx + ph && y + hPx + below > offPx;
             if (i == _hoverIndex || gif || labelled) _overlay.Add((new Rect(x / dpi, (y - offPx) / dpi, wPx / dpi, hPx / dpi), i == _hoverIndex, gif, labelled ? i : -1));
         }
         (_sigPrev, _sigNow) = (_sigNow, _sigPrev);
@@ -412,7 +425,7 @@ public sealed class MasonryView : FrameworkElement
             dc.DrawImage(kv.Bmp, new Rect(0, (kv.K * BandH - offPx) / dpi, pw / dpi, BandH / dpi));
         foreach (var (r, hovered, gif, label) in _overlay)
         {
-            if (label >= 0) DrawCaption(dc, r, label, dpi);
+            if (label >= 0) { if (label < CoverCount) DrawCaptionBelow(dc, r, label, dpi); else DrawCaption(dc, r, label, dpi); }
             if (hovered) dc.DrawRectangle(null, _hover, r);
             if (gif && r.Width > 70) DrawBadge(dc, r);
         }
@@ -592,6 +605,30 @@ public sealed class MasonryView : FrameworkElement
     }
     private static readonly Brush CaptionDim = Freeze(new SolidColorBrush(Color.FromRgb(214, 214, 222)));
     private readonly Dictionary<int, FormattedText> _subCache = new();
+
+    private static readonly Pen CoverEdge = MakeEdge();
+    private static Pen MakeEdge() { var p = new Pen(new SolidColorBrush(Color.FromRgb(52, 52, 60)), 1); p.Freeze(); return p; }
+
+    /// <summary>Cover grid: a thin frame round the cover, and the folder's name and details underneath it.</summary>
+    private void DrawCaptionBelow(DrawingContext dc, Rect r, int i, double dpi)
+    {
+        dc.DrawRectangle(null, CoverEdge, new Rect(r.Left + 0.5, r.Top + 0.5, Math.Max(0, r.Width - 1), Math.Max(0, r.Height - 1)));
+        string text = _labels![i]!;
+        int nl = text.IndexOf('\n');
+        string name = nl < 0 ? text : text[..nl], sub = nl < 0 ? "" : text[(nl + 1)..];
+        double maxW = Math.Max(10, r.Width - 2);
+        if (!_textCache.TryGetValue(i, out var ft) || Math.Abs(ft.MaxTextWidth - maxW) > 0.5)
+        {
+            ft = new FormattedText(name, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, _face, 13, Brushes.White, dpi)
+            { MaxTextWidth = maxW, MaxLineCount = sub.Length > 0 ? 1 : 2, Trimming = TextTrimming.CharacterEllipsis };
+            ft.SetFontWeight(FontWeights.SemiBold);
+            _textCache[i] = ft;
+            _subCache[i] = new FormattedText(sub, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, _face, 11.5, CaptionDim, dpi)
+            { MaxTextWidth = maxW, MaxLineCount = 2, Trimming = TextTrimming.CharacterEllipsis };
+        }
+        dc.DrawText(ft, new Point(r.Left + 1, r.Bottom + 5));
+        if (sub.Length > 0) dc.DrawText(_subCache[i], new Point(r.Left + 1, r.Bottom + 5 + ft.Height + 1));
+    }
 
     /// <summary>Folder tiles: the folder's name and details over a dark fade at the bottom of the tile.</summary>
     private void DrawCaption(DrawingContext dc, Rect r, int i, double dpi)

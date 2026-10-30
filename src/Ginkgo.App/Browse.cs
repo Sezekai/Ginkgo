@@ -11,7 +11,34 @@ namespace Ginkgo.App;
 /// </summary>
 public sealed class CoverStore
 {
-    public sealed class Cover { public long? Pinned { get; set; } public long? Random { get; set; } }
+    public sealed class Cover
+    {
+        public long? Pinned { get; set; }
+        public long? Random { get; set; }
+        // how the cover picture sits in the tile (cover grid); only for the picture it was set on
+        public long? CropId { get; set; }
+        public float Zoom { get; set; } = 1;
+        public float Cx { get; set; } = 0.5f;
+        public float Cy { get; set; } = 0.4f;
+    }
+
+    public const float DefaultCx = 0.5f, DefaultCy = 0.4f;     // a little above the middle: faces are usually in the upper part
+
+    /// <summary>The crop for <paramref name="folder"/> when its cover is the file <paramref name="id"/>.</summary>
+    public (float zoom, float cx, float cy) CropOf(string folder, long id)
+    {
+        lock (_lock)
+            return _covers.TryGetValue(folder, out var c) && c.CropId == id ? (c.Zoom, c.Cx, c.Cy) : (1f, DefaultCx, DefaultCy);
+    }
+
+    public void SetCrop(string folder, long id, float zoom, float cx, float cy)
+    {
+        lock (_lock)
+        {
+            if (!_covers.TryGetValue(folder, out var c)) _covers[folder] = c = new Cover();
+            c.CropId = id; c.Zoom = zoom; c.Cx = cx; c.Cy = cy; _dirty = true;
+        }
+    }
 
     private readonly Dictionary<string, Cover> _covers;
     private readonly object _lock = new();
@@ -76,13 +103,13 @@ public sealed class CoverStore
             _covers.TryGetValue(folder, out var c);
             c ??= _covers[folder] = new Cover();
             long current = c.Pinned ?? c.Random ?? -1;
-            c.Pinned = null;
+            c.Pinned = null; c.CropId = null;
             c.Random = m.Id[PickRandom(candidates, m, current)];
             _dirty = true;
         }
     }
 
-    public void Pin(string folder, long id) { lock (_lock) { if (!_covers.TryGetValue(folder, out var c)) _covers[folder] = c = new Cover(); c.Pinned = id; _dirty = true; } }
+    public void Pin(string folder, long id) { lock (_lock) { if (!_covers.TryGetValue(folder, out var c)) _covers[folder] = c = new Cover(); c.Pinned = id; c.CropId = null; _dirty = true; } }
     public void Reset(string folder) { lock (_lock) { if (_covers.Remove(folder)) _dirty = true; } }
     public bool IsPinned(string folder) { lock (_lock) return _covers.TryGetValue(folder, out var c) && c.Pinned is not null; }
 
@@ -106,6 +133,7 @@ public sealed class BrowsePage
     public List<FolderNode> Tiles = new();
     public int[] Order = Array.Empty<int>();        // cover rows for the tiles (-1 = no picture), then file rows
     public string?[] Labels = Array.Empty<string?>();
+    public (float zoom, float cx, float cy)[] Crops = Array.Empty<(float, float, float)>();     // per folder tile
     public Dictionary<string, List<int>> Candidates = new(StringComparer.OrdinalIgnoreCase);
     public int FirstFile => Tiles.Count;
 
@@ -145,12 +173,16 @@ public sealed class BrowsePage
 
         var order = new List<int>(p.Tiles.Count + files.Count);
         var labels = new List<string?>(p.Tiles.Count + files.Count);
+        var crops = new List<(float, float, float)>(p.Tiles.Count);
         foreach (var t in p.Tiles)
         {
             p.Candidates.TryGetValue(t.Path, out var cand);
-            order.Add(covers.Choose(t.Path, cand ?? new List<int>(), m));
+            int row = covers.Choose(t.Path, cand ?? new List<int>(), m);
+            order.Add(row);
+            crops.Add(row >= 0 ? covers.CropOf(t.Path, m.Id[row]) : (1f, CoverStore.DefaultCx, CoverStore.DefaultCy));
             labels.Add(t.Name + "\n" + DetailLine(t, details));
         }
+        p.Crops = crops.ToArray();
         var sorted = m.SortRows(files.ToArray(), q);
         order.AddRange(sorted);
         for (int k = 0; k < sorted.Length; k++) labels.Add(null);

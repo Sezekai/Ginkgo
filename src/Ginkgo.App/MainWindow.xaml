@@ -78,6 +78,8 @@
                     MouseLeftButtonDown="OnTitleDown" MouseMove="OnTitleMove" MouseLeftButtonUp="OnTitleUp">
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                        <ToggleButton x:Name="GridBtn" Content="Cover grid" Height="30" Margin="0,0,9,0" Click="OnCoverGrid"
+                                      ToolTip="Folders as equal book-cover tiles with their names underneath (right-click a cover to adjust it)"/>
                         <ToggleButton x:Name="OwnOnlyBtn" Content="Only this folder's own files" Height="30" Margin="0,0,9,0" Click="OnOwnOnly"
                                       ToolTip="Off: a folder shows everything inside it, including its subfolders' files. On: only the files lying in the folder itself."/>
                         <TextBlock Text="Folders by" Foreground="{StaticResource Dim}" VerticalAlignment="Center" Margin="4,0,8,0"/>

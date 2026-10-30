@@ -74,6 +74,17 @@ public sealed class ThumbLoader : IDisposable
         public long Touched;            // when the screen last asked for it (ms)
     }
 
+    /// <summary>
+    /// How a picture fills a tile of a different shape (folder covers): Zoom 1 = fill the tile (cropping the overflow), smaller shows
+    /// more of the picture (with dark bars), larger zooms in. Cx, Cy = the point of the picture at the middle of the tile (0..1).
+    /// Factor = how much wider than the tile the picture needs to be for the crop to stay sharp.
+    /// </summary>
+    public readonly record struct Crop(float Zoom, float Cx, float Cy, float Factor);
+
+    /// <summary>Set for views with covers: the crop for a tile, or null for a plain picture.</summary>
+    public Func<int, Crop?>? CropFor;
+    private int Eff(int index, int widthPx) => CropFor?.Invoke(index) is { } c ? (int)Math.Ceiling(widthPx * Math.Max(0.2f, c.Factor)) : widthPx;
+
     public readonly record struct PlanItem(int Index, int WidthPx, int HeightPx, int Tier, bool EncodedOnly);
 
     private sealed class Plan { public PlanItem[] Items = Array.Empty<PlanItem>(); public int Next; }
@@ -175,7 +186,7 @@ public sealed class ThumbLoader : IDisposable
     public void NoteScroll() => Volatile.Write(ref _lastScroll, Stopwatch.GetTimestamp());
 
     /// <summary>UI thread. Does this tile still need its sharp version made?</summary>
-    public bool NeedsSharp(int index, int widthPx) => Resolve(index, widthPx, out _, out bool large) && large;
+    public bool NeedsSharp(int index, int widthPx) => Resolve(index, Eff(index, widthPx), out _, out bool large) && large;
 
     public void SetLookAhead(int[] indices) => Volatile.Write(ref _la, indices);
 
@@ -277,7 +288,7 @@ public sealed class ThumbLoader : IDisposable
     {
         if (e.Tier < show) return true;
         if (widthPx > 16 && heightPx > 0 && (e.Pix.W != widthPx || e.Pix.H != heightPx)) return true;     // the tile is a different size now: make the picture that size
-        int need = Math.Min(Math.Min(widthPx, Nominal[e.Tier]), Math.Max(1, _origW[e.Index]));
+        int need = Math.Min(Math.Min(Eff(e.Index, widthPx), Nominal[e.Tier]), Math.Max(1, _origW[e.Index]));
         int w = e.PixelWidth;
         return w > need * 1.15 || w < need * 0.9;
     }
@@ -346,7 +357,7 @@ public sealed class ThumbLoader : IDisposable
     /// <summary>UI thread only. The picture for a tile if there is one (asks for it / a better one if needed).</summary>
     public Entry? Get(int index, int widthPx, int heightPx)
     {
-        if (!Resolve(index, widthPx, out int show, out bool large)) return null;
+        if (!Resolve(index, Eff(index, widthPx), out int show, out bool large)) return null;
         if (show == 3 && !_laMade.IsEmpty && _laMade.TryRemove(index, out _)) Interlocked.Increment(ref LookAheadUsed);
         Entry? e = null;
         if (_cache.TryGetValue(index, out var node)) { _lru.Remove(node); _lru.AddFirst(node); e = node.Value; e.Drawn = true; e.Touched = Environment.TickCount64; }
@@ -376,7 +387,7 @@ public sealed class ThumbLoader : IDisposable
     /// <summary>UI thread only. Adds what this tile still needs to a warm-up list.</summary>
     public void AppendPlan(int index, int widthPx, int heightPx, List<PlanItem> list, bool decodeToo, bool largeToo)
     {
-        if (!Resolve(index, widthPx, out int show, out bool large)) return;
+        if (!Resolve(index, Eff(index, widthPx), out int show, out bool large)) return;
         _cache.TryGetValue(index, out var node);
         var e = node?.Value;
         if (show >= 0 && (e is null || NeedsRefresh(e, show, widthPx, heightPx)) && !_inflight.ContainsKey((long)index * 4 + show))
@@ -441,7 +452,7 @@ public sealed class ThumbLoader : IDisposable
                     if (data is not null && !req.EncodedOnly)
                     {
                         long t0 = Stopwatch.GetTimestamp();
-                        (bmp, bytes) = Decode(data, req.WidthPx, req.HeightPx);
+                        (bmp, bytes) = Decode(data, req.WidthPx, req.HeightPx, CropFor?.Invoke(req.Index));
                         Interlocked.Add(ref _decodeTicks, Stopwatch.GetTimestamp() - t0); Interlocked.Increment(ref _decodes);
                     }
                     }
@@ -503,7 +514,7 @@ public sealed class ThumbLoader : IDisposable
             long t0 = Stopwatch.GetTimestamp();
             using var full = ThumbMaker.DecodeLarge(_paths[req.Index]);
             long t1 = Stopwatch.GetTimestamp();
-            var result = Present(full, req.WidthPx, req.HeightPx);
+            var result = Present(full, req.WidthPx, req.HeightPx, CropFor?.Invoke(req.Index));
             long t2 = Stopwatch.GetTimestamp();
             Interlocked.Add(ref _sharpDecodeTicks, t1 - t0); Interlocked.Add(ref _sharpPresentTicks, t2 - t1); Interlocked.Increment(ref _sharpJobs);
             if (_large.Size > _largeCap) { _largeFailed.TryAdd(req.Index, 0); return result; }  // size limit reached: not saved
@@ -539,18 +550,21 @@ public sealed class ThumbLoader : IDisposable
     }
 
     /// <summary>Decodes a thumbnail into pixels of exactly the tile's size on screen.</summary>
-    private static (Pix?, long) Decode(byte[] data, int widthPx, int heightPx)
+    private static (Pix?, long) Decode(byte[] data, int widthPx, int heightPx, Crop? crop = null)
     {
         using var src = SKBitmap.Decode(data);
-        return src is null ? (null, 0) : Present(src, widthPx, heightPx);
+        return src is null ? (null, 0) : Present(src, widthPx, heightPx, crop);
     }
 
     /// <summary>
     /// Turns a decoded bitmap into pixels at exactly the tile's size (smaller or larger than the bitmap), so the grid only has to copy them.
     /// SrcW keeps the width the picture really has (never more than the thumbnail's own), which is what the refresh logic compares.
     /// </summary>
-    private static (Pix?, long) Present(SKBitmap src, int widthPx, int heightPx)
+    private static readonly SKColor CropBack = new(24, 24, 28);
+
+    private static (Pix?, long) Present(SKBitmap src, int widthPx, int heightPx, Crop? crop = null)
     {
+        if (crop is { } c && widthPx > 4 && heightPx > 4) return PresentCropped(src, widthPx, heightPx, c);
         bool sized = widthPx > 16;
         int srcEff = sized && src.Width > widthPx * 1.05 ? widthPx : src.Width;
         int tw = sized ? widthPx : src.Width;
@@ -574,6 +588,33 @@ public sealed class ThumbLoader : IDisposable
         else for (int y = 0; y < h; y++) System.Runtime.InteropServices.Marshal.Copy(ptr + y * rowBytes, data, y * w * 4, w * 4);
         temp?.Dispose();
         return (new Pix { Data = data, W = w, H = h, SrcW = srcEff }, (long)w * h * 4);
+    }
+
+    /// <summary>A cover: the part of the picture chosen by the crop, scaled to exactly the tile (bars where the picture does not reach).</summary>
+    private static (Pix?, long) PresentCropped(SKBitmap src, int tw, int th, Crop c)
+    {
+        float sw = src.Width, sh = src.Height;
+        float s = Math.Clamp(c.Zoom, 0.1f, 10f) * Math.Max(tw / sw, th / sh);
+        float vw = tw / s, vh = th / s;                       // how much of the picture the tile shows
+        float left = c.Cx * sw - vw / 2, top = c.Cy * sh - vh / 2;
+        left = vw <= sw ? Math.Clamp(left, 0, sw - vw) : (sw - vw) / 2;
+        top = vh <= sh ? Math.Clamp(top, 0, sh - vh) : (sh - vh) / 2;
+        var srcRect = SKRect.Create(left, top, vw, vh);
+        var inside = SKRect.Intersect(srcRect, SKRect.Create(0, 0, sw, sh));
+        var dstRect = new SKRect((inside.Left - left) * s, (inside.Top - top) * s, (inside.Right - left) * s, (inside.Bottom - top) * s);
+        using var dst = new SKBitmap(new SKImageInfo(tw, th, SKColorType.Bgra8888, SKAlphaType.Premul));
+        using (var canvas = new SKCanvas(dst))
+        using (var paint = new SKPaint { FilterQuality = SKFilterQuality.Medium, IsAntialias = true })
+        {
+            canvas.Clear(CropBack);
+            if (!inside.IsEmpty) canvas.DrawBitmap(src, inside, dstRect, paint);
+        }
+        int rowBytes = dst.RowBytes;
+        var data = PixPool.Rent(tw * th * 4);
+        var ptr = dst.GetPixels();
+        if (rowBytes == tw * 4) System.Runtime.InteropServices.Marshal.Copy(ptr, data, 0, tw * th * 4);
+        else for (int y = 0; y < th; y++) System.Runtime.InteropServices.Marshal.Copy(ptr + y * rowBytes, data, y * tw * 4, tw * 4);
+        return (new Pix { Data = data, W = tw, H = th, SrcW = src.Width }, (long)tw * th * 4);
     }
 
     /// <summary>For the picture viewer: a stored thumbnail as it is, as a picture WPF can show.</summary>

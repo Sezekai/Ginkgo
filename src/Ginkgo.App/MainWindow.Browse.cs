@@ -16,68 +16,152 @@ public partial class MainWindow
     private BrowsePage? _page;
     private readonly CoverStore _covers = CoverStore.Load();
     private long _navAt;
-    private sealed record NavState(string Section, string Folder, double Offset);
+    /// <summary>A place to go back to: a section and folder with its scroll position, and the picture open in the viewer (-1 = none).</summary>
+    private sealed record NavState(string Section, string Folder, double Offset, long ViewerId = -1);
     private readonly List<NavState> _back = new(), _fwd = new();
 
     private bool InBrowse => _section == "Browse";
+    private bool ViewerOpen => ViewerRoot.Visibility == Visibility.Visible;
     private bool IsFolderTile(int index) => index >= 0 && index < _firstFile;
 
     private void InitBrowse()
     {
         OwnOnlyBtn.IsChecked = _settings.BrowseOwnOnly;
-        FolderRevBtn.IsChecked = _settings.BrowseFolderReverse;
-        foreach (ComboBoxItem it in FolderSortBox.Items) if ((string)it.Tag == _settings.BrowseFolderSort) FolderSortBox.SelectedItem = it;
-        if (FolderSortBox.SelectedItem is null) FolderSortBox.SelectedIndex = 0;
-        View.ItemClicked += i => { if (IsFolderTile(i) && !RecentlyNavigated()) OpenFolder(_page!.Tiles[i].Path); };
+        GridBtn.IsChecked = _settings.BrowseCoverGrid;
+        View.ItemClicked += i =>
+        {
+            if (RecentlyNavigated()) return;
+            if (IsFolderTile(i)) OpenFolder(_page!.Tiles[i].Path);
+            else if (InBrowse && i >= 0) OpenViewer(i);           // inside a folder one click opens a picture
+        };
         View.ItemContextRequested += ShowTileMenu;
         PreviewMouseDown += (_, e) =>
         {
-            if (ViewerRoot.Visibility == Visibility.Visible) return;
             if (e.ChangedButton == MouseButton.XButton1) { GoBack(); e.Handled = true; }
             else if (e.ChangedButton == MouseButton.XButton2) { GoForward(); e.Handled = true; }
         };
+        ApplyFolderPrefs();
         UpdateNavUi();
     }
 
     /// <summary>The second click of a double-click lands on whatever replaced the tile: ignore it.</summary>
     private bool RecentlyNavigated() => (Stopwatch.GetTimestamp() - _navAt) * 1000 < 450 * Stopwatch.Frequency;
 
-    // ---- moving around ----
+    // ---- remembered choices per folder ----
 
-    private void Go(string section, string folder, bool remember = true, double? offset = null)
+    private BrowsePrefs Prefs(string folder) => _settings.BrowseFolders.TryGetValue(folder, out var p) ? p : new BrowsePrefs();
+    private BrowsePrefs PrefsForEdit(string folder)
     {
-        if (remember && (section != _section || folder != _folder)) { _back.Add(new NavState(_section, _folder, View.Offset)); _fwd.Clear(); }
-        bool sectionChanged = section != _section;
-        _section = section; _folder = folder; _navAt = Stopwatch.GetTimestamp();
-        _loading = true; SearchBox.Text = ""; _loading = false;     // a search belongs to the place it was typed in
-        UpdateNavUi();
-        _ = BuildViewAsync(false, offset ?? 0);
-        if (sectionChanged) RevealBar();
+        if (!_settings.BrowseFolders.TryGetValue(folder, out var p)) _settings.BrowseFolders[folder] = p = new BrowsePrefs();
+        return p;
     }
 
-    private void OpenFolder(string path) => Go("Browse", path);
+    /// <summary>Puts the sort boxes to what this place uses: per folder in Browse (name A to Z unless changed), the Home choice in Home.</summary>
+    private void ApplyFolderPrefs()
+    {
+        bool was = _loading; _loading = true;
+        try
+        {
+            string fileSort = _settings.Sort;
+            if (InBrowse)
+            {
+                var p = Prefs(_folder);
+                fileSort = p.FileSort;
+                foreach (ComboBoxItem it in FolderSortBox.Items) if ((string)it.Tag == p.FolderSort) FolderSortBox.SelectedItem = it;
+                if (FolderSortBox.SelectedItem is null) FolderSortBox.SelectedIndex = 0;
+                FolderRevBtn.IsChecked = p.FolderReverse;
+            }
+            SortBox.SelectedItem = null;
+            foreach (ComboBoxItem it in SortBox.Items) if ((string)it.Tag == fileSort) SortBox.SelectedItem = it;
+            if (SortBox.SelectedItem is null) SortBox.SelectedIndex = 0;
+            ShuffleBtn.Visibility = fileSort == "Random" ? Visibility.Visible : Visibility.Collapsed;
+        }
+        finally { _loading = was; }
+    }
+
+    // ---- moving around ----
+
+    private NavState Here() => new(_section, _folder, View.Offset, ViewerOpen && _vIndex >= 0 && _vIndex < _order.Length && _model is not null ? _model.Id[_order[_vIndex]] : -1);
+
+    /// <summary>Keeps where we are now, to come back to.</summary>
+    private void Remember()
+    {
+        _back.Add(Here());
+        if (_back.Count > 500) _back.RemoveAt(0);
+        _fwd.Clear();
+        UpdateNavButtons();
+    }
+
+    private Task Go(string section, string folder, bool remember = true, double? offset = null)
+    {
+        if (remember && (section != _section || folder != _folder)) Remember();
+        bool sectionChanged = section != _section;
+        if (ViewerOpen) CloseViewer(fromUser: false);
+        _section = section; _folder = folder; _navAt = Stopwatch.GetTimestamp();
+        _loading = true; SearchBox.Text = ""; _loading = false;     // a search belongs to the place it was typed in
+        ApplyFolderPrefs();
+        UpdateNavUi();
+        _barAuto = false; ApplyBar();                               // a new place starts at the top, with the bar showing
+        if (sectionChanged) RevealBar();
+        return BuildViewAsync(false, offset ?? 0);
+    }
+
+    private void OpenFolder(string path) => _ = Go("Browse", path);
 
     private void GoBack()
     {
         if (_back.Count == 0) return;
         var s = _back[^1]; _back.RemoveAt(_back.Count - 1);
-        _fwd.Add(new NavState(_section, _folder, View.Offset));
-        Go(s.Section, s.Folder, remember: false, offset: s.Offset);
+        _fwd.Add(Here());
+        _ = Restore(s);
     }
 
     private void GoForward()
     {
         if (_fwd.Count == 0) return;
         var s = _fwd[^1]; _fwd.RemoveAt(_fwd.Count - 1);
-        _back.Add(new NavState(_section, _folder, View.Offset));
-        Go(s.Section, s.Folder, remember: false, offset: s.Offset);
+        _back.Add(Here());
+        _ = Restore(s);
+    }
+
+    /// <summary>Returns to a remembered place: the folder (rebuilt if it is another one), its scroll position, and the picture if one was open.</summary>
+    private async Task Restore(NavState s)
+    {
+        if (s.Section != _section || s.Folder != _folder) await Go(s.Section, s.Folder, remember: false, offset: s.Offset);
+        if (s.ViewerId >= 0)
+        {
+            int idx = IndexOfId(s.ViewerId);
+            if (idx >= _firstFile) { if (ViewerOpen) ShowIndex(idx, remember: false); else OpenViewer(idx, remember: false); }
+        }
+        else
+        {
+            if (ViewerOpen) CloseViewer(fromUser: false);
+            View.Offset = s.Offset;
+        }
+        UpdateNavButtons();
+    }
+
+    private int IndexOfId(long id)
+    {
+        if (_model is null) return -1;
+        for (int k = _firstFile; k < _order.Length; k++) if (_order[k] >= 0 && _model.Id[_order[k]] == id) return k;
+        return -1;
+    }
+
+    /// <summary>Closing the viewer yourself: the steps through pictures are dropped, so Back goes to the folder you came from.</summary>
+    private void ForgetViewerSteps()
+    {
+        while (_back.Count > 0 && _back[^1].Section == _section && _back[^1].Folder == _folder) _back.RemoveAt(_back.Count - 1);
+        UpdateNavButtons();
     }
 
     private void GoUp()
     {
         if (!InBrowse || _folder.Length == 0) return;
-        Go("Browse", FolderPaths.Parent(_folder));
+        _ = Go("Browse", FolderPaths.Parent(_folder));
     }
+
+    private void UpdateNavButtons() { BackBtn.IsEnabled = _back.Count > 0; FwdBtn.IsEnabled = _fwd.Count > 0; }
 
     private void OnBack(object s, RoutedEventArgs e) => GoBack();
     private void OnForward(object s, RoutedEventArgs e) => GoForward();
@@ -88,7 +172,7 @@ public partial class MainWindow
         NavHome.IsChecked = _section == "Home"; NavBrowse.IsChecked = InBrowse; NavFav.IsChecked = NavTools.IsChecked = false;
         BrowseBar.Visibility = InBrowse ? Visibility.Visible : Visibility.Collapsed;
         FoldersBtn.Visibility = InBrowse ? Visibility.Collapsed : Visibility.Visible;     // Select folders shapes Home; Browse shows every folder
-        BackBtn.IsEnabled = _back.Count > 0; FwdBtn.IsEnabled = _fwd.Count > 0; UpBtn.IsEnabled = InBrowse && _folder.Length > 0;
+        UpdateNavButtons(); UpBtn.IsEnabled = InBrowse && _folder.Length > 0;
         OwnOnlyBtn.Visibility = InBrowse && _folder.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         SearchBox.ToolTip = InBrowse ? "Search this folder: folder and file names (/ or Ctrl+F)" : "Search file and folder names (/ or Ctrl+F)";
         Crumbs.Children.Clear();
@@ -109,7 +193,7 @@ public partial class MainWindow
     {
         var b = new Button { Content = text, Height = 28, Margin = new Thickness(0), Padding = new Thickness(8, 2, 8, 2), FontWeight = current ? FontWeights.SemiBold : FontWeights.Normal };
         if (current) b.Background = System.Windows.Media.Brushes.Transparent;
-        b.Click += (_, _) => { if (!current) Go("Browse", path); };
+        b.Click += (_, _) => { if (!current) _ = Go("Browse", path); };
         Crumbs.Children.Add(b);
     }
 
@@ -118,13 +202,40 @@ public partial class MainWindow
     private HashSet<string> BrowseDetails() => new(_settings.BrowseDetails, StringComparer.OrdinalIgnoreCase);
 
     private void OnOwnOnly(object s, RoutedEventArgs e) { _settings.BrowseOwnOnly = OwnOnlyBtn.IsChecked == true; BuildView(false); }
+    private void OnCoverGrid(object s, RoutedEventArgs e) { _settings.BrowseCoverGrid = GridBtn.IsChecked == true; BuildView(true); }
+
+    /// <summary>The cover-grid crop for tile <paramref name="i"/> (null for files, or when folders are shown as plain tiles).</summary>
+    private ThumbLoader.Crop? CropForTile(BrowsePage page, int i, int[] order)
+    {
+        if (i >= page.FirstFile || i >= page.Crops.Length || order[i] < 0 || _model is null) return null;
+        var (z, cx, cy) = page.Crops[i];
+        int row = order[i];
+        float aspect = Ginkgo.Data.ThumbMaker.ClampAspect(_model.W[row], _model.H[row]);
+        return new ThumbLoader.Crop(z, cx, cy, z * Math.Max(1f, aspect / MasonryView.CoverAspect));
+    }
+
+    private void AdjustCover(int index)
+    {
+        if (_page is null || _loader is null || _model is null || !IsFolderTile(index) || _order[index] < 0) return;
+        var node = _page.Tiles[index];
+        var pic = _loader.QuickPicture(index);
+        if (pic is null) { StatusText.Text = "The cover picture could not be read."; return; }
+        long id = _model.Id[_order[index]];
+        var dlg = new CoverEditWindow(node.Name, pic, MasonryView.CoverAspect, _page.Crops[index]) { Owner = this };
+        if (dlg.ShowDialog() != true) return;
+        var (z, cx, cy) = dlg.Result;
+        _covers.SetCrop(node.Path, id, z, cx, cy); _covers.Save();
+        BuildView(true);
+    }
 
     private void OnFolderSortChanged(object s, RoutedEventArgs e)
     {
         if (_loading || FolderSortBox is null || FolderRevBtn is null) return;
-        _settings.BrowseFolderSort = (FolderSortBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "Name";
-        _settings.BrowseFolderReverse = FolderRevBtn.IsChecked == true;
-        if (InBrowse) BuildView(false);
+        if (!InBrowse) return;
+        var p = PrefsForEdit(_folder);
+        p.FolderSort = (FolderSortBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "Name";
+        p.FolderReverse = FolderRevBtn.IsChecked == true;
+        BuildView(true);
     }
 
     private void OnDetailsMenu(object s, RoutedEventArgs e)
@@ -165,6 +276,7 @@ public partial class MainWindow
             bool has = cand is { Count: > 0 };
             Item("Open", () => OpenFolder(node.Path));
             menu.Items.Add(new Separator());
+            if (_settings.BrowseCoverGrid) Item("Adjust cover (zoom, crop)…", () => AdjustCover(index), has && _order[index] >= 0);
             Item("New random cover", () => { _covers.Reroll(node.Path, cand!, _model); _covers.Save(); BuildView(true); }, has);
             Item("Reset cover to random", () => { _covers.Reset(node.Path); _covers.Save(); BuildView(true); }, _covers.IsPinned(node.Path));
             menu.Items.Add(new Separator());

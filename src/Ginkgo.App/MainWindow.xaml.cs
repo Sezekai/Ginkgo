@@ -193,7 +193,9 @@ public partial class MainWindow : Window
         var q = CurrentQuery();
         bool browse = InBrowse;
         string folder = _folder; bool own = _settings.BrowseOwnOnly;
-        string fsort = _settings.BrowseFolderSort; bool frev = _settings.BrowseFolderReverse;
+        var prefs = Prefs(_folder);
+        string fsort = prefs.FolderSort; bool frev = prefs.FolderReverse;
+        bool grid = _settings.BrowseCoverGrid;
         var details = BrowseDetails();
         var result = await Task.Run(() =>
         {
@@ -221,10 +223,16 @@ public partial class MainWindow : Window
         _loader = new ThumbLoader(result.slice.tiers, _paths, result.slice.origW, stores.Large, Engine.NoCap,
             (i, loc) => _engine.QueueLarge(ids[i], loc.Pack, loc.Off, loc.Len), Dispatcher, () => View.Refresh(), decoded, encoded)
         { FadeEnabled = _settings.FadeSharpening };
+        if (result.page is { } cp && grid && cp.FirstFile > 0)
+        {
+            var crops = new ThumbLoader.Crop?[cp.FirstFile];
+            for (int k = 0; k < crops.Length; k++) crops[k] = CropForTile(cp, k, result.order);
+            _loader.CropFor = i => i < crops.Length ? crops[i] : null;
+        }
         View.PrefetchBudgetBytes = decoded * 36 / 100;
         View.Badges = result.slice.badges;
         View.Thumbs = _loader;
-        View.SetItems(result.slice.specs, result.page?.Labels, keepPosition);
+        View.SetItems(result.slice.specs, result.page?.Labels, keepPosition, grid && result.page is not null ? _firstFile : 0);
         if (offset is double o) View.Offset = o;
         _covers.Save();
         EmptyNote.Visibility = _order.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -277,8 +285,10 @@ public partial class MainWindow : Window
     private void OnSortChanged(object s, SelectionChangedEventArgs e)
     {
         if (_loading) return;
-        _settings.Sort = (SortBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "FirstSeen";
-        ShuffleBtn.Visibility = _settings.Sort == "Random" ? Visibility.Visible : Visibility.Collapsed;
+        string tag = (SortBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "FirstSeen";
+        if (InBrowse) PrefsForEdit(_folder).FileSort = tag;          // each folder keeps its own order
+        else _settings.Sort = tag;
+        ShuffleBtn.Visibility = tag == "Random" ? Visibility.Visible : Visibility.Collapsed;
         BuildView(false);
     }
 
@@ -473,6 +483,13 @@ public partial class MainWindow : Window
             if (e.Key is Key.Escape or Key.K or Key.OemQuestion) { KeysLayer.Visibility = Visibility.Collapsed; e.Handled = true; }
             return;
         }
+        {
+            var k0 = e.Key == Key.System ? e.SystemKey : e.Key;
+            bool alt0 = (Keyboard.Modifiers & ModifierKeys.Alt) != 0;
+            if (alt0 && k0 == Key.Left) { GoBack(); e.Handled = true; return; }
+            if (alt0 && k0 == Key.Right) { GoForward(); e.Handled = true; return; }
+            if (ViewerRoot.Visibility == Visibility.Visible && e.Key == Key.Back) { GoBack(); e.Handled = true; return; }
+        }
         if (ViewerRoot.Visibility == Visibility.Visible) { ViewerKey(e); return; }
         bool typing = Keyboard.FocusedElement is TextBox;
         bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
@@ -513,7 +530,7 @@ public partial class MainWindow : Window
             case Key.N: NsfwBtn.IsChecked = NsfwBtn.IsChecked != true; OnFilterChanged(this, e); e.Handled = true; break;
             case Key.V: VeryBtn.IsChecked = VeryBtn.IsChecked != true; OnFilterChanged(this, e); e.Handled = true; break;
             case Key.L: RowsBtn.IsChecked = RowsBtn.IsChecked != true; OnLayoutChanged(this, e); e.Handled = true; break;
-            case Key.R: if (_settings.Sort == "Random") { OnReshuffle(this, e); e.Handled = true; } break;
+            case Key.R: if (((SortBox.SelectedItem as ComboBoxItem)?.Tag as string) == "Random") { OnReshuffle(this, e); e.Handled = true; } break;
             case Key.Add: case Key.OemPlus: View.TileTarget *= 1.15f; e.Handled = true; break;
             case Key.Subtract: case Key.OemMinus: View.TileTarget /= 1.15f; e.Handled = true; break;
         }
@@ -583,7 +600,7 @@ public partial class MainWindow : Window
 
     private void ApplyBar()
     {
-        bool want = BarPinned || (!_barManual && !_barAuto);
+        bool want = BarPinned || (!_barManual && (!_barAuto || View.Offset < 30));      // at the top of the page the bar always shows
         if (want == _barShown) return;
         if (!want && (Stopwatch.GetTimestamp() - _barShownAt) / (double)Stopwatch.Frequency < 0.45) return;   // don't flicker straight after showing
         _barShown = want;
@@ -601,6 +618,7 @@ public partial class MainWindow : Window
     {
         double off = View.Offset, d = off - _lastOffset;
         _lastOffset = off;
+        if (off < 30 && _barAuto) { _barAuto = false; _barAccum = 0; ApplyBar(); return; }
         if (ViewerRoot.Visibility == Visibility.Visible || View.InRelayout) return;     // zooming or resizing moves the offset too, but isn't scrolling
         bool before = _barAuto;
         if (off < 30) { _barAuto = false; _barAccum = 0; }
@@ -657,7 +675,7 @@ public partial class MainWindow : Window
     private void Navigate(string where)
     {
         SetSidebar(false);
-        if (where is "Home" or "Browse") { if (where != _section || (where == "Browse" && _folder.Length > 0)) Go(where, ""); else UpdateNavUi(); return; }
+        if (where is "Home" or "Browse") { if (where != _section || (where == "Browse" && _folder.Length > 0)) _ = Go(where, ""); else UpdateNavUi(); return; }
         UpdateNavUi();
         StatusText.Text = $"{where} is coming in a later build.";
     }
@@ -723,16 +741,25 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, BitmapSource> _vCache = new();
     private readonly Queue<string> _vCacheOrder = new();
 
-    private void OpenViewer(int index)
+    private long _viewerOpenedAt;
+
+    private void OpenViewer(int index) => OpenViewer(index, remember: true);
+
+    private void OpenViewer(int index, bool remember)
     {
         if (index < _firstFile || index >= _paths.Length) return;
+        if (remember) Remember();                 // Back returns to the grid
         ViewerRoot.Visibility = Visibility.Visible;
         ViewerRoot.Focus();
-        ShowIndex(index);
+        _viewerOpenedAt = Stopwatch.GetTimestamp();
+        ShowIndex(index, remember: false);
     }
 
-    private void CloseViewer()
+    private void CloseViewer() => CloseViewer(fromUser: true);
+
+    private void CloseViewer(bool fromUser)
     {
+        if (fromUser) ForgetViewerSteps();
         _vToken++;
         ViewerRoot.Visibility = Visibility.Collapsed;
         Pic.Source = null;
@@ -852,9 +879,13 @@ public partial class MainWindow : Window
         Put(12, 12);
     }
 
-    private void ShowIndex(int index)
+    private void ShowIndex(int index) => ShowIndex(index, remember: true);
+
+    private void ShowIndex(int index, bool remember)
     {
-        _vIndex = Math.Clamp(index, _firstFile, _paths.Length - 1);
+        index = Math.Clamp(index, _firstFile, _paths.Length - 1);
+        if (remember && ViewerOpen && index != _vIndex) Remember();      // Back steps to the previous picture
+        _vIndex = index;
         ResetZoom();
         int row = _order[_vIndex];
         UpdateInfo(row);
@@ -997,7 +1028,12 @@ public partial class MainWindow : Window
 
     private void OnViewerDown(object s, MouseButtonEventArgs e)
     {
-        if (e.ClickCount == 2) { CloseViewer(); e.Handled = true; return; }
+        if (e.ClickCount == 2)
+        {
+            // the second click of the double-click that opened the viewer must not close it again
+            if ((Stopwatch.GetTimestamp() - _viewerOpenedAt) * 1000 > 600 * Stopwatch.Frequency) CloseViewer();
+            e.Handled = true; return;
+        }
         _dragging = true; _dragStart = e.GetPosition(PicHost); _dragPanX = _panX; _dragPanY = _panY;
         PicHost.CaptureMouse();
     }

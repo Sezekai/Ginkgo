@@ -19,6 +19,8 @@ public sealed class MasonryResult
 
     private readonly ushort[] _startColumn;
     private readonly int[][] _columnItems; // item indices per column, ordered top to bottom
+    internal ushort[] StartColumns => _startColumn;
+    internal int[][] ColumnItems => _columnItems;
 
     internal MasonryResult(int count, int columns, float columnWidth, float gap, float totalHeight,
         float[] x, float[] y, float[] w, float[] h, ushort[] startColumn, int[][] columnItems)
