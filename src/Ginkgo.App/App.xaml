@@ -10,6 +10,13 @@
         <SolidColorBrush x:Key="Field" Color="#26262C"/>
         <SolidColorBrush x:Key="Edge" Color="#3A3A42"/>
 
+        <!-- glass-key fills for buttons -->
+        <LinearGradientBrush x:Key="KeyFill" StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#34343D" Offset="0"/><GradientStop Color="#25252C" Offset="1"/></LinearGradientBrush>
+        <LinearGradientBrush x:Key="KeyHover" StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#40404A" Offset="0"/><GradientStop Color="#2E2E36" Offset="1"/></LinearGradientBrush>
+        <LinearGradientBrush x:Key="KeyPress" StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#2A2A32" Offset="0"/><GradientStop Color="#22222A" Offset="1"/></LinearGradientBrush>
+        <LinearGradientBrush x:Key="KeyOn" StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#55A863" Offset="0"/><GradientStop Color="#3A7746" Offset="1"/></LinearGradientBrush>
+        <LinearGradientBrush x:Key="KeyOnHover" StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#62B670" Offset="0"/><GradientStop Color="#42844F" Offset="1"/></LinearGradientBrush>
+
         <!-- ===== buttons ===== -->
         <Style TargetType="Button">
             <Setter Property="Foreground" Value="{StaticResource Text}"/>
@@ -22,13 +29,7 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Grid>
-                            <Border x:Name="B" CornerRadius="9" BorderThickness="1" BorderBrush="#3C3C47" Padding="{TemplateBinding Padding}">
-                                <Border.Background>
-                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                        <GradientStop x:Name="G1" Color="#34343D" Offset="0"/>
-                                        <GradientStop x:Name="G2" Color="#25252C" Offset="1"/>
-                                    </LinearGradientBrush>
-                                </Border.Background>
+                            <Border x:Name="B" CornerRadius="9" BorderThickness="1" BorderBrush="#3C3C47" Padding="{TemplateBinding Padding}" Background="{StaticResource KeyFill}">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                             <!-- a soft light along the top edge, like a glass key -->
@@ -43,12 +44,10 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="G1" Property="Color" Value="#40404A"/>
-                                <Setter TargetName="G2" Property="Color" Value="#2E2E36"/>
+                                <Setter TargetName="B" Property="Background" Value="{StaticResource KeyHover}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="G1" Property="Color" Value="#2A2A32"/>
-                                <Setter TargetName="G2" Property="Color" Value="#22222A"/>
+                                <Setter TargetName="B" Property="Background" Value="{StaticResource KeyPress}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
                         </ControlTemplate.Triggers>
@@ -68,13 +67,7 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="ToggleButton">
                         <Grid>
-                            <Border x:Name="B" CornerRadius="9" BorderThickness="1" BorderBrush="#3C3C47" Padding="{TemplateBinding Padding}">
-                                <Border.Background>
-                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                        <GradientStop x:Name="G1" Color="#34343D" Offset="0"/>
-                                        <GradientStop x:Name="G2" Color="#25252C" Offset="1"/>
-                                    </LinearGradientBrush>
-                                </Border.Background>
+                            <Border x:Name="B" CornerRadius="9" BorderThickness="1" BorderBrush="#3C3C47" Padding="{TemplateBinding Padding}" Background="{StaticResource KeyFill}">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                             <!-- a soft light along the top edge, like a glass key -->
@@ -89,17 +82,19 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="G1" Property="Color" Value="#40404A"/>
-                                <Setter TargetName="G2" Property="Color" Value="#2E2E36"/>
+                                <Setter TargetName="B" Property="Background" Value="{StaticResource KeyHover}"/>
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="G1" Property="Color" Value="#55A863"/>
-                                <Setter TargetName="G2" Property="Color" Value="#3A7746"/>
+                                <Setter TargetName="B" Property="Background" Value="{StaticResource KeyOn}"/>
                                 <Setter TargetName="B" Property="BorderBrush" Value="#6CC27A"/>
                                 <Setter TargetName="B" Property="Effect">
                                     <Setter.Value><DropShadowEffect Color="#4FA35C" BlurRadius="14" ShadowDepth="0" Opacity="0.55"/></Setter.Value>
                                 </Setter>
                             </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions><Condition Property="IsChecked" Value="True"/><Condition Property="IsMouseOver" Value="True"/></MultiTrigger.Conditions>
+                                <Setter TargetName="B" Property="Background" Value="{StaticResource KeyOnHover}"/>
+                            </MultiTrigger>
                             <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
