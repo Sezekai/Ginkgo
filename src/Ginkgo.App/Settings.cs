@@ -37,6 +37,9 @@ public sealed class AppSettings
     public bool BrowseOwnOnly { get; set; }
     /// <summary>Folders shown as a grid of equal book-cover tiles (true) or in the picture layout (false).</summary>
     public bool BrowseCoverGrid { get; set; } = true;
+    /// <summary>Rounded corners on covers, and how round (in screen units).</summary>
+    public bool CoverRounded { get; set; } = true;
+    public int CoverRadius { get; set; } = 8;
     /// <summary>Sort choices remembered for each folder ("" = the top of Browse).</summary>
     public Dictionary<string, BrowsePrefs> BrowseFolders { get; set; } = new();
     public List<string> BrowseDetails { get; set; } = new() { "Images", "Gifs", "Videos", "Size" };

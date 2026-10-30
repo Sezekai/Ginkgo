@@ -182,19 +182,24 @@ var (f, e) = g.VisibleRange(1e9f, 2e9f); Check(e == 1003 && f <= e, "grid clampe
     var restItems = Enumerable.Range(0, 30).Select(i => new ItemSpec(0.5f + i % 4 * 0.4f)).ToArray();
     var rest = MasonryLayout.Compute(restItems, 1000f, 5, 3f);
     var cg = CoverGridLayout.Compose(13, 1000f, 150f, 0.7f, 40f, 12f, rest, 24f);
-    Check(cg.Count == 43 && cg.Columns == 6 + 5, $"grid has covers then files ({cg.Count}, {cg.Columns} columns)");
-    float cw = (1000f - 12f * 5) / 6;
+    float inner = 1000f - 24f;
+    int cols = (int)MathF.Round((inner + 12f) / (150f + 12f));
+    float cw = (inner - 12f * (cols - 1)) / cols, pitch = cw / 0.7f + 40f + 12f;
+    Check(cg.Count == 43 && cg.Columns == cols + 5, $"grid has covers then files ({cg.Count}, {cg.Columns} columns)");
     Check(Math.Abs(cg.W[0] - cw) < 0.01 && Math.Abs(cg.H[0] - cw / 0.7f) < 0.01 && Math.Abs(cg.W[12] - cw) < 0.01, "covers are all the same size");
-    Check(Math.Abs(cg.X[7] - (cw + 12f)) < 0.01 && Math.Abs(cg.Y[7] - (cw / 0.7f + 40f + 12f)) < 0.01, "second row sits below the first row's captions");
-    float gridH = 3 * (cw / 0.7f + 40f + 12f) - 12f;
-    Check(Math.Abs(cg.Y[13] - (rest.Y[0] + gridH + 24f)) < 0.01 && Math.Abs(cg.TotalHeight - (gridH + 24f + rest.TotalHeight)) < 0.01, "files start below the covers");
+    Check(Math.Abs(cg.X[0] - 12f) < 0.01 && Math.Abs(cg.Y[0] - 12f) < 0.01, "covers have the gap as a margin on the left and top");
+    Check(Math.Abs(cg.X[cols - 1] + cw - (1000f - 12f)) < 0.05, "and on the right");
+    Check(Math.Abs(cg.Y[cols] - (12f + pitch)) < 0.01, "second row sits below the first row's names");
+    int rows = (13 + cols - 1) / cols;
+    float gridH = 12f + rows * pitch;
+    Check(Math.Abs(cg.Y[13] - (rest.Y[0] + gridH - 12f + 24f)) < 0.01 && Math.Abs(cg.X[13] - rest.X[0]) < 0.01, "files start below the covers and use the full width");
     var seen = new List<int>();
     cg.GetVisible(0, cg.TotalHeight, seen);
     Check(seen.Count == 43 && seen.Distinct().Count() == 43, "every tile can be found");
     cg.GetVisible(gridH + 30f, gridH + 60f, seen);
     Check(seen.All(i => i >= 13) && seen.Count > 0, "looking below the covers finds only files");
     var only = CoverGridLayout.Compose(4, 1000f, 150f, 0.7f, 40f, 12f, null, 24f);
-    Check(only.Count == 4 && Math.Abs(only.TotalHeight - (cw / 0.7f + 40f)) < 0.01, "covers only");
+    Check(only.Count == 4 && Math.Abs(only.TotalHeight - (12f + pitch)) < 0.01, "covers only, with a margin below");
 }
 
 Console.WriteLine($"{pass} passed, {fail} failed");

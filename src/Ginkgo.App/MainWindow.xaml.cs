@@ -232,6 +232,7 @@ public partial class MainWindow : Window
         View.PrefetchBudgetBytes = decoded * 36 / 100;
         View.Badges = result.slice.badges;
         View.Thumbs = _loader;
+        View.CoverRadius = _settings.CoverRounded ? _settings.CoverRadius : 0;
         View.SetItems(result.slice.specs, result.page?.Labels, keepPosition, grid && result.page is not null ? _firstFile : 0);
         if (offset is double o) View.Offset = o;
         _covers.Save();
@@ -333,6 +334,8 @@ public partial class MainWindow : Window
         View.PrefetchBudgetBytes = d * 36 / 100;
         if (_loader is not null) _loader.FadeEnabled = _settings.FadeSharpening;
         SaveSettings();
+        double r = _settings.CoverRounded ? _settings.CoverRadius : 0;
+        if (InBrowse && Math.Abs(View.CoverRadius - r) > 0.1) BuildView(true);     // covers are cut with their corners: remake them
     }
 
     /// <summary>Gives up the picture and thumbnail files for a moment (the clean-up moves them), then rebuilds the view.</summary>

@@ -31,6 +31,12 @@
                 </ComboBox>
             </DockPanel>
             <CheckBox x:Name="WarmBox" Content="Keep the thumbnails in memory (instant lookups; uses free memory, gives it back when other programs need it)" Foreground="#E4E4E8" Margin="0,0,0,6" Click="OnWarmChanged"/>
+            <TextBlock Text="Browse" FontSize="16" FontWeight="SemiBold" Margin="0,16,0,6"/>
+            <DockPanel Margin="0,0,0,6">
+                <TextBlock x:Name="RadiusText" DockPanel.Dock="Right" Width="44" TextAlignment="Right" VerticalAlignment="Center"/>
+                <Slider x:Name="RadiusSlider" DockPanel.Dock="Right" Width="160" Minimum="0" Maximum="24" IsSnapToTickEnabled="True" TickFrequency="1" Margin="10,0,0,0" VerticalAlignment="Center" ValueChanged="OnRadiusChanged"/>
+                <CheckBox x:Name="RoundBox" Content="Round the corners of the covers in the cover grid" Foreground="#E4E4E8" VerticalAlignment="Center" Click="OnRoundChanged"/>
+            </DockPanel>
             <CheckBox x:Name="FadeBox" Content="Fade when a sharper picture replaces a soft one" Foreground="#E4E4E8" Margin="0,0,0,6" Click="OnFadeChanged"/>
 
             <TextBlock Text="Sharp pictures" FontSize="16" FontWeight="SemiBold" Margin="0,22,0,6"/>

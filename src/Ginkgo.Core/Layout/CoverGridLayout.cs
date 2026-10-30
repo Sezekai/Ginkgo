@@ -17,12 +17,14 @@ public static class CoverGridLayout
     {
         int restCount = rest?.Count ?? 0;
         int n = gridCount + restCount;
-        int cols = gridCount == 0 ? 0 : Math.Max(1, (int)MathF.Round((width + gap) / (target + gap)));
-        float cellW = cols == 0 ? 0 : (width - gap * (cols - 1)) / cols;
+        // the covers have the same space round the outside as between them; the files below use the full width
+        float inner = Math.Max(1, width - 2 * gap);
+        int cols = gridCount == 0 ? 0 : Math.Max(1, (int)MathF.Round((inner + gap) / (target + gap)));
+        float cellW = cols == 0 ? 0 : (inner - gap * (cols - 1)) / cols;
         float cellH = aspect > 0.01f ? cellW / aspect : cellW;
         float pitch = cellH + captionHeight + gap;
         int rows = cols == 0 ? 0 : (gridCount + cols - 1) / cols;
-        float gridHeight = rows * pitch - (rows > 0 ? gap : 0);
+        float gridHeight = rows > 0 ? gap + rows * pitch : 0;          // margin on top, and below the last row's names
 
         var x = new float[n]; var y = new float[n]; var w = new float[n]; var h = new float[n];
         var start = new ushort[n];
@@ -33,11 +35,11 @@ public static class CoverGridLayout
         for (int k = 0; k < gridCount; k++)
         {
             int c = k % cols, r = k / cols;
-            x[k] = c * (cellW + gap); y[k] = r * pitch; w[k] = cellW; h[k] = cellH;
+            x[k] = gap + c * (cellW + gap); y[k] = gap + r * pitch; w[k] = cellW; h[k] = cellH;
             start[k] = (ushort)c;
             columnItems[c][fill[c]++] = k;
         }
-        float shift = gridCount > 0 && restCount > 0 ? gridHeight + sectionGap : 0;
+        float shift = gridCount > 0 && restCount > 0 ? gridHeight - gap + sectionGap : 0;
         if (rest is not null)
         {
             for (int k = 0; k < restCount; k++)

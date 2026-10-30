@@ -24,6 +24,8 @@ public partial class SettingsWindow : Window
         foreach (ComboBoxItem it in LookBox.Items) if (int.Parse((string)it.Tag) == s.LookAheadWindows) LookBox.SelectedItem = it;
         if (LookBox.SelectedItem is null) LookBox.SelectedIndex = 1;
         FadeBox.IsChecked = s.FadeSharpening;
+        RoundBox.IsChecked = s.CoverRounded;
+        RadiusSlider.Value = s.CoverRadius; RadiusSlider.IsEnabled = s.CoverRounded; RadiusText.Text = $"{s.CoverRadius} px";
         WarmBox.IsChecked = s.WarmCache;
         _init = false;
         OnMeasure(this, new RoutedEventArgs());
@@ -48,6 +50,14 @@ public partial class SettingsWindow : Window
         _s.LookAheadWindows = int.Parse((string)((ComboBoxItem)LookBox.SelectedItem).Tag); _main.ApplySettings();
     }
     private void OnWarmChanged(object s, RoutedEventArgs e) { _s.WarmCache = WarmBox.IsChecked == true; _main.ApplySettings(); Result.Text = "Takes effect the next time Ginkgo starts."; }
+    private void OnRoundChanged(object s, RoutedEventArgs e) { _s.CoverRounded = RoundBox.IsChecked == true; RadiusSlider.IsEnabled = _s.CoverRounded; _main.ApplySettings(); }
+    private void OnRadiusChanged(object s, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (RadiusText is null) return;
+        RadiusText.Text = $"{(int)e.NewValue} px";
+        if (_init) return;
+        _s.CoverRadius = (int)e.NewValue; _main.ApplySettings();
+    }
     private void OnFadeChanged(object s, RoutedEventArgs e) { _s.FadeSharpening = FadeBox.IsChecked == true; _main.ApplySettings(); }
 
     private async Task RunSharp(bool everything)

@@ -108,9 +108,10 @@ public partial class MainWindow
 
     private void OpenFolder(string path) => _ = Go("Browse", path);
 
+    /// <summary>Back and forward stay within the section you are in (Browse does not step back into Home).</summary>
     private void GoBack()
     {
-        if (_back.Count == 0) return;
+        if (_back.Count == 0 || _back[^1].Section != _section) return;
         var s = _back[^1]; _back.RemoveAt(_back.Count - 1);
         _fwd.Add(Here());
         _ = Restore(s);
@@ -118,7 +119,7 @@ public partial class MainWindow
 
     private void GoForward()
     {
-        if (_fwd.Count == 0) return;
+        if (_fwd.Count == 0 || _fwd[^1].Section != _section) return;
         var s = _fwd[^1]; _fwd.RemoveAt(_fwd.Count - 1);
         _back.Add(Here());
         _ = Restore(s);
@@ -161,7 +162,11 @@ public partial class MainWindow
         _ = Go("Browse", FolderPaths.Parent(_folder));
     }
 
-    private void UpdateNavButtons() { BackBtn.IsEnabled = _back.Count > 0; FwdBtn.IsEnabled = _fwd.Count > 0; }
+    private void UpdateNavButtons()
+    {
+        BackBtn.IsEnabled = _back.Count > 0 && _back[^1].Section == _section;
+        FwdBtn.IsEnabled = _fwd.Count > 0 && _fwd[^1].Section == _section;
+    }
 
     private void OnBack(object s, RoutedEventArgs e) => GoBack();
     private void OnForward(object s, RoutedEventArgs e) => GoForward();
@@ -211,7 +216,8 @@ public partial class MainWindow
         var (z, cx, cy) = page.Crops[i];
         int row = order[i];
         float aspect = Ginkgo.Data.ThumbMaker.ClampAspect(_model.W[row], _model.H[row]);
-        return new ThumbLoader.Crop(z, cx, cy, z * Math.Max(1f, aspect / MasonryView.CoverAspect));
+        float radius = _settings.CoverRounded ? (float)(_settings.CoverRadius * System.Windows.Media.VisualTreeHelper.GetDpi(View).PixelsPerDip) : 0;
+        return new ThumbLoader.Crop(z, cx, cy, z * Math.Max(1f, aspect / MasonryView.CoverAspect), radius);
     }
 
     private void AdjustCover(int index)

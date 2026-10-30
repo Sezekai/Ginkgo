@@ -64,6 +64,7 @@
                         <Button x:Name="ShuffleBtn" Content="Reshuffle" Height="32" Margin="0,3,9,3" VerticalAlignment="Center" Visibility="Collapsed" Click="OnReshuffle"/>
                         <Slider x:Name="SizeSlider" Width="120" Minimum="0" Maximum="1" Margin="10,3,12,3" VerticalAlignment="Center" ValueChanged="OnSizeChanged" ToolTip="Picture size (Ctrl + mouse wheel, + and -)"/>
                         <ToggleButton x:Name="RowsBtn" Content="Equal rows" Height="32" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnLayoutChanged" ToolTip="Rows of equal height instead of equal-width columns (L)"/>
+                        <Button x:Name="SettingsBtn" Style="{StaticResource IconButton}" Content="&#xE713;" Height="32" Width="38" FontSize="14" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Settings" Click="OnSettings"/>
                         <Button x:Name="KeysBtn" Style="{StaticResource IconButton}" Content="&#xE765;" Height="32" Width="38" FontSize="14" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Keyboard shortcuts (K)" Click="OnKeysClick"/>
                         <Button x:Name="HideBarBtn" Style="{StaticResource IconButton}" Content="&#xE70E;" Height="32" Width="38" FontSize="14" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Hide this bar (H)" Click="OnHideBar"/>
                     </WrapPanel>
@@ -127,9 +128,6 @@
                         <TextBlock Text="Ginkgo" FontWeight="SemiBold" FontSize="14" Foreground="{StaticResource Text}" VerticalAlignment="Center"/>
                     </StackPanel>
                     <StackPanel DockPanel.Dock="Bottom" Margin="0,0,0,10">
-                        <ToggleButton Style="{StaticResource SideItem}" Click="OnSideSettings">
-                            <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" Width="28" FontSize="15"/><TextBlock Text="Settings"/></StackPanel>
-                        </ToggleButton>
                         <ToggleButton Style="{StaticResource SideItem}" Click="OnSideKeys">
                             <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE765;" FontFamily="Segoe MDL2 Assets" Width="28" FontSize="15"/><TextBlock Text="Keyboard shortcuts"/><TextBlock Text="  K" Foreground="{StaticResource Dim}"/></StackPanel>
                         </ToggleButton>

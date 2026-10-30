@@ -79,7 +79,7 @@ public sealed class ThumbLoader : IDisposable
     /// more of the picture (with dark bars), larger zooms in. Cx, Cy = the point of the picture at the middle of the tile (0..1).
     /// Factor = how much wider than the tile the picture needs to be for the crop to stay sharp.
     /// </summary>
-    public readonly record struct Crop(float Zoom, float Cx, float Cy, float Factor);
+    public readonly record struct Crop(float Zoom, float Cx, float Cy, float Factor, float Radius = 0);
 
     /// <summary>Set for views with covers: the crop for a tile, or null for a plain picture.</summary>
     public Func<int, Crop?>? CropFor;
@@ -560,7 +560,7 @@ public sealed class ThumbLoader : IDisposable
     /// Turns a decoded bitmap into pixels at exactly the tile's size (smaller or larger than the bitmap), so the grid only has to copy them.
     /// SrcW keeps the width the picture really has (never more than the thumbnail's own), which is what the refresh logic compares.
     /// </summary>
-    private static readonly SKColor CropBack = new(24, 24, 28);
+    private static readonly SKColor CropBack = new(24, 24, 28), GridBack = new(18, 18, 20);
 
     private static (Pix?, long) Present(SKBitmap src, int widthPx, int heightPx, Crop? crop = null)
     {
@@ -606,6 +606,12 @@ public sealed class ThumbLoader : IDisposable
         using (var canvas = new SKCanvas(dst))
         using (var paint = new SKPaint { FilterQuality = SKFilterQuality.Medium, IsAntialias = true })
         {
+            if (c.Radius > 0.5f)
+            {
+                canvas.Clear(GridBack);                                    // the corners show the grid's background
+                using var clip = new SKRoundRect(SKRect.Create(0, 0, tw, th), c.Radius, c.Radius);
+                canvas.ClipRoundRect(clip, SKClipOperation.Intersect, true);
+            }
             canvas.Clear(CropBack);
             if (!inside.IsEmpty) canvas.DrawBitmap(src, inside, dstRect, paint);
         }
@@ -614,7 +620,8 @@ public sealed class ThumbLoader : IDisposable
         var ptr = dst.GetPixels();
         if (rowBytes == tw * 4) System.Runtime.InteropServices.Marshal.Copy(ptr, data, 0, tw * th * 4);
         else for (int y = 0; y < th; y++) System.Runtime.InteropServices.Marshal.Copy(ptr + y * rowBytes, data, y * tw * 4, tw * 4);
-        return (new Pix { Data = data, W = tw, H = th, SrcW = src.Width }, (long)tw * th * 4);
+        int asked = (int)Math.Ceiling(tw * Math.Max(0.2f, c.Factor));        // same as Eff(): what the tile asked for, so it is satisfied
+        return (new Pix { Data = data, W = tw, H = th, SrcW = Math.Min(src.Width, asked) }, (long)tw * th * 4);
     }
 
     /// <summary>For the picture viewer: a stored thumbnail as it is, as a picture WPF can show.</summary>

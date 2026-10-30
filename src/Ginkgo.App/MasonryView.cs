@@ -167,6 +167,8 @@ public sealed class MasonryView : FrameworkElement
     public int CoverCount { get; private set; }
     public const float CoverAspect = 0.7f, CaptionHeight = 50, CoverGap = 14, SectionGap = 28;
     private float CoverTarget => Math.Clamp(_tileTarget, 110, 420);
+    /// <summary>Rounded corners on the covers, in screen units (0 = square).</summary>
+    public double CoverRadius { get; set; }
 
     public void SetItems(ItemSpec[] items, string?[]? labels, bool keepPosition = false, int coverCount = 0)
     {
@@ -612,7 +614,7 @@ public sealed class MasonryView : FrameworkElement
     /// <summary>Cover grid: a thin frame round the cover, and the folder's name and details underneath it.</summary>
     private void DrawCaptionBelow(DrawingContext dc, Rect r, int i, double dpi)
     {
-        dc.DrawRectangle(null, CoverEdge, new Rect(r.Left + 0.5, r.Top + 0.5, Math.Max(0, r.Width - 1), Math.Max(0, r.Height - 1)));
+        dc.DrawRoundedRectangle(null, CoverEdge, new Rect(r.Left + 0.5, r.Top + 0.5, Math.Max(0, r.Width - 1), Math.Max(0, r.Height - 1)), CoverRadius, CoverRadius);
         string text = _labels![i]!;
         int nl = text.IndexOf('\n');
         string name = nl < 0 ? text : text[..nl], sub = nl < 0 ? "" : text[(nl + 1)..];
