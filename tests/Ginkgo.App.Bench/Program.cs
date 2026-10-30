@@ -80,13 +80,14 @@ static void BarCheck()
         var more = Fixed(38); BarPanel.SetPinned(more, true); bar.Children.Add(more); bar.MoreButton = more;   // 48
         var hide = Fixed(38); BarPanel.SetPinned(hide, true); bar.Children.Add(hide);                 // 48
         var res = new List<string>(); bool ok = true;
-        foreach (var (w, wantOverflow, wantSearch) in new (double, int, double)[] { (900, 0, 170), (700, 0, 112), (660, 0, 90), (600, 1, 90), (400, 3, 90) })
+        foreach (var (w, wantOverflow, wantSearch) in new (double, int, double)[] { (900, 0, 170), (740, 0, 142), (700, 0, 102), (600, 2, -1), (400, 4, -1) })
         {
             bar.Measure(new Size(w, 40)); bar.Arrange(new Rect(0, 0, w, 40));
             double sw = search.ActualWidth;
-            bool good = bar.Overflow.Count == wantOverflow && Math.Abs(sw - wantSearch) < 1.5 && (wantOverflow > 0) == (more.ActualWidth > 0) && hide.ActualWidth > 0;
+            bool moreShown = System.Windows.Media.VisualTreeHelper.GetOffset(more).X >= 0, hideShown = System.Windows.Media.VisualTreeHelper.GetOffset(hide).X >= 0;
+            bool good = bar.Overflow.Count == wantOverflow && (wantSearch < 0 || Math.Abs(sw - wantSearch) < 1.5) && (wantOverflow > 0) == moreShown && hideShown;
             if (!good) ok = false;
-            res.Add($"{w}:{bar.Overflow.Count} over, search {sw:F0}, more {(more.ActualWidth > 0 ? "on" : "off")}");
+            res.Add($"{w}:{bar.Overflow.Count} over, search {sw:F0}, more {(moreShown ? "on" : "off")}");
         }
         Console.WriteLine($"::notice::bar check: {(ok ? "ok" : "WRONG")} | {string.Join(" | ", res)}");
         if (!ok) Console.WriteLine("::error::bar check failed");

@@ -72,14 +72,14 @@ public sealed class BarPanel : Panel
         }
         else
         {
-            double room = maxW - pinnedW - (full <= maxW ? 0 : moreW);
             double total = normal.Sum(c => nominal[c]);
             double canShrink = normal.Sum(c => nominal[c] - minimum[c]);
             var keep = new List<UIElement>(normal);
-            if (total - canShrink > room)
+            double room = maxW - pinnedW;
+            bool needMore = KeepMore || total - canShrink > room;      // narrowing alone is not enough
+            if (needMore)
             {
-                // even fully narrowed it does not fit: move controls from the end into the drop-down
-                room = maxW - pinnedW - moreW;
+                room -= moreW;
                 double least = keep.Sum(c => minimum[c]);
                 while (keep.Count > 0 && least > room) { var last = keep[^1]; keep.RemoveAt(keep.Count - 1); Overflow.Insert(0, last); least -= minimum[last]; }
                 total = keep.Sum(c => nominal[c]); canShrink = keep.Sum(c => nominal[c] - minimum[c]);
@@ -88,7 +88,7 @@ public sealed class BarPanel : Panel
             double share = canShrink > 0 ? Math.Min(1, cut / canShrink) : 0;
             foreach (var c in keep) _width[c] = nominal[c] - (nominal[c] - minimum[c]) * share;
             foreach (var c in pinned) _width[c] = nominal[c];
-            if (MoreButton is not null) _width[MoreButton] = Overflow.Count > 0 || KeepMore ? moreW : 0;
+            if (MoreButton is not null) _width[MoreButton] = needMore ? moreW : 0;
             foreach (var c in Overflow) _width[c] = 0;
         }
         double used = _width.Values.Sum();
