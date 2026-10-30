@@ -151,5 +151,31 @@ var (f, e) = g.VisibleRange(1e9f, 2e9f); Check(e == 1003 && f <= e, "grid clampe
     }
 }
 
+// ---- folder tree (Browse) ----
+{
+    Check(FolderPaths.Display(@"Artists\A\NSFW\Very") == @"Artists\A", "level folders merge into their parent");
+    Check(FolderPaths.Display("Artists/B/nsfw") == @"Artists\B", "forward slashes and lower-case nsfw");
+    Check(FolderPaths.Display(@"Anime\Very") == @"Anime\Very", "Very outside NSFW is an ordinary folder");
+    Check(FolderPaths.Display(@"NSFW") == "", "a top-level NSFW folder belongs to the root");
+    Check(FolderPaths.IsUnder(@"Artists\A", "Artists") && !FolderPaths.IsUnder(@"ArtistsX\A", "Artists") && FolderPaths.IsUnder("x", ""), "is-under checks whole names");
+    Check(FolderPaths.ChildOf(@"Artists\A\B", "Artists") == @"Artists\A" && FolderPaths.ChildOf("Artists", "Artists") is null && FolderPaths.ChildOf(@"Anime\X", "") == "Anime", "child of a folder");
+    var tree = new FolderTree();
+    tree.Add(@"Artists\A", FileKind.Image, 100, 5);
+    tree.Add(@"Artists\A", FileKind.Gif, 50, 9);
+    tree.Add(@"Artists\B", FileKind.Video, 1000, 3);
+    tree.Add("Anime", FileKind.Image, 10, 1);
+    tree.Add("", FileKind.Image, 1, 0);
+    var artists = tree.Find("Artists")!;
+    Check(artists.Images == 1 && artists.Gifs == 1 && artists.Videos == 1 && artists.Size == 1150 && artists.Newest == 9 && artists.Subfolders == 2, "totals include everything beneath");
+    Check(tree.Root.Files == 5 && tree.Root.Subfolders == 2, "root totals");
+    Check(tree.Nearest(@"Artists\Gone\Deeper").Path == "Artists" && tree.Nearest("Nope").Path == "", "nearest shown folder");
+    var byFiles = FolderTree.Sort(tree.Root.Children, "Files", false);
+    Check(byFiles[0].Name == "Artists" && byFiles[1].Name == "Anime", "sort by most files");
+    var byName = FolderTree.Sort(tree.Root.Children, "Name", true);
+    Check(byName[0].Name == "Artists", "sort by name, reversed");
+    var bySize = FolderTree.Sort(artists.Children, "Size", false);
+    Check(bySize[0].Name == "B", "sort by total size");
+}
+
 Console.WriteLine($"{pass} passed, {fail} failed");
 return fail == 0 ? 0 : 1;

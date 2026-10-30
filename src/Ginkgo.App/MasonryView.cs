@@ -43,6 +43,11 @@ public sealed class MasonryView : FrameworkElement
     public event Action<int>? HoverChanged;
     /// <summary>A tile was double-clicked.</summary>
     public event Action<int>? ItemActivated;
+    /// <summary>A tile was clicked once (left button pressed and released on the same tile).</summary>
+    public event Action<int>? ItemClicked;
+    /// <summary>A tile was right-clicked.</summary>
+    public event Action<int>? ItemContextRequested;
+    private int _downIndex = -1;
     /// <summary>Optional per-tile badge: 1 = GIF.</summary>
     public byte[]? Badges { get; set; }
     public int HoverIndex => _hoverIndex;
@@ -164,7 +169,7 @@ public sealed class MasonryView : FrameworkElement
         InRelayout = true;
         try
         {
-            _items = items; _labels = labels; _offset = 0; _target = 0; _hoverIndex = -1; Relayout();
+            _items = items; _labels = labels; _textCache.Clear(); _subCache.Clear(); _offset = 0; _target = 0; _hoverIndex = -1; Relayout();
             if (keepPosition) { _offset = Math.Clamp(keep, 0, MaxOffset); _target = _offset; InvalidateVisual(); ScrollChanged?.Invoke(); }
         }
         finally { InRelayout = false; }
@@ -232,7 +237,8 @@ public sealed class MasonryView : FrameworkElement
         if (e.ChangedButton == MouseButton.Left)
         {
             Focus();
-            if (e.ClickCount == 2 && _hoverIndex >= 0) { ItemActivated?.Invoke(_hoverIndex); e.Handled = true; return; }
+            if (e.ClickCount == 2 && _hoverIndex >= 0) { _downIndex = -1; ItemActivated?.Invoke(_hoverIndex); e.Handled = true; return; }
+            _downIndex = e.ClickCount == 1 ? _hoverIndex : -1;
         }
         if (e.ChangedButton != MouseButton.Middle) { if (_autoScroll && _autoSticky) EndAutoScroll(); return; }
         if (_autoScroll) { EndAutoScroll(); return; }
@@ -248,6 +254,13 @@ public sealed class MasonryView : FrameworkElement
     protected override void OnMouseUp(MouseButtonEventArgs e)
     {
         base.OnMouseUp(e);
+        if (e.ChangedButton == MouseButton.Left)
+        {
+            int d = _downIndex; _downIndex = -1;
+            if (d >= 0 && d == _hoverIndex && !_autoScroll) ItemClicked?.Invoke(d);
+            return;
+        }
+        if (e.ChangedButton == MouseButton.Right) { if (_hoverIndex >= 0) { ItemContextRequested?.Invoke(_hoverIndex); e.Handled = true; } return; }
         if (e.ChangedButton != MouseButton.Middle || !_autoScroll) return;
         double heldMs = (Stopwatch.GetTimestamp() - _autoDownTick) * 1000.0 / Stopwatch.Frequency;
         double moved = Math.Abs(_autoMouseY - _autoAnchorY);
@@ -304,7 +317,7 @@ public sealed class MasonryView : FrameworkElement
     private double _lastDpi;
     private Dictionary<int, object?> _sigPrev = new(), _sigNow = new();
     private readonly List<TileDraw> _tiles = new();
-    private readonly List<(Rect r, bool hovered, bool gif)> _overlay = new();
+    private readonly List<(Rect r, bool hovered, bool gif, int label)> _overlay = new();
     private static readonly uint BgPixel = TileBlit.Pack(18, 18, 20), FadePixel = TileBlit.Pack(40, 40, 46);
     private uint[]? _paletteBgra;
 
@@ -385,7 +398,8 @@ public sealed class MasonryView : FrameworkElement
             bool changed = a < 1 || !_sigPrev.TryGetValue(i, out var old) || !ReferenceEquals(old, sig);
             _tiles.Add(new TileDraw { Index = i, X = x, Y = y, W = wPx, H = hPx, E = e, A = a, Changed = changed });
             bool gif = e is not null && Badges is { } bd && i < bd.Length && bd[i] == 1;
-            if (i == _hoverIndex || gif) _overlay.Add((new Rect(x / dpi, (y - offPx) / dpi, wPx / dpi, hPx / dpi), i == _hoverIndex, gif));
+            bool labelled = _labels is { } lb && i < lb.Length && lb[i] is not null && y < offPx + ph && y + hPx > offPx;
+            if (i == _hoverIndex || gif || labelled) _overlay.Add((new Rect(x / dpi, (y - offPx) / dpi, wPx / dpi, hPx / dpi), i == _hoverIndex, gif, labelled ? i : -1));
         }
         (_sigPrev, _sigNow) = (_sigNow, _sigPrev);
         Perf.PrepMax = Math.Max(Perf.PrepMax, sw.Elapsed.TotalMilliseconds);
@@ -396,8 +410,9 @@ public sealed class MasonryView : FrameworkElement
 
         foreach (var kv in _bands.Values)
             dc.DrawImage(kv.Bmp, new Rect(0, (kv.K * BandH - offPx) / dpi, pw / dpi, BandH / dpi));
-        foreach (var (r, hovered, gif) in _overlay)
+        foreach (var (r, hovered, gif, label) in _overlay)
         {
+            if (label >= 0) DrawCaption(dc, r, label, dpi);
             if (hovered) dc.DrawRectangle(null, _hover, r);
             if (gif && r.Width > 70) DrawBadge(dc, r);
         }
@@ -569,6 +584,43 @@ public sealed class MasonryView : FrameworkElement
 
     private FormattedText? _gifText;
     private static readonly Brush BadgeBack = Freeze(new SolidColorBrush(Color.FromArgb(190, 0, 0, 0)));
+    private static readonly Brush CaptionShade = MakeShade();
+    private static Brush MakeShade()
+    {
+        var b = new LinearGradientBrush(Color.FromArgb(0, 0, 0, 0), Color.FromArgb(215, 0, 0, 0), 90);
+        b.Freeze(); return b;
+    }
+    private static readonly Brush CaptionDim = Freeze(new SolidColorBrush(Color.FromRgb(214, 214, 222)));
+    private readonly Dictionary<int, FormattedText> _subCache = new();
+
+    /// <summary>Folder tiles: the folder's name and details over a dark fade at the bottom of the tile.</summary>
+    private void DrawCaption(DrawingContext dc, Rect r, int i, double dpi)
+    {
+        string text = _labels![i]!;
+        int nl = text.IndexOf('\n');
+        string name = nl < 0 ? text : text[..nl], sub = nl < 0 ? "" : text[(nl + 1)..];
+        double maxW = Math.Max(10, r.Width - 16);
+        if (!_textCache.TryGetValue(i, out var ft) || Math.Abs(ft.MaxTextWidth - maxW) > 0.5)
+        {
+            ft = new FormattedText("\uE8B7  " + name, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, _face, 14, Brushes.White, dpi)
+            { MaxTextWidth = maxW, MaxLineCount = 1, Trimming = TextTrimming.CharacterEllipsis };
+            ft.SetFontFamily(new FontFamily("Segoe MDL2 Assets"), 0, 1);
+            ft.SetFontSize(12, 0, 1);
+            ft.SetFontWeight(FontWeights.SemiBold, 1, ft.Text.Length - 1);
+            _textCache[i] = ft;
+            _subCache[i] = new FormattedText(sub, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, _face, 11.5, CaptionDim, dpi)
+            { MaxTextWidth = maxW, MaxLineCount = 2, Trimming = TextTrimming.CharacterEllipsis };
+        }
+        var st = _subCache[i];
+        double h = ft.Height + (sub.Length > 0 ? st.Height + 2 : 0) + 18;
+        if (r.Height < h) return;
+        var shade = new Rect(r.Left, r.Bottom - Math.Min(r.Height, h + 22), r.Width, Math.Min(r.Height, h + 22));
+        dc.DrawRectangle(CaptionShade, null, shade);
+        double ty = r.Bottom - h + 8;
+        dc.DrawText(ft, new Point(r.Left + 8, ty));
+        if (sub.Length > 0) dc.DrawText(st, new Point(r.Left + 8, ty + ft.Height + 2));
+    }
+
     private void DrawBadge(DrawingContext dc, Rect r)
     {
         _gifText ??= new FormattedText("GIF", CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 11, Brushes.White, VisualTreeHelper.GetDpi(this).PixelsPerDip);

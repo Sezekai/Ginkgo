@@ -93,8 +93,9 @@ public partial class MainWindow : Window
         View.ScrollChanged += SyncBar;
         View.ScrollChanged += BarScroll;
         View.ScrollChanged += () => Interlocked.Exchange(ref _engine.Pipe.LastUiActivity, Stopwatch.GetTimestamp());
-        View.HoverChanged += i => StatusText.Text = i >= 0 && i < _paths.Length ? HoverText(i) : StatusLine();
-        View.ItemActivated += OpenViewer;
+        View.HoverChanged += i => StatusText.Text = IsFolderTile(i) ? FolderHoverText(i) : i >= 0 && i < _paths.Length ? HoverText(i) : StatusLine();
+        View.ItemActivated += i => { if (RecentlyNavigated()) return; if (IsFolderTile(i)) OpenFolder(_page!.Tiles[i].Path); else OpenViewer(i); };
+        InitBrowse();
         CompositionTarget.Rendering += (_, e) =>
         {
             // the event can come more than once per screen refresh: count each refresh once
@@ -134,6 +135,7 @@ public partial class MainWindow : Window
         {
             _settings.BarHidden = _barManual;
             SaveSettings();
+            _covers.Save();
             _loader?.Dispose();
             _engine.Dispose();
         };
@@ -183,18 +185,34 @@ public partial class MainWindow : Window
 
     private async void BuildView(bool keepPosition) => await BuildViewAsync(keepPosition);
 
-    private async Task BuildViewAsync(bool keepPosition)
+    private async Task BuildViewAsync(bool keepPosition, double? offset = null)
     {
         var model = _model; var stores = _engine.Stores;
         if (model is null || stores is null) return;
         int version = ++_buildVersion;
         var q = CurrentQuery();
+        bool browse = InBrowse;
+        string folder = _folder; bool own = _settings.BrowseOwnOnly;
+        string fsort = _settings.BrowseFolderSort; bool frev = _settings.BrowseFolderReverse;
+        var details = BrowseDetails();
         var result = await Task.Run(() =>
         {
-            var order = model.Select(q);
-            return (order, slice: model.Slice(order, stores));
+            BrowsePage? page = null;
+            int[] order;
+            if (browse)
+            {
+                q.OffFolders.Clear();                               // Browse shows every folder; Select folders shapes Home
+                page = BrowsePage.Build(model, q, folder, own, fsort, frev, _covers, details);
+                order = page.Order;
+            }
+            else order = model.Select(q);
+            return (order, page, slice: model.Slice(order, stores));
         });
         if (version != _buildVersion) return;                     // something newer was asked for meanwhile
+        _page = result.page;
+        _firstFile = result.page?.FirstFile ?? 0;
+        if (result.page is not null && result.page.Folder != _folder) { _folder = result.page.Folder; UpdateNavUi(); }   // the folder has gone (or is hidden): its nearest parent instead
+        for (int k = 0; k < _firstFile; k++) result.slice.badges[k] = 0;
         _order = result.order;
         _paths = result.slice.paths;
         var ids = result.slice.ids;
@@ -206,13 +224,18 @@ public partial class MainWindow : Window
         View.PrefetchBudgetBytes = decoded * 36 / 100;
         View.Badges = result.slice.badges;
         View.Thumbs = _loader;
-        View.SetItems(result.slice.specs, null, keepPosition);
+        View.SetItems(result.slice.specs, result.page?.Labels, keepPosition);
+        if (offset is double o) View.Offset = o;
+        _covers.Save();
         EmptyNote.Visibility = _order.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
         if (_order.Length == 0)
             EmptyNote.Text = model.Count == 0
                 ? "Nothing to show yet.\nGinkgo is looking through your library and making thumbnails. Pictures appear here as they become ready."
                 : "No files match the current filters.";
-        CountText.Text = $"{_order.Length:N0} shown of {model.Count:N0}";
+        CountText.Text = result.page is { } pg
+            ? $"{pg.Tiles.Count:N0} folder{(pg.Tiles.Count == 1 ? "" : "s")}, {_order.Length - pg.Tiles.Count:N0} files"
+            : $"{_order.Length:N0} shown of {model.Count:N0}";
+        if (result.page is { } pp && _order.Length == 0) EmptyNote.Text = "Nothing in this folder matches the current switches and search.";
     }
 
     private void DetachLoader() { View.Thumbs = null; _loader?.Dispose(); _loader = null; }
@@ -466,7 +489,13 @@ public partial class MainWindow : Window
             Navigate(e.Key switch { Key.D1 => "Home", Key.D2 => "Browse", Key.D3 => "Favourites", _ => "Tools" });
             e.Handled = true; return;
         }
+        bool alt = (Keyboard.Modifiers & ModifierKeys.Alt) != 0;
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (alt && key == Key.Left) { GoBack(); e.Handled = true; return; }
+        if (alt && key == Key.Right) { GoForward(); e.Handled = true; return; }
+        if (alt && key == Key.Up) { GoUp(); e.Handled = true; return; }
         if (typing) return;
+        if (e.Key == Key.Back && Keyboard.Modifiers == ModifierKeys.None) { GoBack(); e.Handled = true; return; }
         if (Keyboard.Modifiers != ModifierKeys.None && !ctrl) return;
         switch (e.Key)
         {
@@ -474,7 +503,7 @@ public partial class MainWindow : Window
             case Key.End: View.Offset = double.MaxValue / 4; e.Handled = true; break;
             case Key.PageDown: View.ScrollBy(View.ActualHeight * 0.9); e.Handled = true; break;
             case Key.PageUp: View.ScrollBy(-View.ActualHeight * 0.9); e.Handled = true; break;
-            case Key.Enter: if (View.HoverIndex >= 0) { OpenViewer(View.HoverIndex); e.Handled = true; } break;
+            case Key.Enter: if (IsFolderTile(View.HoverIndex)) { OpenFolder(_page!.Tiles[View.HoverIndex].Path); e.Handled = true; } else if (View.HoverIndex >= 0) { OpenViewer(View.HoverIndex); e.Handled = true; } break;
             case Key.OemQuestion: RevealBar(); SearchBox.Focus(); e.Handled = true; break;
             case Key.K: ShowKeys(false); e.Handled = true; break;
             case Key.F3: _diag = !_diag; DiagText.Visibility = _diag ? Visibility.Visible : Visibility.Collapsed; e.Handled = true; break;
@@ -627,9 +656,10 @@ public partial class MainWindow : Window
 
     private void Navigate(string where)
     {
-        NavHome.IsChecked = true; NavBrowse.IsChecked = NavFav.IsChecked = NavTools.IsChecked = false;
-        if (where != "Home") StatusText.Text = $"{where} is coming in a later build.";
         SetSidebar(false);
+        if (where is "Home" or "Browse") { if (where != _section || (where == "Browse" && _folder.Length > 0)) Go(where, ""); else UpdateNavUi(); return; }
+        UpdateNavUi();
+        StatusText.Text = $"{where} is coming in a later build.";
     }
 
     private void OnSideSettings(object s, RoutedEventArgs e) { ((System.Windows.Controls.Primitives.ToggleButton)s).IsChecked = false; SetSidebar(false); OpenSettings(); }
@@ -643,7 +673,7 @@ public partial class MainWindow : Window
         ("G   N   V", "Show General / NSFW / Very files"), ("L", "Equal columns  or  equal rows"), ("+   -   or  Ctrl + wheel", "Picture size"),
         ("R", "Reshuffle (when sorted randomly)"), ("Home   End", "Top / bottom"), ("Page Up   Page Down", "Scroll one screen"),
         ("Enter  or  double-click", "Open the picture under the mouse"), ("Middle button", "Scroll by moving the mouse"),
-        ("Ctrl+1 ... 4", "Home, Browse, Favourites, Tools"), ("K", "This list"), ("Esc", "Close / clear the search"),
+        ("Ctrl+1 ... 4", "Home, Browse, Favourites, Tools"), ("Alt+Left  or  Backspace", "Back (Browse)"), ("Alt+Right   Alt+Up", "Forward / up one folder"), ("K", "This list"), ("Esc", "Close / clear the search"),
     };
     private static readonly (string keys, string what)[] ViewerKeys =
     {
@@ -695,7 +725,7 @@ public partial class MainWindow : Window
 
     private void OpenViewer(int index)
     {
-        if (index < 0 || index >= _paths.Length) return;
+        if (index < _firstFile || index >= _paths.Length) return;
         ViewerRoot.Visibility = Visibility.Visible;
         ViewerRoot.Focus();
         ShowIndex(index);
@@ -736,7 +766,7 @@ public partial class MainWindow : Window
         string size = m.Size[row] >= 1048576 ? $"{m.Size[row] / 1048576.0:F1} MB" : $"{m.Size[row] / 1024.0:F0} KB";
         string kind = m.Kind[row] == (byte)MediaKind.Gif ? "   GIF" : "";
         string mod = DateTimeOffset.FromUnixTimeSeconds(m.Mtime[row]).ToLocalTime().ToString("d MMM yyyy", CultureInfo.CurrentCulture);
-        string count = $"{_vIndex + 1:N0} / {_paths.Length:N0}";
+        string count = $"{_vIndex - _firstFile + 1:N0} / {_paths.Length - _firstFile:N0}";
         string facts = $"{m.W[row]} x {m.H[row]}    {size}{kind}    {mod}";
         if (_infoMore)
         {
@@ -824,7 +854,7 @@ public partial class MainWindow : Window
 
     private void ShowIndex(int index)
     {
-        _vIndex = Math.Clamp(index, 0, _paths.Length - 1);
+        _vIndex = Math.Clamp(index, _firstFile, _paths.Length - 1);
         ResetZoom();
         int row = _order[_vIndex];
         UpdateInfo(row);
@@ -919,7 +949,7 @@ public partial class MainWindow : Window
 
     private async Task Preload(int index)
     {
-        if (index < 0 || index >= _paths.Length) return;
+        if (index < _firstFile || index >= _paths.Length) return;
         int row = _order[index];
         var m = _model!;
         var (hw, hh) = FitPixels(row);
@@ -988,8 +1018,8 @@ public partial class MainWindow : Window
         {
             case Key.Escape: CloseViewer(); break;
             case Key.Right: case Key.Down: case Key.PageDown: case Key.Space: if (_vIndex + 1 < _paths.Length) ShowIndex(_vIndex + 1); break;
-            case Key.Left: case Key.Up: case Key.PageUp: if (_vIndex > 0) ShowIndex(_vIndex - 1); break;
-            case Key.Home: ShowIndex(0); break;
+            case Key.Left: case Key.Up: case Key.PageUp: if (_vIndex > _firstFile) ShowIndex(_vIndex - 1); break;
+            case Key.Home: ShowIndex(_firstFile); break;
             case Key.End: ShowIndex(_paths.Length - 1); break;
             case Key.F: case Key.F11: ToggleFullscreen(); break;
             case Key.K: case Key.OemQuestion: ShowKeys(true); break;

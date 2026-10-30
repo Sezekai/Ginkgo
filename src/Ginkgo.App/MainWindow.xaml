@@ -74,6 +74,33 @@
                     </StackPanel>
                 </Grid>
             </Border>
+            <Border x:Name="BrowseBar" Background="#C8191920" BorderBrush="#4A4A54" BorderThickness="0,0,0,1" Padding="14,7" Visibility="Collapsed"
+                    MouseLeftButtonDown="OnTitleDown" MouseMove="OnTitleMove" MouseLeftButtonUp="OnTitleUp">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                        <ToggleButton x:Name="OwnOnlyBtn" Content="Only this folder's own files" Height="30" Margin="0,0,9,0" Click="OnOwnOnly"
+                                      ToolTip="Off: a folder shows everything inside it, including its subfolders' files. On: only the files lying in the folder itself."/>
+                        <TextBlock Text="Folders by" Foreground="{StaticResource Dim}" VerticalAlignment="Center" Margin="4,0,8,0"/>
+                        <ComboBox x:Name="FolderSortBox" Width="140" Height="30" Margin="0,0,6,0" SelectionChanged="OnFolderSortChanged">
+                            <ComboBoxItem Content="Name" Tag="Name"/>
+                            <ComboBoxItem Content="Total size" Tag="Size"/>
+                            <ComboBoxItem Content="Last updated" Tag="Updated"/>
+                            <ComboBoxItem Content="Most files" Tag="Files"/>
+                            <ComboBoxItem Content="Most images" Tag="Images"/>
+                            <ComboBoxItem Content="Most videos" Tag="Videos"/>
+                            <ComboBoxItem Content="Most GIFs" Tag="Gifs"/>
+                        </ComboBox>
+                        <ToggleButton x:Name="FolderRevBtn" Content="&#xE8CB;" FontFamily="Segoe MDL2 Assets" Width="34" Height="30" Margin="0,0,9,0" Click="OnFolderSortChanged" ToolTip="Reverse the folder order"/>
+                        <Button x:Name="DetailsBtn" Content="Details" Height="30" Margin="0" Click="OnDetailsMenu" ToolTip="What each folder tile shows"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button x:Name="BackBtn" Style="{StaticResource IconButton}" Content="&#xE72B;" Width="34" Height="30" FontSize="12" Margin="0,0,2,0" Click="OnBack" ToolTip="Back (Alt+Left, Backspace)"/>
+                        <Button x:Name="FwdBtn" Style="{StaticResource IconButton}" Content="&#xE72A;" Width="34" Height="30" FontSize="12" Margin="0,0,2,0" Click="OnForward" ToolTip="Forward (Alt+Right)"/>
+                        <Button x:Name="UpBtn" Style="{StaticResource IconButton}" Content="&#xE74A;" Width="34" Height="30" FontSize="12" Margin="0,0,12,0" Click="OnUp" ToolTip="Up one folder (Alt+Up)"/>
+                        <WrapPanel x:Name="Crumbs" Orientation="Horizontal" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
             <Border x:Name="Banner" Background="#5A4A1E" Padding="12,6" Visibility="Collapsed">
                 <DockPanel>
                     <StackPanel x:Name="BannerButtons" Orientation="Horizontal" DockPanel.Dock="Right"/>
@@ -110,7 +137,7 @@
                             <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE80F;" FontFamily="Segoe MDL2 Assets" Width="28" FontSize="15"/><TextBlock Text="Home"/><TextBlock Text="  Ctrl+1" Foreground="{StaticResource Dim}" FontSize="11" VerticalAlignment="Center"/></StackPanel>
                         </ToggleButton>
                         <ToggleButton x:Name="NavBrowse" Style="{StaticResource SideItem}" Click="OnNav" Tag="Browse">
-                            <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" Width="28" FontSize="15"/><TextBlock Text="Browse"/><TextBlock Text="  soon" Foreground="{StaticResource Dim}" FontSize="11" VerticalAlignment="Center"/></StackPanel>
+                            <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE8B7;" FontFamily="Segoe MDL2 Assets" Width="28" FontSize="15"/><TextBlock Text="Browse"/><TextBlock Text="  Ctrl+2" Foreground="{StaticResource Dim}" FontSize="11" VerticalAlignment="Center"/></StackPanel>
                         </ToggleButton>
                         <ToggleButton x:Name="NavFav" Style="{StaticResource SideItem}" Click="OnNav" Tag="Favourites">
                             <StackPanel Orientation="Horizontal"><TextBlock Text="&#xE734;" FontFamily="Segoe MDL2 Assets" Width="28" FontSize="15"/><TextBlock Text="Favourites"/><TextBlock Text="  soon" Foreground="{StaticResource Dim}" FontSize="11" VerticalAlignment="Center"/></StackPanel>

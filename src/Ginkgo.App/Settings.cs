@@ -33,6 +33,12 @@ public sealed class AppSettings
     public bool RowsLayout { get; set; }
     public bool BarHidden { get; set; }
 
+    // Browse
+    public bool BrowseOwnOnly { get; set; }
+    public string BrowseFolderSort { get; set; } = "Name";
+    public bool BrowseFolderReverse { get; set; }
+    public List<string> BrowseDetails { get; set; } = new() { "Images", "Gifs", "Videos", "Size" };
+
     public string Sort { get; set; } = "FirstSeen";
     public float TileSize { get; set; } = 220;
 

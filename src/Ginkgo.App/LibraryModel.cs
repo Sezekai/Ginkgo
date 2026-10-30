@@ -26,6 +26,13 @@ public sealed class LibraryModel
     public int[] FullPack = Array.Empty<int>(), SmallPack = Array.Empty<int>(), MicroPack = Array.Empty<int>(), LargePack = Array.Empty<int>();
     public long[] FullOff = Array.Empty<long>(), SmallOff = Array.Empty<long>(), MicroOff = Array.Empty<long>(), LargeOff = Array.Empty<long>();
     public int[] FullLen = Array.Empty<int>(), SmallLen = Array.Empty<int>(), MicroLen = Array.Empty<int>(), LargeLen = Array.Empty<int>();
+    /// <summary>The folder as Browse shows it (NSFW / Very folders merged into the folder above).</summary>
+    public string[] Display = Array.Empty<string>();
+    // videos are not in the grid yet, but they count in Browse
+    public int VideoCount;
+    public string[] VDisplay = Array.Empty<string>();
+    public byte[] VLevel = Array.Empty<byte>();
+    public long[] VSize = Array.Empty<long>(), VFirstSeen = Array.Empty<long>();
 
     /// <summary>All files that have thumbnails and are not missing, in Home order (newest first seen).</summary>
     public static LibraryModel Load(IndexDb db)
@@ -60,7 +67,54 @@ public sealed class LibraryModel
             i++;
         }
         m.Count = i;
+        var disp = new Dictionary<string, string>(StringComparer.Ordinal);
+        string D(string f) { if (!disp.TryGetValue(f, out var d)) disp[f] = d = string.Intern(FolderPaths.Display(f)); return d; }
+        m.Display = new string[m.Count];
+        for (int k = 0; k < m.Count; k++) m.Display[k] = D(m.Folder[k]);
+
+        var vd = new List<string>(); var vl = new List<byte>(); var vs = new List<long>(); var vf = new List<long>();
+        using (var vc = c.CreateCommand())
+        {
+            vc.CommandText = "SELECT folder, level, size, first_seen FROM files WHERE " + Visible.Shown + " AND kind=2";
+            using var vr = vc.ExecuteReader();
+            while (vr.Read()) { vd.Add(D(vr.GetString(0))); vl.Add((byte)vr.GetInt32(1)); vs.Add(vr.GetInt64(2)); vf.Add(vr.GetInt64(3)); }
+        }
+        m.VideoCount = vd.Count; m.VDisplay = vd.ToArray(); m.VLevel = vl.ToArray(); m.VSize = vs.ToArray(); m.VFirstSeen = vf.ToArray();
         return m;
+    }
+
+    private static bool LevelShown(byte lv, ViewQuery q) => lv == (byte)ContentLevel.General ? q.General : lv == (byte)ContentLevel.Nsfw ? q.Nsfw : q.Very;
+
+    /// <summary>Passes the content-level and type switches (not folders or search).</summary>
+    public bool Shown(int i, ViewQuery q) => LevelShown(Level[i], q) && (Kind[i] == (byte)MediaKind.Image ? q.Images : q.Gifs);
+
+    /// <summary>The folder tree under the current switches (images and GIFs as switched, videos always counted).</summary>
+    public FolderTree Tree(ViewQuery q)
+    {
+        var t = new FolderTree();
+        for (int i = 0; i < Count; i++)
+            if (Shown(i, q)) t.Add(Display[i], Kind[i] == (byte)MediaKind.Gif ? FileKind.Gif : FileKind.Image, Size[i], FirstSeen[i]);
+        for (int v = 0; v < VideoCount; v++)
+            if (LevelShown(VLevel[v], q)) t.Add(VDisplay[v], FileKind.Video, VSize[v], VFirstSeen[v]);
+        return t;
+    }
+
+    /// <summary>Puts rows in the chosen order (the rows are in first-seen order to start with).</summary>
+    public int[] SortRows(int[] order, ViewQuery q)
+    {
+        switch (q.Sort)
+        {
+            case "Modified": Array.Sort(order, (a, b) => Mtime[b].CompareTo(Mtime[a])); break;
+            case "Name": Array.Sort(order, (a, b) => string.Compare(System.IO.Path.GetFileName(Path[a]), System.IO.Path.GetFileName(Path[b]), StringComparison.OrdinalIgnoreCase)); break;
+            case "SizeDesc": Array.Sort(order, (a, b) => Size[b].CompareTo(Size[a])); break;
+            case "SizeAsc": Array.Sort(order, (a, b) => Size[a].CompareTo(Size[b])); break;
+            case "Largest": Array.Sort(order, (a, b) => ((long)W[b] * H[b]).CompareTo((long)W[a] * H[a])); break;
+            case "Random":
+                var rnd = new Random(q.RandomSeed);
+                for (int k = order.Length - 1; k > 0; k--) { int j = rnd.Next(k + 1); (order[k], order[j]) = (order[j], order[k]); }
+                break;
+        }
+        return order;
     }
 
     /// <summary>The rows to show, in order.</summary>
@@ -77,21 +131,7 @@ public sealed class LibraryModel
             if (search.Length > 0 && Path[i].IndexOf(search, StringComparison.OrdinalIgnoreCase) < 0) continue;
             keep.Add(i);
         }
-        var order = keep.ToArray();
-        switch (q.Sort)
-        {
-            case "Modified": Array.Sort(order, (a, b) => Mtime[b].CompareTo(Mtime[a])); break;
-            case "Name": Array.Sort(order, (a, b) => string.Compare(System.IO.Path.GetFileName(Path[a]), System.IO.Path.GetFileName(Path[b]), StringComparison.OrdinalIgnoreCase)); break;
-            case "SizeDesc": Array.Sort(order, (a, b) => Size[b].CompareTo(Size[a])); break;
-            case "SizeAsc": Array.Sort(order, (a, b) => Size[a].CompareTo(Size[b])); break;
-            case "Largest": Array.Sort(order, (a, b) => ((long)W[b] * H[b]).CompareTo((long)W[a] * H[a])); break;
-            case "Random":
-                var rnd = new Random(q.RandomSeed);
-                for (int k = order.Length - 1; k > 0; k--) { int j = rnd.Next(k + 1); (order[k], order[j]) = (order[j], order[k]); }
-                break;
-            // "FirstSeen": the model is already in that order (stable)
-        }
-        return order;
+        return SortRows(keep.ToArray(), q);
     }
 
     /// <summary>The columns the thumbnail loader needs, for the chosen rows in the chosen order.</summary>
@@ -106,6 +146,7 @@ public sealed class LibraryModel
         for (int k = 0; k < n; k++)
         {
             int i = order[k];
+            if (i < 0) { paths[k] = ""; specs[k] = new ItemSpec(1.4f); continue; }     // a folder tile with no picture to show
             paths[k] = Path[i]; ow[k] = W[i]; ids[k] = Id[i];
             specs[k] = new ItemSpec(ThumbMaker.ClampAspect(W[i], H[i]));
             badges[k] = (byte)(Kind[i] == (byte)MediaKind.Gif ? 1 : 0);
