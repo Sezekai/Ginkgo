@@ -19,15 +19,10 @@ jobs:
       - name: Thumbnail loader benchmark
         continue-on-error: true
         run: dotnet run --project tests/Ginkgo.App.Bench -c Release
-      - name: Publish prototype
-        run: dotnet publish src/Ginkgo.Prototype -c Release -r win-x64 --self-contained true -o publish/Ginkgo.Prototype
       - name: Publish app
         run: dotnet publish src/Ginkgo.App -c Release -r win-x64 --self-contained true -o publish/Ginkgo
       - uses: actions/upload-artifact@v4
         with:
-          name: Ginkgo.Prototype-win-x64
-          path: publish/Ginkgo.Prototype
-      - uses: actions/upload-artifact@v4
-        with:
           name: Ginkgo-win-x64
           path: publish/Ginkgo
+          retention-days: 4
