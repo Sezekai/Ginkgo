@@ -14,19 +14,42 @@
         <Style TargetType="Button">
             <Setter Property="Foreground" Value="{StaticResource Text}"/>
             <Setter Property="Background" Value="#2C2C32"/>
-            <Setter Property="Padding" Value="10,4"/>
+            <Setter Property="Padding" Value="12,2"/>
             <Setter Property="Margin" Value="0,0,6,0"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="B" Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
+                        <Grid>
+                            <Border x:Name="B" CornerRadius="9" BorderThickness="1" BorderBrush="#3C3C47" Padding="{TemplateBinding Padding}">
+                                <Border.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                        <GradientStop x:Name="G1" Color="#34343D" Offset="0"/>
+                                        <GradientStop x:Name="G2" Color="#25252C" Offset="1"/>
+                                    </LinearGradientBrush>
+                                </Border.Background>
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <!-- a soft light along the top edge, like a glass key -->
+                            <Border CornerRadius="9" BorderThickness="1" IsHitTestVisible="False">
+                                <Border.BorderBrush>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                        <GradientStop Color="#33FFFFFF" Offset="0"/>
+                                        <GradientStop Color="#00FFFFFF" Offset="0.55"/>
+                                    </LinearGradientBrush>
+                                </Border.BorderBrush>
+                            </Border>
+                        </Grid>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#3A3A42"/></Trigger>
-                            <Trigger Property="IsPressed" Value="True"><Setter TargetName="B" Property="Background" Value="#46464F"/></Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="G1" Property="Color" Value="#40404A"/>
+                                <Setter TargetName="G2" Property="Color" Value="#2E2E36"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="G1" Property="Color" Value="#2A2A32"/>
+                                <Setter TargetName="G2" Property="Color" Value="#22222A"/>
+                            </Trigger>
                             <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -37,19 +60,46 @@
         <Style TargetType="ToggleButton">
             <Setter Property="Foreground" Value="{StaticResource Text}"/>
             <Setter Property="Background" Value="#2C2C32"/>
-            <Setter Property="Padding" Value="10,4"/>
+            <Setter Property="Padding" Value="12,2"/>
             <Setter Property="Margin" Value="0,0,6,0"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ToggleButton">
-                        <Border x:Name="B" Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                        </Border>
+                        <Grid>
+                            <Border x:Name="B" CornerRadius="9" BorderThickness="1" BorderBrush="#3C3C47" Padding="{TemplateBinding Padding}">
+                                <Border.Background>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                        <GradientStop x:Name="G1" Color="#34343D" Offset="0"/>
+                                        <GradientStop x:Name="G2" Color="#25252C" Offset="1"/>
+                                    </LinearGradientBrush>
+                                </Border.Background>
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <!-- a soft light along the top edge, like a glass key -->
+                            <Border CornerRadius="9" BorderThickness="1" IsHitTestVisible="False">
+                                <Border.BorderBrush>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                        <GradientStop Color="#33FFFFFF" Offset="0"/>
+                                        <GradientStop Color="#00FFFFFF" Offset="0.55"/>
+                                    </LinearGradientBrush>
+                                </Border.BorderBrush>
+                            </Border>
+                        </Grid>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#3A3A42"/></Trigger>
-                            <Trigger Property="IsChecked" Value="True"><Setter TargetName="B" Property="Background" Value="#3E7A48"/></Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="G1" Property="Color" Value="#40404A"/>
+                                <Setter TargetName="G2" Property="Color" Value="#2E2E36"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="G1" Property="Color" Value="#55A863"/>
+                                <Setter TargetName="G2" Property="Color" Value="#3A7746"/>
+                                <Setter TargetName="B" Property="BorderBrush" Value="#6CC27A"/>
+                                <Setter TargetName="B" Property="Effect">
+                                    <Setter.Value><DropShadowEffect Color="#4FA35C" BlurRadius="14" ShadowDepth="0" Opacity="0.55"/></Setter.Value>
+                                </Setter>
+                            </Trigger>
                             <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -69,7 +119,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="B" Background="{TemplateBinding Background}" CornerRadius="4">
+                        <Border x:Name="B" Background="{TemplateBinding Background}" CornerRadius="8">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -231,7 +281,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TextBox">
-                        <Border x:Name="B" Background="{TemplateBinding Background}" BorderBrush="{StaticResource Edge}" BorderThickness="1" CornerRadius="4">
+                        <Border x:Name="B" Background="{TemplateBinding Background}" BorderBrush="{StaticResource Edge}" BorderThickness="1" CornerRadius="9">
                             <ScrollViewer x:Name="PART_ContentHost" Padding="{TemplateBinding Padding}" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -273,7 +323,7 @@
                                           IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
                                 <ToggleButton.Template>
                                     <ControlTemplate TargetType="ToggleButton">
-                                        <Border x:Name="B" Background="{Binding Background, RelativeSource={RelativeSource AncestorType=ComboBox}}" CornerRadius="4"/>
+                                        <Border x:Name="B" Background="{Binding Background, RelativeSource={RelativeSource AncestorType=ComboBox}}" BorderBrush="#3C3C47" BorderThickness="1" CornerRadius="9"/>
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#3A3A42"/></Trigger>
                                         </ControlTemplate.Triggers>

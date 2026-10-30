@@ -12,6 +12,7 @@
     <DockPanel>
     <!-- the window's own title bar: name on the left, window buttons flush in the top-right corner -->
     <Grid x:Name="TitleBar" DockPanel.Dock="Top" Height="29" Background="#1B1B20" MouseLeftButtonDown="OnTitleDown" MouseMove="OnTitleMove" MouseLeftButtonUp="OnTitleUp">
+        <Border x:Name="TitleShade" IsHitTestVisible="False"/>
         <TextBlock Text="Ginkgo" FontSize="12" Foreground="{StaticResource Text}" VerticalAlignment="Center" Margin="14,0,0,1" IsHitTestVisible="False"/>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
             <Button Style="{StaticResource CaptionButton}" Content="&#xE921;" Click="OnMinimize" ToolTip="Minimise"/>
@@ -57,27 +58,18 @@
                     </LinearGradientBrush>
                 </Border.Background>
                 <Grid>
-                <!-- fading to solid black towards the top -->
-                <Border IsHitTestVisible="False">
-                    <Border.Background>
-                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                            <GradientStop Color="#FF000000" Offset="0"/>
-                            <GradientStop Color="#F0000000" Offset="0.45"/>
-                            <GradientStop Color="#9A000000" Offset="0.8"/>
-                            <GradientStop Color="#55000000" Offset="1"/>
-                        </LinearGradientBrush>
-                    </Border.Background>
-                </Border>
+                <!-- fading to the title bar's colour towards the top (set in code: it can continue the title bar's own fade) -->
+                <Border x:Name="BarShade" IsHitTestVisible="False"/>
                 <local:BarPanel x:Name="BarRow" Margin="14,14,10,14" VerticalAlignment="Center">
-                        <Button Style="{StaticResource IconButton}" Content="&#xE700;" Height="32" Width="38" FontSize="14" Margin="0,3,10,3" VerticalAlignment="Center" ToolTip="Menu (Ctrl+B)" Click="OnSidebarToggle"/>
-                        <Button x:Name="FoldersBtn" Content="Select folders" Height="32" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnFolders"/>
-                        <ToggleButton x:Name="ImagesBtn" Content="Images" Height="32" Margin="0,3,9,3" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged"/>
-                        <ToggleButton x:Name="GifsBtn" Content="GIFs" Height="32" Margin="0,3,9,3" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged"/>
-                        <ToggleButton x:Name="GeneralBtn" Content="General" Height="32" Margin="0,3,9,3" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged" ToolTip="Show General files (G)"/>
-                        <ToggleButton x:Name="NsfwBtn" Content="NSFW" Height="32" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnFilterChanged" ToolTip="Show NSFW files (N)"/>
-                        <ToggleButton x:Name="VeryBtn" Content="Very" Height="32" Margin="0,3,17,3" VerticalAlignment="Center" Click="OnFilterChanged" ToolTip="Show Very files (V)"/>
-                        <TextBox x:Name="SearchBox" local:BarPanel.PreferredWidth="170" MinWidth="90" Height="32" Margin="0,3,17,3" VerticalAlignment="Center" VerticalContentAlignment="Center" TextChanged="OnSearchChanged" ToolTip="Search file and folder names (/ or Ctrl+F)"/>
-                        <ComboBox x:Name="SortBox" local:BarPanel.PreferredWidth="150" MinWidth="104" Margin="0,3,9,3" Height="32" VerticalAlignment="Center" SelectionChanged="OnSortChanged">
+                        <Button Style="{StaticResource IconButton}" Content="&#xE700;" Height="28" Width="32" FontSize="14" Margin="0,3,10,3" VerticalAlignment="Center" ToolTip="Menu (Ctrl+B)" Click="OnSidebarToggle"/>
+                        <Button x:Name="FoldersBtn" Content="Select folders" Height="28" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnFolders"/>
+                        <ToggleButton x:Name="ImagesBtn" Content="Images" Height="28" Margin="0,3,9,3" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged"/>
+                        <ToggleButton x:Name="GifsBtn" Content="GIFs" Height="28" Margin="0,3,9,3" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged"/>
+                        <ToggleButton x:Name="GeneralBtn" Content="General" Height="28" Margin="0,3,9,3" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged" ToolTip="Show General files (G)"/>
+                        <ToggleButton x:Name="NsfwBtn" Content="NSFW" Height="28" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnFilterChanged" ToolTip="Show NSFW files (N)"/>
+                        <ToggleButton x:Name="VeryBtn" Content="Very" Height="28" Margin="0,3,17,3" VerticalAlignment="Center" Click="OnFilterChanged" ToolTip="Show Very files (V)"/>
+                        <TextBox x:Name="SearchBox" local:BarPanel.PreferredWidth="170" MinWidth="90" Height="28" Margin="0,3,17,3" VerticalAlignment="Center" VerticalContentAlignment="Center" TextChanged="OnSearchChanged" ToolTip="Search file and folder names (/ or Ctrl+F)"/>
+                        <ComboBox x:Name="SortBox" local:BarPanel.PreferredWidth="150" MinWidth="104" Margin="0,3,9,3" Height="28" VerticalAlignment="Center" SelectionChanged="OnSortChanged">
                             <ComboBoxItem Content="Newest first seen" Tag="FirstSeen"/>
                             <ComboBoxItem Content="Newest modified" Tag="Modified"/>
                             <ComboBoxItem Content="Name A to Z" Tag="Name"/>
@@ -86,13 +78,13 @@
                             <ComboBoxItem Content="Most pixels" Tag="Largest"/>
                             <ComboBoxItem Content="Random" Tag="Random"/>
                         </ComboBox>
-                        <Button x:Name="ShuffleBtn" Content="Reshuffle" Height="32" Margin="0,3,9,3" VerticalAlignment="Center" Visibility="Collapsed" Click="OnReshuffle"/>
+                        <Button x:Name="ShuffleBtn" Content="Reshuffle" Height="28" Margin="0,3,9,3" VerticalAlignment="Center" Visibility="Collapsed" Click="OnReshuffle"/>
                         <Slider x:Name="SizeSlider" local:BarPanel.PreferredWidth="120" MinWidth="60" Minimum="0" Maximum="1" Margin="10,3,12,3" VerticalAlignment="Center" ValueChanged="OnSizeChanged" ToolTip="Picture size (Ctrl + mouse wheel, + and -)"/>
-                        <ToggleButton x:Name="RowsBtn" Content="Equal rows" Height="32" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnLayoutChanged" ToolTip="Rows of equal height instead of equal-width columns (L)"/>
-                        <Button x:Name="SettingsBtn" Style="{StaticResource IconButton}" Content="&#xE713;" Height="32" Width="38" FontSize="14" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Settings" Click="OnSettings"/>
-                        <Button x:Name="KeysBtn" Style="{StaticResource IconButton}" Content="&#xE765;" Height="32" Width="38" FontSize="14" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Keyboard shortcuts (K)" Click="OnKeysClick"/>
-                        <Button x:Name="MoreBtn" local:BarPanel.Pinned="True" Style="{StaticResource IconButton}" Content="&#xE712;" Height="32" Width="38" FontSize="14" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="More" Click="OnMoreBar"/>
-                        <Button x:Name="HideBarBtn" local:BarPanel.Pinned="True" Style="{StaticResource IconButton}" Content="&#xE70E;" Height="32" Width="38" FontSize="14" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Hide this bar (H)" Click="OnHideBar"/>
+                        <ToggleButton x:Name="RowsBtn" Content="Equal rows" Height="28" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnLayoutChanged" ToolTip="Rows of equal height instead of equal-width columns (L)"/>
+                        <Button x:Name="SettingsBtn" Style="{StaticResource IconButton}" Content="&#xE713;" Height="28" Width="32" FontSize="14" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Settings" Click="OnSettings"/>
+                        <Button x:Name="KeysBtn" Style="{StaticResource IconButton}" Content="&#xE765;" Height="28" Width="32" FontSize="14" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Keyboard shortcuts (K)" Click="OnKeysClick"/>
+                        <Button x:Name="MoreBtn" local:BarPanel.Pinned="True" Style="{StaticResource IconButton}" Content="&#xE712;" Height="28" Width="32" FontSize="14" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="More" Click="OnMoreBar"/>
+                        <Button x:Name="HideBarBtn" local:BarPanel.Pinned="True" Style="{StaticResource IconButton}" Content="&#xE70E;" Height="28" Width="32" FontSize="14" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Hide this bar (H)" Click="OnHideBar"/>
                     </local:BarPanel>
                 </Grid>
             </Border>
@@ -100,12 +92,12 @@
                     MouseLeftButtonDown="OnTitleDown" MouseMove="OnTitleMove" MouseLeftButtonUp="OnTitleUp">
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                        <ToggleButton x:Name="GridBtn" Content="Cover grid" Height="30" Margin="0,0,9,0" Click="OnCoverGrid"
+                        <ToggleButton x:Name="GridBtn" Content="Cover grid" Height="28" Margin="0,0,9,0" Click="OnCoverGrid"
                                       ToolTip="Folders as equal book-cover tiles with their names underneath (right-click a cover to adjust it)"/>
-                        <ToggleButton x:Name="OwnOnlyBtn" Content="Only this folder's own files" Height="30" Margin="0,0,9,0" Click="OnOwnOnly"
+                        <ToggleButton x:Name="OwnOnlyBtn" Content="Only this folder's own files" Height="28" Margin="0,0,9,0" Click="OnOwnOnly"
                                       ToolTip="Off: a folder shows everything inside it, including its subfolders' files. On: only the files lying in the folder itself."/>
                         <TextBlock Text="Folders by" Foreground="{StaticResource Dim}" VerticalAlignment="Center" Margin="4,0,8,0"/>
-                        <ComboBox x:Name="FolderSortBox" Width="140" Height="30" Margin="0,0,6,0" SelectionChanged="OnFolderSortChanged">
+                        <ComboBox x:Name="FolderSortBox" Width="140" Height="28" Margin="0,0,6,0" SelectionChanged="OnFolderSortChanged">
                             <ComboBoxItem Content="Name" Tag="Name"/>
                             <ComboBoxItem Content="Total size" Tag="Size"/>
                             <ComboBoxItem Content="Last updated" Tag="Updated"/>
@@ -114,13 +106,13 @@
                             <ComboBoxItem Content="Most videos" Tag="Videos"/>
                             <ComboBoxItem Content="Most GIFs" Tag="Gifs"/>
                         </ComboBox>
-                        <ToggleButton x:Name="FolderRevBtn" Content="&#xE8CB;" FontFamily="Segoe MDL2 Assets" Width="34" Height="30" Margin="0,0,9,0" Click="OnFolderSortChanged" ToolTip="Reverse the folder order"/>
-                        <Button x:Name="DetailsBtn" Content="Details" Height="30" Margin="0" Click="OnDetailsMenu" ToolTip="What each folder tile shows"/>
+                        <ToggleButton x:Name="FolderRevBtn" Content="&#xE8CB;" FontFamily="Segoe MDL2 Assets" Width="34" Height="28" Margin="0,0,9,0" Click="OnFolderSortChanged" ToolTip="Reverse the folder order"/>
+                        <Button x:Name="DetailsBtn" Content="Details" Height="28" Margin="0" Click="OnDetailsMenu" ToolTip="What each folder tile shows"/>
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <Button x:Name="BackBtn" Style="{StaticResource IconButton}" Content="&#xE72B;" Width="34" Height="30" FontSize="12" Margin="0,0,2,0" Click="OnBack" ToolTip="Back (Alt+Left, Backspace)"/>
-                        <Button x:Name="FwdBtn" Style="{StaticResource IconButton}" Content="&#xE72A;" Width="34" Height="30" FontSize="12" Margin="0,0,2,0" Click="OnForward" ToolTip="Forward (Alt+Right)"/>
-                        <Button x:Name="UpBtn" Style="{StaticResource IconButton}" Content="&#xE74A;" Width="34" Height="30" FontSize="12" Margin="0,0,12,0" Click="OnUp" ToolTip="Up one folder (Alt+Up)"/>
+                        <Button x:Name="BackBtn" Style="{StaticResource IconButton}" Content="&#xE72B;" Width="30" Height="28" FontSize="12" Margin="0,0,2,0" Click="OnBack" ToolTip="Back (Alt+Left, Backspace)"/>
+                        <Button x:Name="FwdBtn" Style="{StaticResource IconButton}" Content="&#xE72A;" Width="30" Height="28" FontSize="12" Margin="0,0,2,0" Click="OnForward" ToolTip="Forward (Alt+Right)"/>
+                        <Button x:Name="UpBtn" Style="{StaticResource IconButton}" Content="&#xE74A;" Width="30" Height="28" FontSize="12" Margin="0,0,12,0" Click="OnUp" ToolTip="Up one folder (Alt+Up)"/>
                         <WrapPanel x:Name="Crumbs" Orientation="Horizontal" VerticalAlignment="Center"/>
                     </StackPanel>
                 </DockPanel>
