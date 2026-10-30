@@ -217,7 +217,12 @@ public partial class MainWindow
         int row = order[i];
         float aspect = Ginkgo.Data.ThumbMaker.ClampAspect(_model.W[row], _model.H[row]);
         float radius = _settings.CoverRounded ? (float)(_settings.CoverRadius * System.Windows.Media.VisualTreeHelper.GetDpi(View).PixelsPerDip) : 0;
-        return new ThumbLoader.Crop(z, cx, cy, z * Math.Max(1f, aspect / MasonryView.CoverAspect), radius);
+        // How much wider than the tile the picture should be for the crop to look sharp. Within 1.5 times of the stored 320-pixel
+        // thumbnail it is used as it is: making a sharper version means reading and decoding the original file, which is slow work.
+        float factor = z * Math.Max(1f, aspect / MasonryView.CoverAspect);
+        double tilePx = Math.Clamp(View.TileTarget, 110, 420) * System.Windows.Media.VisualTreeHelper.GetDpi(View).PixelsPerDip;
+        if (tilePx * factor <= 480) factor = (float)Math.Min(factor, 320 / Math.Max(1, tilePx));
+        return new ThumbLoader.Crop(z, cx, cy, factor, radius);
     }
 
     private void AdjustCover(int index)

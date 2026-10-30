@@ -96,6 +96,8 @@ public partial class MainWindow : Window
         View.HoverChanged += i => StatusText.Text = IsFolderTile(i) ? FolderHoverText(i) : i >= 0 && i < _paths.Length ? HoverText(i) : StatusLine();
         View.ItemActivated += i => { if (RecentlyNavigated()) return; if (IsFolderTile(i)) OpenFolder(_page!.Tiles[i].Path); else OpenViewer(i); };
         InitBrowse();
+        SizeChanged += (_, _) => Dispatcher.BeginInvoke(UpdateEdges, DispatcherPriority.Loaded);
+        LocationChanged += (_, _) => Dispatcher.BeginInvoke(UpdateEdges, DispatcherPriority.Loaded);
         CompositionTarget.Rendering += (_, e) =>
         {
             // the event can come more than once per screen refresh: count each refresh once
@@ -590,9 +592,35 @@ public partial class MainWindow : Window
     {
         bool max = WindowState == WindowState.Maximized;
         MaxBtn.Content = max ? "\uE923" : "\uE922";
-        WindowEdge.Margin = max ? SystemParameters.WindowResizeBorderThickness : new Thickness(0);     // a maximised window overhangs the screen by its resize border
+        UpdateEdges();
         WindowEdge.BorderThickness = max ? new Thickness(0) : new Thickness(1);                         // outline round the whole window when it isn't maximised
         TopBar.BorderThickness = max ? new Thickness(1) : new Thickness(0, 0, 0, 1);                      // maximised: the bar gets its own outline
+    }
+
+    // ---- a maximised or snapped window reaches past the visible screen by its (invisible) resize border: keep the content inside ----
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern int GetSystemMetricsForDpi(int index, uint dpi);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr hwnd);
+
+    private void UpdateEdges()
+    {
+        var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        bool max = WindowState == WindowState.Maximized;
+        // snapped to half or a quarter of the screen: Windows reports the window as normal, but it is not at its normal size
+        var rb = RestoreBounds;
+        bool snapped = !max && WindowState == WindowState.Normal && !rb.IsEmpty &&
+                       (Math.Abs(rb.Width - ActualWidth) > 2 || Math.Abs(rb.Height - ActualHeight) > 2);
+        Thickness pad = new(0);
+        if ((max || snapped) && hwnd != IntPtr.Zero)
+        {
+            uint dpi = GetDpiForWindow(hwnd);
+            if (dpi == 0) dpi = 96;
+            double scale = dpi / 96.0;
+            double bx = (GetSystemMetricsForDpi(32, dpi) + GetSystemMetricsForDpi(92, dpi)) / scale;    // frame + padded border
+            double by = (GetSystemMetricsForDpi(33, dpi) + GetSystemMetricsForDpi(92, dpi)) / scale;
+            pad = max ? new Thickness(bx, by, bx, by) : new Thickness(bx, 0, bx, by);
+        }
+        WindowEdge.Margin = pad;
     }
 
     // ---- top bar: slides away on scroll down, back on scroll up; H hides it for good until shown again ----
