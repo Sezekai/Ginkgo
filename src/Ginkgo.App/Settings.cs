@@ -32,8 +32,8 @@ public sealed class AppSettings
     /// <summary>true = rows of equal height; false = equal-width columns.</summary>
     public bool RowsLayout { get; set; }
     public bool BarHidden { get; set; }
-    /// <summary>The colour fade of the menu bar starts at the very top of the window (true) or only in the menu bar (false).</summary>
-    public bool GradientWithTitle { get; set; } = true;
+    /// <summary>How the buttons look (shape, colours, outline, glow).</summary>
+    public ButtonLook Look { get; set; } = new();
 
     // Browse
     public bool BrowseOwnOnly { get; set; }

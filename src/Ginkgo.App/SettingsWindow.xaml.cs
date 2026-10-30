@@ -25,7 +25,6 @@ public partial class SettingsWindow : Window
         if (LookBox.SelectedItem is null) LookBox.SelectedIndex = 1;
         FadeBox.IsChecked = s.FadeSharpening;
         RoundBox.IsChecked = s.CoverRounded;
-        GradientBox.IsChecked = s.GradientWithTitle;
         RadiusSlider.Value = s.CoverRadius; RadiusSlider.IsEnabled = s.CoverRounded; RadiusText.Text = $"{s.CoverRadius} px";
         WarmBox.IsChecked = s.WarmCache;
         _init = false;
@@ -51,7 +50,7 @@ public partial class SettingsWindow : Window
         _s.LookAheadWindows = int.Parse((string)((ComboBoxItem)LookBox.SelectedItem).Tag); _main.ApplySettings();
     }
     private void OnWarmChanged(object s, RoutedEventArgs e) { _s.WarmCache = WarmBox.IsChecked == true; _main.ApplySettings(); Result.Text = "Takes effect the next time Ginkgo starts."; }
-    private void OnGradientChanged(object s, RoutedEventArgs e) { _s.GradientWithTitle = GradientBox.IsChecked == true; _main.ApplySettings(); }
+    private void OnLook(object s, RoutedEventArgs e) => _main.OpenLook();
     private void OnRoundChanged(object s, RoutedEventArgs e) { _s.CoverRounded = RoundBox.IsChecked == true; RadiusSlider.IsEnabled = _s.CoverRounded; _main.ApplySettings(); }
     private void OnRadiusChanged(object s, RoutedPropertyChangedEventArgs<double> e)
     {

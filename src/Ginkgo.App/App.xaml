@@ -10,16 +10,9 @@
         <SolidColorBrush x:Key="Field" Color="#26262C"/>
         <SolidColorBrush x:Key="Edge" Color="#3A3A42"/>
 
-        <!-- glass-key fills for buttons -->
-        <LinearGradientBrush x:Key="KeyFill" StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#34343D" Offset="0"/><GradientStop Color="#25252C" Offset="1"/></LinearGradientBrush>
-        <LinearGradientBrush x:Key="KeyHover" StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#40404A" Offset="0"/><GradientStop Color="#2E2E36" Offset="1"/></LinearGradientBrush>
-        <LinearGradientBrush x:Key="KeyPress" StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#2A2A32" Offset="0"/><GradientStop Color="#22222A" Offset="1"/></LinearGradientBrush>
-        <LinearGradientBrush x:Key="KeyOn" StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#55A863" Offset="0"/><GradientStop Color="#3A7746" Offset="1"/></LinearGradientBrush>
-        <LinearGradientBrush x:Key="KeyOnHover" StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#62B670" Offset="0"/><GradientStop Color="#42844F" Offset="1"/></LinearGradientBrush>
-
         <!-- ===== buttons ===== -->
         <Style TargetType="Button">
-            <Setter Property="Foreground" Value="{StaticResource Text}"/>
+            <Setter Property="Foreground" Value="{DynamicResource KeyText}"/>
             <Setter Property="Background" Value="#2C2C32"/>
             <Setter Property="Padding" Value="12,2"/>
             <Setter Property="Margin" Value="0,0,6,0"/>
@@ -29,25 +22,19 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Grid>
-                            <Border x:Name="B" CornerRadius="9" BorderThickness="1" BorderBrush="#3C3C47" Padding="{TemplateBinding Padding}" Background="{StaticResource KeyFill}">
+                            <Border x:Name="B" CornerRadius="{DynamicResource KeyRadius}" BorderThickness="{DynamicResource KeyBorderWidth}" BorderBrush="{DynamicResource KeyBorder}"
+                                    Padding="{TemplateBinding Padding}" Background="{DynamicResource KeyFill}" Effect="{DynamicResource KeyShadow}">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                             <!-- a soft light along the top edge, like a glass key -->
-                            <Border CornerRadius="9" BorderThickness="1" IsHitTestVisible="False">
-                                <Border.BorderBrush>
-                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                        <GradientStop Color="#33FFFFFF" Offset="0"/>
-                                        <GradientStop Color="#00FFFFFF" Offset="0.55"/>
-                                    </LinearGradientBrush>
-                                </Border.BorderBrush>
-                            </Border>
+                            <Border CornerRadius="{DynamicResource KeyRadius}" BorderThickness="1" BorderBrush="{DynamicResource KeyShine}" IsHitTestVisible="False"/>
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="B" Property="Background" Value="{StaticResource KeyHover}"/>
+                                <Setter TargetName="B" Property="Background" Value="{DynamicResource KeyHover}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="B" Property="Background" Value="{StaticResource KeyPress}"/>
+                                <Setter TargetName="B" Property="Background" Value="{DynamicResource KeyPress}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
                         </ControlTemplate.Triggers>
@@ -57,7 +44,7 @@
         </Style>
 
         <Style TargetType="ToggleButton">
-            <Setter Property="Foreground" Value="{StaticResource Text}"/>
+            <Setter Property="Foreground" Value="{DynamicResource KeyText}"/>
             <Setter Property="Background" Value="#2C2C32"/>
             <Setter Property="Padding" Value="12,2"/>
             <Setter Property="Margin" Value="0,0,6,0"/>
@@ -67,33 +54,26 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="ToggleButton">
                         <Grid>
-                            <Border x:Name="B" CornerRadius="9" BorderThickness="1" BorderBrush="#3C3C47" Padding="{TemplateBinding Padding}" Background="{StaticResource KeyFill}">
+                            <Border x:Name="B" CornerRadius="{DynamicResource KeyRadius}" BorderThickness="{DynamicResource KeyBorderWidth}" BorderBrush="{DynamicResource KeyBorder}"
+                                    Padding="{TemplateBinding Padding}" Background="{DynamicResource KeyFill}" Effect="{DynamicResource KeyShadow}">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
                             <!-- a soft light along the top edge, like a glass key -->
-                            <Border CornerRadius="9" BorderThickness="1" IsHitTestVisible="False">
-                                <Border.BorderBrush>
-                                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                        <GradientStop Color="#33FFFFFF" Offset="0"/>
-                                        <GradientStop Color="#00FFFFFF" Offset="0.55"/>
-                                    </LinearGradientBrush>
-                                </Border.BorderBrush>
-                            </Border>
+                            <Border CornerRadius="{DynamicResource KeyRadius}" BorderThickness="1" BorderBrush="{DynamicResource KeyShine}" IsHitTestVisible="False"/>
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="B" Property="Background" Value="{StaticResource KeyHover}"/>
+                                <Setter TargetName="B" Property="Background" Value="{DynamicResource KeyHover}"/>
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="B" Property="Background" Value="{StaticResource KeyOn}"/>
-                                <Setter TargetName="B" Property="BorderBrush" Value="#6CC27A"/>
-                                <Setter TargetName="B" Property="Effect">
-                                    <Setter.Value><DropShadowEffect Color="#4FA35C" BlurRadius="14" ShadowDepth="0" Opacity="0.55"/></Setter.Value>
-                                </Setter>
+                                <Setter TargetName="B" Property="Background" Value="{DynamicResource KeyOnFill}"/>
+                                <Setter TargetName="B" Property="BorderBrush" Value="{DynamicResource KeyOnBorder}"/>
+                                <Setter TargetName="B" Property="Effect" Value="{DynamicResource KeyOnGlow}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource KeyOnText}"/>
                             </Trigger>
                             <MultiTrigger>
                                 <MultiTrigger.Conditions><Condition Property="IsChecked" Value="True"/><Condition Property="IsMouseOver" Value="True"/></MultiTrigger.Conditions>
-                                <Setter TargetName="B" Property="Background" Value="{StaticResource KeyOnHover}"/>
+                                <Setter TargetName="B" Property="Background" Value="{DynamicResource KeyOnHover}"/>
                             </MultiTrigger>
                             <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
                         </ControlTemplate.Triggers>
@@ -102,23 +82,77 @@
             </Setter>
         </Style>
 
-        <!-- flat icon button (hamburger, window buttons) -->
-        <Style x:Key="IconButton" TargetType="Button">
+        <!-- the content switches (General, NSFW, Very) have their own "on" colours -->
+        <Style x:Key="ContentToggle" TargetType="ToggleButton" BasedOn="{StaticResource {x:Type ToggleButton}}">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Grid>
+                            <Border x:Name="B" CornerRadius="{DynamicResource KeyRadius}" BorderThickness="{DynamicResource KeyBorderWidth}" BorderBrush="{DynamicResource KeyBorder}"
+                                    Padding="{TemplateBinding Padding}" Background="{DynamicResource KeyFill}" Effect="{DynamicResource KeyShadow}">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <!-- a soft light along the top edge, like a glass key -->
+                            <Border CornerRadius="{DynamicResource KeyRadius}" BorderThickness="1" BorderBrush="{DynamicResource KeyShine}" IsHitTestVisible="False"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="B" Property="Background" Value="{DynamicResource KeyHover}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="B" Property="Background" Value="{DynamicResource KeyOnFillC}"/>
+                                <Setter TargetName="B" Property="BorderBrush" Value="{DynamicResource KeyOnBorderC}"/>
+                                <Setter TargetName="B" Property="Effect" Value="{DynamicResource KeyOnGlowC}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource KeyOnTextC}"/>
+                            </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions><Condition Property="IsChecked" Value="True"/><Condition Property="IsMouseOver" Value="True"/></MultiTrigger.Conditions>
+                                <Setter TargetName="B" Property="Background" Value="{DynamicResource KeyOnHoverC}"/>
+                            </MultiTrigger>
+                            <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- breadcrumbs: plain text, the current folder in bold -->
+        <Style x:Key="Crumb" TargetType="Button">
             <Setter Property="Foreground" Value="{StaticResource Text}"/>
             <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding" Value="6,2"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="B" Background="{TemplateBinding Background}" CornerRadius="4" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#2C2C33"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- flat icon button (hamburger, window buttons) -->
+        <Style x:Key="IconButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{DynamicResource IconText}"/>
+            <Setter Property="Background" Value="Transparent"/>
             <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
-            <Setter Property="FontSize" Value="14"/>
-            <Setter Property="Width" Value="40"/>
+            <Setter Property="FontSize" Value="{DynamicResource IconGlyph}"/>
+            <Setter Property="Width" Value="{DynamicResource IconSize}"/>
             <Setter Property="Margin" Value="0"/>
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="B" Background="{TemplateBinding Background}" CornerRadius="8">
+                        <Border x:Name="B" Background="{TemplateBinding Background}" CornerRadius="{DynamicResource IconRadius}">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#3A3A42"/></Trigger>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#33343C"/></Trigger>
                             <Trigger Property="IsPressed" Value="True"><Setter TargetName="B" Property="Background" Value="#46464F"/></Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -181,17 +215,19 @@
         <!-- sidebar entries -->
         <Style x:Key="SideItem" TargetType="ToggleButton">
             <Setter Property="Foreground" Value="{StaticResource Text}"/>
+            <Setter Property="FontSize" Value="13.5"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ToggleButton">
-                        <Border x:Name="B" Background="{TemplateBinding Background}" CornerRadius="6" Padding="14,10" Margin="8,2">
-                            <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center"/>
+                        <Border x:Name="B" Background="{TemplateBinding Background}" CornerRadius="9" Padding="12,9" Margin="0,1">
+                            <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#2E2E35"/></Trigger>
-                            <Trigger Property="IsChecked" Value="True"><Setter TargetName="B" Property="Background" Value="#34523A"/></Trigger>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#26262C"/></Trigger>
+                            <Trigger Property="IsChecked" Value="True"><Setter TargetName="B" Property="Background" Value="#2A2A31"/></Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -276,7 +312,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TextBox">
-                        <Border x:Name="B" Background="{TemplateBinding Background}" BorderBrush="{StaticResource Edge}" BorderThickness="1" CornerRadius="9">
+                        <Border x:Name="B" Background="{TemplateBinding Background}" BorderBrush="{StaticResource Edge}" BorderThickness="1" CornerRadius="{DynamicResource KeyRadius}">
                             <ScrollViewer x:Name="PART_ContentHost" Padding="{TemplateBinding Padding}" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
@@ -318,7 +354,7 @@
                                           IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
                                 <ToggleButton.Template>
                                     <ControlTemplate TargetType="ToggleButton">
-                                        <Border x:Name="B" Background="{Binding Background, RelativeSource={RelativeSource AncestorType=ComboBox}}" BorderBrush="#3C3C47" BorderThickness="1" CornerRadius="9"/>
+                                        <Border x:Name="B" Background="{Binding Background, RelativeSource={RelativeSource AncestorType=ComboBox}}" BorderBrush="{DynamicResource KeyBorder}" BorderThickness="1" CornerRadius="{DynamicResource KeyRadius}"/>
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#3A3A42"/></Trigger>
                                         </ControlTemplate.Triggers>
@@ -331,7 +367,7 @@
                                        HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0"/>
                             <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
                                 <Border MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}" MaxHeight="{TemplateBinding MaxDropDownHeight}"
-                                        Background="#202026" BorderBrush="{StaticResource Edge}" BorderThickness="1" CornerRadius="5" Margin="0,3,8,8" Padding="0,3">
+                                        Background="#1C1C20" BorderBrush="{StaticResource Edge}" BorderThickness="1" CornerRadius="8" Margin="0,3,8,8" Padding="0,3">
                                     <Border.Effect><DropShadowEffect BlurRadius="10" ShadowDepth="2" Opacity="0.5"/></Border.Effect>
                                     <ScrollViewer><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/></ScrollViewer>
                                 </Border>
@@ -444,7 +480,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ToolTip">
-                        <Border Background="#26262C" BorderBrush="{StaticResource Edge}" BorderThickness="1" CornerRadius="4" Padding="9,5">
+                        <Border Background="#1C1C20" BorderBrush="{StaticResource Edge}" BorderThickness="1" CornerRadius="6" Padding="9,5">
                             <ContentPresenter/>
                         </Border>
                     </ControlTemplate>
@@ -460,7 +496,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ContextMenu">
-                        <Border Background="#202026" BorderBrush="{StaticResource Edge}" BorderThickness="1" CornerRadius="6" Padding="4">
+                        <Border Background="#1C1C20" BorderBrush="{StaticResource Edge}" BorderThickness="1" CornerRadius="10" Padding="4">
                             <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle"/>
                         </Border>
                     </ControlTemplate>

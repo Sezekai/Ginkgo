@@ -32,7 +32,10 @@
             </DockPanel>
             <CheckBox x:Name="WarmBox" Content="Keep the thumbnails in memory (instant lookups; uses free memory, gives it back when other programs need it)" Foreground="#E4E4E8" Margin="0,0,0,6" Click="OnWarmChanged"/>
             <TextBlock Text="Look" FontSize="16" FontWeight="SemiBold" Margin="0,16,0,6"/>
-            <CheckBox x:Name="GradientBox" Content="The menu bar's colour fade starts at the very top (includes the title bar)" Foreground="#E4E4E8" Margin="0,0,0,6" Click="OnGradientChanged"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                <Button Content="Button look..." Click="OnLook"/>
+                <TextBlock Text="shape, size, colours, outline, glow and shadow of the buttons" Foreground="#9AA0A6" VerticalAlignment="Center" Margin="10,0,0,0"/>
+            </StackPanel>
             <TextBlock Text="Browse" FontSize="16" FontWeight="SemiBold" Margin="0,16,0,6"/>
             <DockPanel Margin="0,0,0,6">
                 <TextBlock x:Name="RadiusText" DockPanel.Dock="Right" Width="44" TextAlignment="Right" VerticalAlignment="Center"/>

@@ -45,7 +45,7 @@ public sealed class FolderPanel : Border
     public FolderPanel(string sort, bool reverse)
     {
         _sort = sort; _reverse = reverse;
-        Background = Frozen("#1E1E23"); BorderBrush = Frozen("#3A3A42"); BorderThickness = new Thickness(1); CornerRadius = new CornerRadius(6);
+        Background = Frozen("#1C1C20"); BorderBrush = Frozen("#3A3A42"); BorderThickness = new Thickness(1); CornerRadius = new CornerRadius(6);
         Padding = new Thickness(12); Width = 640;
 
         foreach (var (label, key) in new[] { ("Name", "Name"), ("Number of files", "Files"), ("Size on disk", "Size"), ("Newest added", "Newest") })

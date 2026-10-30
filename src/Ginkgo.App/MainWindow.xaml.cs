@@ -51,6 +51,7 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
+        _settings.Look.Apply(Application.Current.Resources);      // the button look, before anything is drawn
         InitializeComponent();
         System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.SustainedLowLatency;
         _engine = new Engine(_settings);
@@ -97,7 +98,6 @@ public partial class MainWindow : Window
         View.ItemActivated += i => { if (RecentlyNavigated()) return; if (IsFolderTile(i)) OpenFolder(_page!.Tiles[i].Path); else OpenViewer(i); };
         InitBrowse();
         BarRow.MoreButton = MoreBtn;
-        ApplyBarLook();
         // a click anywhere else closes the drop-down; it also closes when everything fits again
         PreviewMouseDown += (_, e) =>
         {
@@ -351,7 +351,6 @@ public partial class MainWindow : Window
         View.PrefetchBudgetBytes = d * 36 / 100;
         if (_loader is not null) _loader.FadeEnabled = _settings.FadeSharpening;
         SaveSettings();
-        ApplyBarLook();
         double r = _settings.CoverRounded ? _settings.CoverRadius : 0;
         if (InBrowse && Math.Abs(View.CoverRadius - r) > 0.1) BuildView(true);     // covers are cut with their corners: remake them
     }
@@ -606,49 +605,6 @@ public partial class MainWindow : Window
         try { DragMove(); } catch { }
     }
 
-    // ---- the colour fade of the bars: the colours along the bottom of the menu bar, fading to the title bar's colour above ----
-
-    private static readonly Color TitleColour = Color.FromRgb(0x1B, 0x1B, 0x20);
-
-    private static Brush Band()
-    {
-        var b = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 0) };
-        b.GradientStops.Add(new GradientStop(Color.FromRgb(0x5A, 0x6B, 0xD8), 0));
-        b.GradientStops.Add(new GradientStop(Color.FromRgb(0xC7, 0x7D, 0xAE), 0.3));
-        b.GradientStops.Add(new GradientStop(Color.FromRgb(0xF3, 0xA3, 0x5B), 0.6));
-        b.GradientStops.Add(new GradientStop(Color.FromRgb(0x4C, 0xC7, 0x9A), 1));
-        b.Freeze(); return b;
-    }
-
-    /// <summary>A layer of the title bar's colour, <paramref name="top"/> opaque at the top to <paramref name="bottom"/> at the bottom.</summary>
-    private static Brush Shade(double top, double mid, double bottom)
-    {
-        var b = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(0, 1) };
-        Color C(double a) => Color.FromArgb((byte)Math.Round(a * 255), TitleColour.R, TitleColour.G, TitleColour.B);
-        b.GradientStops.Add(new GradientStop(C(top), 0));
-        b.GradientStops.Add(new GradientStop(C(mid), 0.5));
-        b.GradientStops.Add(new GradientStop(C(bottom), 1));
-        b.Freeze(); return b;
-    }
-
-    public void ApplyBarLook()
-    {
-        TopBar.Background = Band();
-        if (_settings.GradientWithTitle)
-        {
-            // one fade from the top of the window: the title bar gets the first hint of colour, the menu bar carries it on
-            TitleBar.Background = Band();
-            TitleShade.Background = Shade(1.0, 0.97, 0.9);
-            BarShade.Background = Shade(0.9, 0.72, 0.38);
-        }
-        else
-        {
-            TitleBar.Background = new SolidColorBrush(TitleColour);
-            TitleShade.Background = null;
-            BarShade.Background = Shade(1.0, 0.82, 0.38);
-        }
-    }
-
     // ---- controls that did not fit in the bar: the more button opens them in rows under the bar ----
     private void OnMoreBar(object s, RoutedEventArgs e) => BarRow.Expanded = !BarRow.Expanded;
 
@@ -757,16 +713,25 @@ public partial class MainWindow : Window
         var ease = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut };
         if (open)
         {
+            // the card drops down just under the menu button
+            var btn = BarRow.Children.OfType<Button>().FirstOrDefault();
+            double top = btn is not null && btn.IsVisible ? btn.TranslatePoint(new Point(0, btn.ActualHeight), Root).Y + 6 : 8;
+            double left = btn is not null && btn.IsVisible ? Math.Max(8, btn.TranslatePoint(new Point(0, 0), Root).X - 4) : 10;
+            Side.Margin = new Thickness(left, Math.Max(8, top), 0, 0);
+            Side.MaxHeight = Math.Max(200, Root.ActualHeight - Side.Margin.Top - 12);
+            SideLibrary.Text = _settings.LibraryRoot;
             SideLayer.Visibility = Visibility.Visible;
-            SideShift.BeginAnimation(TranslateTransform.XProperty, new System.Windows.Media.Animation.DoubleAnimation(0, TimeSpan.FromMilliseconds(170)) { EasingFunction = ease });
-            Scrim.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(170)));
+            SideShift.BeginAnimation(TranslateTransform.YProperty, new System.Windows.Media.Animation.DoubleAnimation(-8, 0, TimeSpan.FromMilliseconds(150)) { EasingFunction = ease });
+            Side.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(130)));
+            Scrim.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(150)));
         }
         else
         {
-            var slide = new System.Windows.Media.Animation.DoubleAnimation(-260, TimeSpan.FromMilliseconds(150)) { EasingFunction = ease };
-            slide.Completed += (_, _) => { if (!_sideOpen) SideLayer.Visibility = Visibility.Collapsed; };
-            SideShift.BeginAnimation(TranslateTransform.XProperty, slide);
-            Scrim.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(0, TimeSpan.FromMilliseconds(150)));
+            var fade = new System.Windows.Media.Animation.DoubleAnimation(0, TimeSpan.FromMilliseconds(110));
+            fade.Completed += (_, _) => { if (!_sideOpen) SideLayer.Visibility = Visibility.Collapsed; };
+            Side.BeginAnimation(OpacityProperty, fade);
+            SideShift.BeginAnimation(TranslateTransform.YProperty, new System.Windows.Media.Animation.DoubleAnimation(-6, TimeSpan.FromMilliseconds(110)) { EasingFunction = ease });
+            Scrim.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(0, TimeSpan.FromMilliseconds(110)));
         }
         ApplyBar();
     }
@@ -782,7 +747,14 @@ public partial class MainWindow : Window
     }
 
     private void OnSideSettings(object s, RoutedEventArgs e) { ((System.Windows.Controls.Primitives.ToggleButton)s).IsChecked = false; SetSidebar(false); OpenSettings(); }
-    private void OnSideKeys(object s, RoutedEventArgs e) { ((System.Windows.Controls.Primitives.ToggleButton)s).IsChecked = false; SetSidebar(false); ShowKeys(false); }
+    private void OnSideLook(object s, RoutedEventArgs e) { ((System.Windows.Controls.Primitives.ToggleButton)s).IsChecked = false; SetSidebar(false); OpenLook(); }
+
+    /// <summary>The button look window: changes show at once; Save keeps them.</summary>
+    public void OpenLook()
+    {
+        var w = new ButtonLookWindow(_settings.Look, () => _settings.Look.Apply(Application.Current.Resources)) { Owner = this };
+        if (w.ShowDialog() == true) SaveSettings();
+    }
 
     // ---- keyboard shortcut list ----
 

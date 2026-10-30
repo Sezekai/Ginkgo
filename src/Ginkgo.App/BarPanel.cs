@@ -28,7 +28,7 @@ public sealed class BarPanel : Panel
     public bool Expanded { get => _expanded; set { if (_expanded == value) return; _expanded = value; InvalidateMeasure(); InvalidateVisual(); } }
     private readonly Dictionary<UIElement, Rect> _extra = new();
     private Rect _extraBounds = Rect.Empty;
-    private static readonly System.Windows.Media.Brush DropBack = Frozen(System.Windows.Media.Color.FromRgb(32, 32, 38));
+    private static readonly System.Windows.Media.Brush DropBack = Frozen(System.Windows.Media.Color.FromRgb(28, 28, 32));
     private static readonly System.Windows.Media.Pen DropEdge = new(Frozen(System.Windows.Media.Color.FromRgb(58, 58, 66)), 1);
     private static System.Windows.Media.Brush Frozen(System.Windows.Media.Color c) { var b = new System.Windows.Media.SolidColorBrush(c); b.Freeze(); return b; }
 

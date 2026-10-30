@@ -196,8 +196,7 @@ public partial class MainWindow
 
     private void AddCrumb(string text, string path, bool current)
     {
-        var b = new Button { Content = text, Height = 28, Margin = new Thickness(0), Padding = new Thickness(8, 2, 8, 2), FontWeight = current ? FontWeights.SemiBold : FontWeights.Normal };
-        if (current) b.Background = System.Windows.Media.Brushes.Transparent;
+        var b = new Button { Content = text, Style = (Style)FindResource("Crumb"), FontWeight = current ? FontWeights.SemiBold : FontWeights.Normal };
         b.Click += (_, _) => { if (!current) _ = Go("Browse", path); };
         Crumbs.Children.Add(b);
     }
