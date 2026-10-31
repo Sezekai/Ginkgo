@@ -34,18 +34,20 @@ public readonly record struct Loc(int Pack, long Off, int Len);
 /// <summary>Makes thumbnails (three sizes) for every image that doesn't have them yet, newest first, and records them in the index.</summary>
 public static class ThumbnailPipeline
 {
-    private readonly record struct Outcome(long Id, ThumbResult? Result, Loc Full, Loc Small, Loc Micro);
+    private readonly record struct Outcome(long Id, ThumbResult? Result, Loc Full, Loc Small, Loc Micro, double Seconds = 0);
 
     public static async Task RunAsync(IndexDb db, ThumbStores stores, PipelineStats stats, int workers, CancellationToken ct)
     {
-        var todo = new List<(long id, string path)>();
+        var todo = new List<(long id, string path, int kind)>();
+        bool videos = VideoTools.Available;
         using (var c = db.Open())
         using (var cmd = c.CreateCommand())
         {
             // Videos and GIF animation come later; GIFs get a first-frame thumbnail now.
-            cmd.CommandText = "SELECT id, path FROM files WHERE state IN (0,3) AND kind<2 AND missing_since=0 ORDER BY first_seen DESC, mtime DESC";
+            // videos too when ffmpeg is there (a frame for the thumbnail, plus their length); otherwise they wait
+            cmd.CommandText = "SELECT id, path, kind FROM files WHERE state IN (0,3) AND kind<" + (videos ? 3 : 2) + " AND missing_since=0 ORDER BY first_seen DESC, mtime DESC";
             using var r = cmd.ExecuteReader();
-            while (r.Read()) todo.Add((r.GetInt64(0), r.GetString(1)));
+            while (r.Read()) todo.Add((r.GetInt64(0), r.GetString(1), r.GetInt32(2)));
         }
         stats.Total = todo.Count; stats.Done = 0; stats.Failed = 0; stats.Running = true;
 
@@ -80,9 +82,17 @@ public static class ThumbnailPipeline
                             Outcome o;
                             try
                             {
-                                var th = ThumbMaker.Make(item.path);
+                                ThumbResult th; double secs = 0;
+                                if (item.kind == (int)MediaKind.Video)
+                                {
+                                    var info = VideoTools.Probe(item.path);
+                                    secs = info.Seconds;
+                                    using var frame = VideoTools.Frame(item.path, info.Seconds, ThumbMaker.MaxW);
+                                    th = ThumbMaker.MakeFrom(frame, info.Width, info.Height);
+                                }
+                                else th = ThumbMaker.Make(item.path);
                                 var f = stores.Full.Append(th.Bytes); var s = stores.Small.Append(th.Small); var m = stores.Micro.Append(th.Micro);
-                                o = new Outcome(item.id, th, new Loc(f.pack, f.offset, f.length), new Loc(s.pack, s.offset, s.length), new Loc(m.pack, m.offset, m.length));
+                                o = new Outcome(item.id, th, new Loc(f.pack, f.offset, f.length), new Loc(s.pack, s.offset, s.length), new Loc(m.pack, m.offset, m.length), secs);
                                 Interlocked.Increment(ref stats.Done);
                             }
                             catch (Exception ex)
@@ -116,7 +126,7 @@ public static class ThumbnailPipeline
         using var ok = c.CreateCommand();
         ok.Transaction = tx;
         ok.CommandText = "UPDATE files SET w=$w,h=$h,tw=$tw,th=$th,thumb_pack=$p,thumb_off=$o,thumb_len=$l," +
-                         "s_pack=$sp,s_off=$so,s_len=$sl,m_pack=$mp,m_off=$mo,m_len=$ml,state=1 WHERE id=$id";
+                         "s_pack=$sp,s_off=$so,s_len=$sl,m_pack=$mp,m_off=$mo,m_len=$ml,duration=$d,state=1 WHERE id=$id";
         var P = ok.Parameters;
         var pw = P.Add("$w", SqliteType.Integer); var ph = P.Add("$h", SqliteType.Integer);
         var ptw = P.Add("$tw", SqliteType.Integer); var pth = P.Add("$th", SqliteType.Integer);
@@ -124,6 +134,7 @@ public static class ThumbnailPipeline
         var psp = P.Add("$sp", SqliteType.Integer); var pso = P.Add("$so", SqliteType.Integer); var psl = P.Add("$sl", SqliteType.Integer);
         var pmp = P.Add("$mp", SqliteType.Integer); var pmo = P.Add("$mo", SqliteType.Integer); var pml = P.Add("$ml", SqliteType.Integer);
         var pid = P.Add("$id", SqliteType.Integer);
+        var pd = P.Add("$d", SqliteType.Real);
         using var bad = c.CreateCommand();
         bad.Transaction = tx;
         bad.CommandText = "UPDATE files SET state=2 WHERE id=$id";
@@ -135,7 +146,7 @@ public static class ThumbnailPipeline
             pp.Value = o.Full.Pack; po.Value = o.Full.Off; pl.Value = o.Full.Len;
             psp.Value = o.Small.Pack; pso.Value = o.Small.Off; psl.Value = o.Small.Len;
             pmp.Value = o.Micro.Pack; pmo.Value = o.Micro.Off; pml.Value = o.Micro.Len;
-            pid.Value = o.Id;
+            pid.Value = o.Id; pd.Value = o.Seconds;
             ok.ExecuteNonQuery();
         }
         tx.Commit();

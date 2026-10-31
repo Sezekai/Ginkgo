@@ -36,6 +36,28 @@ public static class ThumbMaker
         finally { resized?.Dispose(); }
     }
 
+    /// <summary>Thumbnails from a picture already in memory (a video frame). <paramref name="w"/> and <paramref name="h"/> are the real size of the video.</summary>
+    public static ThumbResult MakeFrom(SKBitmap frame, int w, int h)
+    {
+        var copy = frame.Copy(SKColorType.Bgra8888) ?? throw new InvalidDataException("frame unreadable");
+        using var bmp = CropToLimits(copy);
+        int tw = Math.Min(MaxW, bmp.Width);
+        int th = Math.Max(1, (int)Math.Round(bmp.Height * (tw / (double)bmp.Width)));
+        SKBitmap? resized = null;
+        try
+        {
+            var final = bmp;
+            if (tw != bmp.Width)
+            {
+                resized = bmp.Resize(new SKImageInfo(tw, th, SKColorType.Bgra8888, SKAlphaType.Premul), SKFilterQuality.Medium);
+                if (resized is not null) final = resized;
+            }
+            return new ThumbResult(w, h, final.Width, final.Height,
+                Encode(final, MaxW, Quality), Encode(final, SmallW, SmallQuality), Encode(final, MicroW, MicroQuality));
+        }
+        finally { resized?.Dispose(); }
+    }
+
     /// <summary>The sharper thumbnail (up to 1280 px wide) for big tiles. Reads the original once.</summary>
     public static byte[] MakeLarge(string path)
     {

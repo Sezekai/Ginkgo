@@ -59,6 +59,7 @@ public sealed class IndexDb
 
         // identity and soft deletes: file_id survives moves and renames; missing_since is when a file was first not found (0 = present)
         if (!have.Contains("file_id")) Exec(c, "ALTER TABLE files ADD COLUMN file_id TEXT");
+        if (!have.Contains("duration")) Exec(c, "ALTER TABLE files ADD COLUMN duration REAL NOT NULL DEFAULT 0");     // videos: length in seconds
         if (!have.Contains("missing_since")) Exec(c, "ALTER TABLE files ADD COLUMN missing_since INTEGER NOT NULL DEFAULT 0");
         Exec(c, """
             CREATE INDEX IF NOT EXISTS ix_files_fileid ON files(file_id);

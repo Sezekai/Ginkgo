@@ -48,6 +48,7 @@ using (var c = db.Open())
     Check(IndexDb.Scalar(c, "SELECT kind FROM files WHERE path LIKE '%five.gif'") == (int)MediaKind.Gif, "gif kind");
 }
 
+VideoTools.Disabled = true;          // first without the video tools: videos wait
 var stores = new ThumbStores(Path.Combine(tmp, "cache"));
 var store = stores.Full;
 var stats = new PipelineStats();
@@ -450,6 +451,39 @@ Check(again.BackfillTotal == 0, "backfill has nothing left");
     CacheMigration.MarkEmpty(empty);
     Check(CacheMigration.IsDone(empty), "empty move is marked");
 }
+
+// ---- videos (only where ffmpeg and ffprobe are available, as on the build machine) ----
+VideoTools.Disabled = false;
+if (VideoTools.Available)
+{
+    var vdir = Path.Combine(tmp, "vids"); Directory.CreateDirectory(vdir);
+    string mp4 = Path.Combine(vdir, "clip one.mp4"), webm = Path.Combine(vdir, "tall.webm");
+    void Make(string args)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo(VideoTools.FfmpegPath!, args) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true };
+        using var p = System.Diagnostics.Process.Start(psi)!; p.StandardError.ReadToEnd(); p.WaitForExit();
+    }
+    Make($"-y -v error -f lavfi -i testsrc=duration=4:size=640x360:rate=25 -pix_fmt yuv420p \"{mp4}\"");
+    Make($"-y -v error -f lavfi -i testsrc=duration=2:size=240x480:rate=25 -c:v libvpx-vp9 \"{webm}\"");
+    var i1 = VideoTools.Probe(mp4);
+    Check(i1.Width == 640 && i1.Height == 360 && Math.Abs(i1.Seconds - 4) < 0.2, $"video size and length read ({i1.Width}x{i1.Height}, {i1.Seconds:F2}s, {i1.Codec})");
+    using (var fr = VideoTools.Frame(mp4, i1.Seconds, 320))
+    {
+        Check(fr.Width == 320 && fr.Height == 180, $"a frame is grabbed at the asked width ({fr.Width}x{fr.Height})");
+        var th = ThumbMaker.MakeFrom(fr, i1.Width, i1.Height);
+        Check(th.Width == 640 && th.ThumbWidth == 320 && th.Micro.Length > 0 && th.Small.Length > 0, "video thumbnails in three sizes");
+    }
+    if (File.Exists(webm))
+    {
+        var i2 = VideoTools.Probe(webm);
+        Check(i2.Width == 240 && i2.Height == 480 && i2.Seconds > 1.5, $"webm read ({i2.Width}x{i2.Height}, {i2.Seconds:F2}s)");
+    }
+    bool threw = false;
+    try { VideoTools.Probe(Path.Combine(lib, "Artists/clip.mp4")); } catch { threw = true; }
+    Check(threw, "a broken video is reported, not hung on");
+    Console.WriteLine("::notice::video tools found and tested");
+}
+else Console.WriteLine("::notice::video tools not found here: video tests skipped");
 
 stores.Dispose();
 try { Directory.Delete(tmp, true); } catch { }
