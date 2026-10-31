@@ -509,6 +509,7 @@ public partial class MainWindow : Window
             if (alt0 && k0 == Key.Left) { GoBack(); e.Handled = true; return; }
             if (alt0 && k0 == Key.Right) { GoForward(); e.Handled = true; return; }
             if (ViewerRoot.Visibility == Visibility.Visible && e.Key == Key.Back) { GoBack(); e.Handled = true; return; }
+            if ((Keyboard.Modifiers & ModifierKeys.Control) != 0 && e.Key == Key.W) { Close(); e.Handled = true; return; }
         }
         if (ViewerRoot.Visibility == Visibility.Visible) { ViewerKey(e); return; }
         bool typing = Keyboard.FocusedElement is TextBox;
@@ -516,10 +517,13 @@ public partial class MainWindow : Window
         if (e.Key == Key.Escape)
         {
             if (_sideOpen) { SetSidebar(false); e.Handled = true; }
+            else if (_fullscreen && !typing) { ToggleFullscreen(); e.Handled = true; }
             else if (typing) { SearchBox.Text = ""; View.Focus(); e.Handled = true; }
             return;
         }
         if (ctrl && e.Key == Key.B) { SetSidebar(!_sideOpen); e.Handled = true; return; }
+        if (ctrl && e.Key == Key.W) { Close(); e.Handled = true; return; }
+        if (ctrl && e.Key == Key.S) { OpenSettings(); e.Handled = true; return; }
         if (ctrl && e.Key == Key.F) { RevealBar(); SearchBox.Focus(); SearchBox.SelectAll(); e.Handled = true; return; }
         if (ctrl && e.Key is Key.D1 or Key.D2 or Key.D3 or Key.D4)
         {
@@ -543,6 +547,8 @@ public partial class MainWindow : Window
             case Key.Enter: if (IsFolderTile(View.HoverIndex)) { OpenFolder(_page!.Tiles[View.HoverIndex].Path); e.Handled = true; } else if (View.HoverIndex >= 0) { OpenViewer(View.HoverIndex); e.Handled = true; } break;
             case Key.OemQuestion: RevealBar(); SearchBox.Focus(); e.Handled = true; break;
             case Key.K: ShowKeys(false); e.Handled = true; break;
+            case Key.S: OpenSettings(); e.Handled = true; break;
+            case Key.F: case Key.F11: ToggleFullscreen(); e.Handled = true; break;
             case Key.F3: _diag = !_diag; DiagText.Visibility = _diag ? Visibility.Visible : Visibility.Collapsed; e.Handled = true; break;
             case Key.M: SetSidebar(!_sideOpen); e.Handled = true; break;
             case Key.H: if (_barManual) OnShowBar(this, e); else OnHideBar(this, e); e.Handled = true; break;
@@ -760,7 +766,7 @@ public partial class MainWindow : Window
 
     private static readonly (string keys, string what)[] GridKeys =
     {
-        ("Ctrl+B  or  M", "Open or close the side menu"), ("H", "Hide or show the top bar"), ("/  or  Ctrl+F", "Search"),
+        ("Ctrl+B  or  M", "Open or close the menu"), ("S  or  Ctrl+S", "Settings"), ("F  or  F11", "Full screen (Esc to leave)"), ("Ctrl+W", "Close Ginkgo"), ("H", "Hide or show the top bar"), ("/  or  Ctrl+F", "Search"),
         ("G   N   V", "Show General / NSFW / Very files"), ("L", "Equal columns  or  equal rows"), ("+   -   or  Ctrl + wheel", "Picture size"),
         ("R", "Reshuffle (when sorted randomly)"), ("Home   End", "Top / bottom"), ("Page Up   Page Down", "Scroll one screen"),
         ("Enter  or  double-click", "Open the picture under the mouse"), ("Middle button", "Scroll by moving the mouse"),
@@ -770,7 +776,7 @@ public partial class MainWindow : Window
     {
         ("Left   Right   (Space)", "Previous / next picture"), ("Home   End", "First / last picture"), ("Mouse wheel", "Zoom in and out"),
         ("Drag", "Move a zoomed picture"), ("0", "Fit to window"), ("1", "Actual size (100%)"), ("I", "More or less information"),
-        ("H", "Hide or show the information box"), ("F  or  F11", "Full screen"), ("K", "This list"), ("Esc  or  double-click", "Back to the grid"),
+        ("H", "Hide or show the information box"), ("F  or  F11", "Full screen"), ("K", "This list"), ("Esc  or  double-click", "Leave full screen, then back to the grid"),
     };
 
     private void OnKeysClick(object s, RoutedEventArgs e) => ShowKeys(false);
@@ -836,7 +842,6 @@ public partial class MainWindow : Window
         _vToken++;
         ViewerRoot.Visibility = Visibility.Collapsed;
         Pic.Source = null;
-        if (_fullscreen) ToggleFullscreen();
         View.ScrollToIndex(_vIndex);
         View.Focus();
     }
@@ -1125,7 +1130,7 @@ public partial class MainWindow : Window
     {
         switch (e.Key)
         {
-            case Key.Escape: CloseViewer(); break;
+            case Key.Escape: if (_fullscreen) ToggleFullscreen(); else CloseViewer(); break;
             case Key.Right: case Key.Down: case Key.PageDown: case Key.Space: if (_vIndex + 1 < _paths.Length) ShowIndex(_vIndex + 1); break;
             case Key.Left: case Key.Up: case Key.PageUp: if (_vIndex > _firstFile) ShowIndex(_vIndex - 1); break;
             case Key.Home: ShowIndex(_firstFile); break;
@@ -1150,7 +1155,12 @@ public partial class MainWindow : Window
 
     private void ToggleFullscreen()
     {
-        if (!_fullscreen) { _prevState = WindowState; _prevStyle = WindowStyle; WindowStyle = WindowStyle.None; WindowState = WindowState.Maximized; _fullscreen = true; }
+        if (!_fullscreen)
+        {
+            _prevState = WindowState; _prevStyle = WindowStyle;
+            if (WindowState == WindowState.Maximized) WindowState = WindowState.Normal;      // re-maximising without the frame covers the taskbar too
+            WindowStyle = WindowStyle.None; WindowState = WindowState.Maximized; _fullscreen = true;
+        }
         else { WindowStyle = _prevStyle; WindowState = _prevState; _fullscreen = false; }
         TitleBar.Visibility = _fullscreen ? Visibility.Collapsed : Visibility.Visible;
     }

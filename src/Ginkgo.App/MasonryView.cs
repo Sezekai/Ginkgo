@@ -62,6 +62,7 @@ public sealed class MasonryView : FrameworkElement
     {
         ClipToBounds = true;
         RenderOptions.SetBitmapScalingMode(this, BitmapScalingMode.NearestNeighbor);     // the surface is drawn pixel-for-pixel
+        RenderOptions.SetEdgeMode(this, EdgeMode.Aliased);       // no soft half-pixel row where the view is cut off at its top and bottom edges
         Focusable = true;
         // fades are redrawn once per screen refresh (never faster)
         Loaded += (_, _) => CompositionTarget.Rendering += OnRefresh;

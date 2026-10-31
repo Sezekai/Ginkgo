@@ -11,41 +11,41 @@ namespace Ginkgo.App;
 public sealed class ButtonLook
 {
     // shape and size
-    public double Radius { get; set; } = 7;            // 0 = square ... Height / 2 = pill
-    public double Height { get; set; } = 28;
-    public double IconRadius { get; set; } = 6;
+    public double Radius { get; set; } = 3;            // 0 = square ... Height / 2 = pill
+    public double Height { get; set; } = 26;
+    public double IconRadius { get; set; } = 99;
     public double IconSize { get; set; } = 32;
     public double IconGlyph { get; set; } = 13;
     public string IconColour { get; set; } = "#C4C4CC";
 
     // buttons that are off
-    public string OffStyle { get; set; } = "Vertical";   // Solid, Vertical, Horizontal, BottomGlow
-    public string OffA { get; set; } = "#24242A";
+    public string OffStyle { get; set; } = "Solid";   // Solid, Vertical, Horizontal, BottomGlow
+    public string OffA { get; set; } = "#0E0E12";
     public string OffB { get; set; } = "#19191D";
     public string Text { get; set; } = "#E4E4E8";
 
     // switches that are on: General / NSFW / Very, and the others
-    public string OnStyle { get; set; } = "Vertical";
-    public string ContentA { get; set; } = "#55A863";
-    public string ContentB { get; set; } = "#3A7746";
+    public string OnStyle { get; set; } = "BottomGlow";
+    public string ContentA { get; set; } = "#2E8B4A";
+    public string ContentB { get; set; } = "#8FE6A8";
     public string ContentText { get; set; } = "#FFFFFF";
-    public string OtherA { get; set; } = "#7A62F0";
-    public string OtherB { get; set; } = "#4F3CC2";
+    public string OtherA { get; set; } = "#6A3CF0";
+    public string OtherB { get; set; } = "#C9A8FF";
     public string OtherText { get; set; } = "#FFFFFF";
 
     // edges and light
-    public string Outline { get; set; } = "Solid";        // None, Solid, Lighter, Gradient
-    public string OutlineColour { get; set; } = "#34343E";
-    public double OutlineWidth { get; set; } = 1;
-    public double Shine { get; set; } = 0.2;              // light along the top edge, 0..1
-    public double Glow { get; set; } = 0.45;              // glow round switches that are on, 0..1
+    public string Outline { get; set; } = "Lighter";        // None, Solid, Lighter, Gradient
+    public string OutlineColour { get; set; } = "#0E0E12";
+    public double OutlineWidth { get; set; } = 0.5;
+    public double Shine { get; set; } = 0.35;              // light along the top edge, 0..1
+    public double Glow { get; set; } = 0.75;              // glow round switches that are on, 0..1
     public double Shadow { get; set; } = 0;               // shadow under every button, 0..1
 
     public ButtonLook Copy() => (ButtonLook)MemberwiseClone();
 
     public static readonly (string name, Action<ButtonLook> set)[] Presets =
     {
-        ("Dark glass (default)", l => { var d = new ButtonLook(); foreach (var p in typeof(ButtonLook).GetProperties()) p.SetValue(l, p.GetValue(d)); }),
+        ("Your look (default)", l => { var d = new ButtonLook(); foreach (var p in typeof(ButtonLook).GetProperties()) p.SetValue(l, p.GetValue(d)); }),
         ("Flat", l => { l.OffStyle = "Solid"; l.OffA = "#222228"; l.OnStyle = "Solid"; l.Outline = "None"; l.Shine = 0; l.Glow = 0; l.Shadow = 0; l.Radius = 6; }),
         ("Pill", l => { l.Radius = 99; l.IconRadius = 99; l.OffStyle = "Vertical"; l.Outline = "Lighter"; l.Shine = 0.15; l.Glow = 0.35; }),
         ("Neon outline", l => { l.OffStyle = "Solid"; l.OffA = "#0E0E12"; l.OnStyle = "Solid"; l.Outline = "Gradient"; l.OutlineWidth = 1.5; l.Shine = 0; l.Glow = 0.6; l.Radius = 9;
