@@ -50,6 +50,11 @@ public sealed class MasonryView : FrameworkElement
     private int _downIndex = -1;
     /// <summary>Optional per-tile badge: 1 = GIF.</summary>
     public byte[]? Badges { get; set; }
+    /// <summary>Text for each tile's badge (video length).</summary>
+    public string?[]? BadgeText { get; set; }
+    /// <summary>Plays the GIFs on screen.</summary>
+    public GifAnimator? Gifs { get; set; }
+    private readonly List<(int index, int w, int h, double dist)> _gifWanted = new();
     public int HoverIndex => _hoverIndex;
 
     private ThumbLoader? _thumbs;
@@ -137,7 +142,11 @@ public sealed class MasonryView : FrameworkElement
         ScrollChanged?.Invoke();
     }
 
-    private void OnRefresh(object? sender, EventArgs e) { if (_fadingNow || _needsRender) { _fadingNow = false; _needsRender = false; InvalidateVisual(); } }
+    private void OnRefresh(object? sender, EventArgs e)
+    {
+        if (Gifs is not null && Gifs.Due()) _needsRender = true;            // a playing GIF moves on to its next frame
+        if (_fadingNow || _needsRender) { _fadingNow = false; _needsRender = false; InvalidateVisual(); }
+    }
 
     public double TotalHeight => _layout is null ? 0 : _layout.TotalHeight + _inset;
     private float _inset;
@@ -332,11 +341,11 @@ public sealed class MasonryView : FrameworkElement
     private double _lastDpi;
     private Dictionary<int, object?> _sigPrev = new(), _sigNow = new();
     private readonly List<TileDraw> _tiles = new();
-    private readonly List<(Rect r, bool hovered, bool gif, int label)> _overlay = new();
+    private readonly List<(Rect r, bool hovered, bool gif, int label, int index)> _overlay = new();
     private static readonly uint BgPixel = TileBlit.Pack(18, 18, 20), FadePixel = TileBlit.Pack(40, 40, 46);
     private uint[]? _paletteBgra;
 
-    private struct TileDraw { public int Index, X, Y, W, H; public ThumbLoader.Entry? E; public double A; public bool Changed; }
+    private struct TileDraw { public int Index, X, Y, W, H; public ThumbLoader.Entry? E; public double A; public bool Changed; public ThumbLoader.Pix? Over; }
 
     protected override void OnRender(DrawingContext dc)
     {
@@ -408,16 +417,30 @@ public sealed class MasonryView : FrameworkElement
                 a = (tick - e.FadeStart) / (e.FadeSecs * Stopwatch.Frequency);
                 if (a >= 1) { a = 1; _thumbs!.EndFade(e); } else fading = true;
             }
-            object? sig = e?.Pix;
+            // a playing GIF shows its current frame instead of the still picture
+            ThumbLoader.Pix? over = null;
+            if (Gifs is not null && e is not null && Badges is { } gb && i < gb.Length && gb[i] == 1 && y < offPx + ph && y + hPx > offPx)
+            {
+                over = Gifs.Frame(i);
+                double cy = y + hPx / 2.0 - offPx - ph / 2.0;
+                _gifWanted.Add((i, wPx, hPx, Math.Abs(cy)));
+            }
+            object? sig = (object?)over ?? e?.Pix;
             _sigNow[i] = sig;
             bool changed = a < 1 || !_sigPrev.TryGetValue(i, out var old) || !ReferenceEquals(old, sig);
-            _tiles.Add(new TileDraw { Index = i, X = x, Y = y, W = wPx, H = hPx, E = e, A = a, Changed = changed });
-            bool gif = e is not null && Badges is { } bd && i < bd.Length && bd[i] == 1;
+            _tiles.Add(new TileDraw { Index = i, X = x, Y = y, W = wPx, H = hPx, E = e, A = a, Changed = changed, Over = over });
+            bool gif = e is not null && Badges is { } bd && i < bd.Length && bd[i] != 0;
             int below = i < CoverCount ? (int)(CaptionHeight * dpi) : 0;
             bool labelled = _labels is { } lb && i < lb.Length && lb[i] is not null && y < offPx + ph && y + hPx + below > offPx;
-            if (i == _hoverIndex || gif || labelled) _overlay.Add((new Rect(x / dpi, (y - offPx) / dpi, wPx / dpi, hPx / dpi), i == _hoverIndex, gif, labelled ? i : -1));
+            if (i == _hoverIndex || gif || labelled) _overlay.Add((new Rect(x / dpi, (y - offPx) / dpi, wPx / dpi, hPx / dpi), i == _hoverIndex, gif, labelled ? i : -1, i));
         }
         (_sigPrev, _sigNow) = (_sigNow, _sigPrev);
+        if (Gifs is not null)
+        {
+            _gifWanted.Sort((p, q) => p.dist.CompareTo(q.dist));
+            Gifs.SetVisible(_gifWanted.Select(g => (g.index, g.w, g.h)).ToList());
+            _gifWanted.Clear();
+        }
         Perf.PrepMax = Math.Max(Perf.PrepMax, sw.Elapsed.TotalMilliseconds);
 
         long pt0 = Stopwatch.GetTimestamp();
@@ -426,11 +449,11 @@ public sealed class MasonryView : FrameworkElement
 
         foreach (var kv in _bands.Values)
             dc.DrawImage(kv.Bmp, new Rect(0, (kv.K * BandH - offPx) / dpi, pw / dpi, BandH / dpi));
-        foreach (var (r, hovered, gif, label) in _overlay)
+        foreach (var (r, hovered, gif, label, index) in _overlay)
         {
             if (label >= 0) { if (label < CoverCount) DrawCaptionBelow(dc, r, label, dpi); else DrawCaption(dc, r, label, dpi); }
             if (hovered) dc.DrawRectangle(null, _hover, r);
-            if (gif && r.Width > 70) DrawBadge(dc, r);
+            if (gif && r.Width > 70) DrawBadge(dc, r, index);
         }
         _fadingNow = fading;
         LastRenderMs = sw.Elapsed.TotalMilliseconds;
@@ -490,7 +513,15 @@ public sealed class MasonryView : FrameworkElement
             var (bi, ti, _) = _pieces[k];
             var (p, st) = ptrs[bi];
             var t = _tiles[ti];
-            DrawTile(new Span<byte>((void*)p, st * BandH), st, pw, BandH, t.X, t.Y - _work[bi].K * BandH, t.W, t.H, t.E, t.A, t.Index);
+            var tb = new Span<byte>((void*)p, st * BandH);
+            int ty = t.Y - _work[bi].K * BandH;
+            if (t.Over is { } o)
+            {
+                TileBlit.Fill(tb, st, pw, BandH, t.X, ty, t.W, t.H, BgPixel);            // GIF frames can have see-through parts
+                if (o.W == t.W && o.H == t.H) TileBlit.Copy(tb, st, pw, BandH, t.X, ty, o.Data, o.W, o.H);
+                else TileBlit.CopyScaledSmooth(tb, st, pw, BandH, t.X, ty, t.W, t.H, o.Data, o.W, o.H);
+            }
+            else DrawTile(tb, st, pw, BandH, t.X, ty, t.W, t.H, t.E, t.A, t.Index);
         }
         // pieces never overlap (tiles don't, and a tile is cut into one piece per strip), so they can be painted side by side
         if (area > 120_000 && _pieces.Count > 1) Parallel.For(0, _pieces.Count, Piece);
@@ -661,12 +692,23 @@ public sealed class MasonryView : FrameworkElement
         if (sub.Length > 0) dc.DrawText(st, new Point(r.Left + 8, ty + ft.Height + 2));
     }
 
-    private void DrawBadge(DrawingContext dc, Rect r)
+    private readonly Dictionary<string, FormattedText> _badgeCache = new();
+
+    /// <summary>"GIF", or a video's play mark and length, in the bottom-left corner of the tile.</summary>
+    private void DrawBadge(DrawingContext dc, Rect r, int i)
     {
-        _gifText ??= new FormattedText("GIF", CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 11, Brushes.White, VisualTreeHelper.GetDpi(this).PixelsPerDip);
-        var box = new Rect(r.Left + 6, r.Bottom - 22, _gifText.Width + 10, 16);
+        bool video = Badges is { } bd && i < bd.Length && bd[i] == 2;
+        string text = video ? "\u25B6  " + (BadgeText is { } bt && i < bt.Length ? bt[i] ?? "" : "") : "GIF";
+        if (!_badgeCache.TryGetValue(text, out var ft))
+        {
+            ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 11, Brushes.White, VisualTreeHelper.GetDpi(this).PixelsPerDip);
+            if (video) ft.SetFontSize(8, 0, 1);
+            if (_badgeCache.Count > 500) _badgeCache.Clear();
+            _badgeCache[text] = ft;
+        }
+        var box = new Rect(r.Left + 6, r.Bottom - 22, ft.Width + 10, 16);
         dc.DrawRoundedRectangle(BadgeBack, null, box, 3, 3);
-        dc.DrawText(_gifText, new Point(box.Left + 5, box.Top + 1));
+        dc.DrawText(ft, new Point(box.Left + 5, box.Top + (16 - ft.Height) / 2));
     }
 
     private static Color HsvToColor(double h, double s, double v)

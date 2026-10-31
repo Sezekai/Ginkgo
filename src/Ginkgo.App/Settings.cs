@@ -22,6 +22,7 @@ public sealed class AppSettings
     // what kinds of file are shown
     public bool ShowImages { get; set; } = true;
     public bool ShowGifs { get; set; } = true;
+    public bool ShowVideos { get; set; } = true;
 
     /// <summary>Folders whose OWN files are hidden (paths relative to the library). A folder's subfolders are separate entries.</summary>
     public List<string> OffFolders { get; set; } = new();

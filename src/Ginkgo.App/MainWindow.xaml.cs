@@ -15,6 +15,7 @@ namespace Ginkgo.App;
 public partial class MainWindow : Window
 {
     private readonly AppSettings _settings = AppSettings.Load();
+    private GifAnimator _gifs = null!;
     private readonly Engine _engine;
     private LibraryModel? _model;
     private ThumbLoader? _loader;
@@ -58,7 +59,7 @@ public partial class MainWindow : Window
 
         // restore what the person last chose (NSFW and Very always start off)
         GeneralBtn.IsChecked = _settings.ShowGeneral; NsfwBtn.IsChecked = false; VeryBtn.IsChecked = false;
-        ImagesBtn.IsChecked = _settings.ShowImages; GifsBtn.IsChecked = _settings.ShowGifs;
+        ImagesBtn.IsChecked = _settings.ShowImages; GifsBtn.IsChecked = _settings.ShowGifs; VideosBtn.IsChecked = _settings.ShowVideos;
         RowsBtn.IsChecked = _settings.RowsLayout; View.RowsMode = _settings.RowsLayout;
         SizeSlider.Value = SizeToSlider(_settings.TileSize); View.TileTarget = _settings.TileSize;
         View.TileTargetChanged += size =>
@@ -97,6 +98,8 @@ public partial class MainWindow : Window
         View.HoverChanged += i => StatusText.Text = IsFolderTile(i) ? FolderHoverText(i) : i >= 0 && i < _paths.Length ? HoverText(i) : StatusLine();
         View.ItemActivated += i => { if (RecentlyNavigated()) return; if (IsFolderTile(i)) OpenFolder(_page!.Tiles[i].Path); else OpenViewer(i); };
         InitBrowse();
+        _gifs = new GifAnimator(i => i >= 0 && i < _paths.Length ? _paths[i] : null, () => Dispatcher.BeginInvoke(View.Refresh));
+        View.Gifs = _gifs;
         BarRow.MoreButton = MoreBtn;
         // a click anywhere else closes the drop-down; it also closes when everything fits again
         PreviewMouseDown += (_, e) =>
@@ -192,7 +195,7 @@ public partial class MainWindow : Window
     private ViewQuery CurrentQuery() => new()
     {
         General = GeneralBtn.IsChecked == true, Nsfw = NsfwBtn.IsChecked == true, Very = VeryBtn.IsChecked == true,
-        Images = ImagesBtn.IsChecked == true, Gifs = GifsBtn.IsChecked == true,
+        Images = ImagesBtn.IsChecked == true, Gifs = GifsBtn.IsChecked == true, Videos = VideosBtn.IsChecked == true,
         OffFolders = new HashSet<string>(_settings.OffFolders, StringComparer.OrdinalIgnoreCase),
         Search = SearchBox.Text, Sort = (SortBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "FirstSeen", RandomSeed = _randomSeed,
     };
@@ -244,7 +247,9 @@ public partial class MainWindow : Window
             _loader.CropFor = i => i < crops.Length ? crops[i] : null;
         }
         View.PrefetchBudgetBytes = decoded * 36 / 100;
+        _gifs.Clear();
         View.Badges = result.slice.badges;
+        View.BadgeText = BadgeTexts(result.order, result.slice.badges);
         View.Thumbs = _loader;
         View.CoverRadius = _settings.CoverRounded ? _settings.CoverRadius : 0;
         View.SetItems(result.slice.specs, result.page?.Labels, keepPosition, grid && result.page is not null ? _firstFile : 0);
@@ -259,6 +264,15 @@ public partial class MainWindow : Window
             ? $"{pg.Tiles.Count:N0} folder{(pg.Tiles.Count == 1 ? "" : "s")}, {_order.Length - pg.Tiles.Count:N0} files"
             : $"{_order.Length:N0} shown of {model.Count:N0}";
         if (result.page is { } pp && _order.Length == 0) EmptyNote.Text = "Nothing in this folder matches the current switches and search.";
+    }
+
+    /// <summary>The length shown on video tiles.</summary>
+    private string?[] BadgeTexts(int[] order, byte[] badges)
+    {
+        var m = _model!;
+        var t = new string?[order.Length];
+        for (int k = 0; k < order.Length; k++) if (badges[k] == 2 && order[k] >= 0) t[k] = Clock(m.Duration[order[k]]);
+        return t;
     }
 
     private void DetachLoader() { View.Thumbs = null; _loader?.Dispose(); _loader = null; }
@@ -284,7 +298,7 @@ public partial class MainWindow : Window
     {
         if (_loading) return;
         _settings.ShowGeneral = GeneralBtn.IsChecked == true;
-        _settings.ShowImages = ImagesBtn.IsChecked == true; _settings.ShowGifs = GifsBtn.IsChecked == true;
+        _settings.ShowImages = ImagesBtn.IsChecked == true; _settings.ShowGifs = GifsBtn.IsChecked == true; _settings.ShowVideos = VideosBtn.IsChecked == true;
         BuildView(false);
     }
 
@@ -371,7 +385,15 @@ public partial class MainWindow : Window
     {
         int row = _order[i];
         var m = _model!;
-        return $"{m.Path[row]}   {m.W[row]} x {m.H[row]}   {m.Size[row] / 1048576.0:F1} MB";
+        string len = m.Kind[row] == (byte)MediaKind.Video ? "   " + Clock(m.Duration[row]) : "";
+        return $"{m.Path[row]}   {m.W[row]} x {m.H[row]}{len}   {m.Size[row] / 1048576.0:F1} MB";
+    }
+
+    /// <summary>A video length as 0:42, 3:07 or 1:02:09.</summary>
+    public static string Clock(double seconds)
+    {
+        var t = TimeSpan.FromSeconds(Math.Max(0, Math.Round(seconds)));
+        return t.TotalHours >= 1 ? $"{(int)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00}" : $"{t.Minutes}:{t.Seconds:00}";
     }
 
     private string StatusLine()
@@ -1007,6 +1029,16 @@ public partial class MainWindow : Window
         int row = _order[index];
         var m = _model!;
         string path = m.Path[row];
+        if (m.Kind[row] == (byte)MediaKind.Video)
+        {
+            // playback comes in the next build: show the video's frame for now
+            var vl = _loader;
+            var poster = vl is null ? null : await Task.Run(() => vl.QuickPicture(index, false));
+            if (token != _vToken) return;
+            Pic.Source = poster; _vFull = false;
+            ViewerNote.Text = poster is null ? "Video" : "";
+            return;
+        }
         int w = m.W[row], h = m.H[row];
         var (hw, hh) = FitPixels(row);
         int decodeW = 0, decodeH = 0;
@@ -1061,6 +1093,7 @@ public partial class MainWindow : Window
         if (index < _firstFile || index >= _paths.Length) return;
         int row = _order[index];
         var m = _model!;
+        if (m.Kind[row] == (byte)MediaKind.Video) return;
         var (hw, hh) = FitPixels(row);
         int w = m.W[row], h = m.H[row], decodeW = 0, decodeH = 0;
         if ((double)w / Math.Max(1, h) >= (double)hw / hh) decodeW = Math.Min(w, hw); else decodeH = Math.Min(h, hh);

@@ -7,7 +7,7 @@ namespace Ginkgo.App;
 /// <summary>What the person has asked to see: filters and order.</summary>
 public sealed class ViewQuery
 {
-    public bool General = true, Nsfw, Very, Images = true, Gifs = true;
+    public bool General = true, Nsfw, Very, Images = true, Gifs = true, Videos = true;
     public HashSet<string> OffFolders = new(StringComparer.OrdinalIgnoreCase);
     public string Search = "";
     public string Sort = "FirstSeen";
@@ -23,6 +23,8 @@ public sealed class LibraryModel
     public byte[] Level = Array.Empty<byte>(), Kind = Array.Empty<byte>();
     public int[] W = Array.Empty<int>(), H = Array.Empty<int>();
     public long[] Size = Array.Empty<long>(), Mtime = Array.Empty<long>(), FirstSeen = Array.Empty<long>();
+    /// <summary>Videos: length in seconds (0 for pictures).</summary>
+    public float[] Duration = Array.Empty<float>();
     public int[] FullPack = Array.Empty<int>(), SmallPack = Array.Empty<int>(), MicroPack = Array.Empty<int>(), LargePack = Array.Empty<int>();
     public long[] FullOff = Array.Empty<long>(), SmallOff = Array.Empty<long>(), MicroOff = Array.Empty<long>(), LargeOff = Array.Empty<long>();
     public int[] FullLen = Array.Empty<int>(), SmallLen = Array.Empty<int>(), MicroLen = Array.Empty<int>(), LargeLen = Array.Empty<int>();
@@ -39,18 +41,18 @@ public sealed class LibraryModel
     {
         var m = new LibraryModel();
         using var c = db.Open();
-        long n = IndexDb.Scalar(c, "SELECT COUNT(*) FROM files WHERE " + Visible.Shown + " AND kind<2");
+        long n = IndexDb.Scalar(c, "SELECT COUNT(*) FROM files WHERE " + Visible.Shown + " AND kind<3");
         int cap = (int)n;
         m.Id = new long[cap]; m.Path = new string[cap]; m.Folder = new string[cap]; m.Level = new byte[cap]; m.Kind = new byte[cap];
-        m.W = new int[cap]; m.H = new int[cap]; m.Size = new long[cap]; m.Mtime = new long[cap]; m.FirstSeen = new long[cap];
+        m.W = new int[cap]; m.H = new int[cap]; m.Duration = new float[cap]; m.Size = new long[cap]; m.Mtime = new long[cap]; m.FirstSeen = new long[cap];
         m.FullPack = new int[cap]; m.SmallPack = new int[cap]; m.MicroPack = new int[cap]; m.LargePack = new int[cap];
         m.FullOff = new long[cap]; m.SmallOff = new long[cap]; m.MicroOff = new long[cap]; m.LargeOff = new long[cap];
         m.FullLen = new int[cap]; m.SmallLen = new int[cap]; m.MicroLen = new int[cap]; m.LargeLen = new int[cap];
         var folders = new Dictionary<string, string>();       // one string instance per distinct folder
         using var cmd = c.CreateCommand();
         cmd.CommandText = "SELECT id, path, folder, level, kind, w, h, size, mtime, first_seen, thumb_pack, thumb_off, thumb_len, " +
-                          "s_pack, s_off, s_len, m_pack, m_off, m_len, l_pack, l_off, l_len FROM files WHERE " + Visible.Shown +
-                          " AND kind<2 ORDER BY first_seen DESC, mtime DESC, id";
+                          "s_pack, s_off, s_len, m_pack, m_off, m_len, l_pack, l_off, l_len, duration FROM files WHERE " + Visible.Shown +
+                          " AND kind<3 ORDER BY first_seen DESC, mtime DESC, id";
         using var r = cmd.ExecuteReader();
         int i = 0;
         while (r.Read() && i < cap)
@@ -64,6 +66,7 @@ public sealed class LibraryModel
             m.SmallPack[i] = r.GetInt32(13); m.SmallOff[i] = r.GetInt64(14); m.SmallLen[i] = r.GetInt32(15);
             m.MicroPack[i] = r.GetInt32(16); m.MicroOff[i] = r.GetInt64(17); m.MicroLen[i] = r.GetInt32(18);
             m.LargePack[i] = r.GetInt32(19); m.LargeOff[i] = r.GetInt64(20); m.LargeLen[i] = r.GetInt32(21);
+            m.Duration[i] = (float)r.GetDouble(22);
             i++;
         }
         m.Count = i;
@@ -75,7 +78,7 @@ public sealed class LibraryModel
         var vd = new List<string>(); var vl = new List<byte>(); var vs = new List<long>(); var vf = new List<long>();
         using (var vc = c.CreateCommand())
         {
-            vc.CommandText = "SELECT folder, level, size, first_seen FROM files WHERE " + Visible.Shown + " AND kind=2";
+            vc.CommandText = "SELECT folder, level, size, first_seen FROM files WHERE missing_since=0 AND state NOT IN (1,3) AND kind=2";     // not in the grid yet
             using var vr = vc.ExecuteReader();
             while (vr.Read()) { vd.Add(D(vr.GetString(0))); vl.Add((byte)vr.GetInt32(1)); vs.Add(vr.GetInt64(2)); vf.Add(vr.GetInt64(3)); }
         }
@@ -86,16 +89,17 @@ public sealed class LibraryModel
     private static bool LevelShown(byte lv, ViewQuery q) => lv == (byte)ContentLevel.General ? q.General : lv == (byte)ContentLevel.Nsfw ? q.Nsfw : q.Very;
 
     /// <summary>Passes the content-level and type switches (not folders or search).</summary>
-    public bool Shown(int i, ViewQuery q) => LevelShown(Level[i], q) && (Kind[i] == (byte)MediaKind.Image ? q.Images : q.Gifs);
+    public bool Shown(int i, ViewQuery q) => LevelShown(Level[i], q) && KindShown(Kind[i], q);
+    private static bool KindShown(byte k, ViewQuery q) => k == (byte)MediaKind.Image ? q.Images : k == (byte)MediaKind.Gif ? q.Gifs : q.Videos;
 
     /// <summary>The folder tree under the current switches (images and GIFs as switched, videos always counted).</summary>
     public FolderTree Tree(ViewQuery q)
     {
         var t = new FolderTree();
         for (int i = 0; i < Count; i++)
-            if (Shown(i, q)) t.Add(Display[i], Kind[i] == (byte)MediaKind.Gif ? FileKind.Gif : FileKind.Image, Size[i], FirstSeen[i]);
+            if (Shown(i, q)) t.Add(Display[i], Kind[i] == (byte)MediaKind.Gif ? FileKind.Gif : Kind[i] == (byte)MediaKind.Video ? FileKind.Video : FileKind.Image, Size[i], FirstSeen[i]);
         for (int v = 0; v < VideoCount; v++)
-            if (LevelShown(VLevel[v], q)) t.Add(VDisplay[v], FileKind.Video, VSize[v], VFirstSeen[v]);
+            if (q.Videos && LevelShown(VLevel[v], q)) t.Add(VDisplay[v], FileKind.Video, VSize[v], VFirstSeen[v]);
         return t;
     }
 
@@ -126,7 +130,7 @@ public sealed class LibraryModel
         {
             byte lv = Level[i];
             if (lv == (byte)ContentLevel.General ? !q.General : lv == (byte)ContentLevel.Nsfw ? !q.Nsfw : !q.Very) continue;
-            if (Kind[i] == (byte)MediaKind.Image ? !q.Images : !q.Gifs) continue;
+            if (!KindShown(Kind[i], q)) continue;
             if (q.OffFolders.Contains(Folder[i])) continue;
             if (search.Length > 0 && Path[i].IndexOf(search, StringComparison.OrdinalIgnoreCase) < 0) continue;
             keep.Add(i);
@@ -149,7 +153,8 @@ public sealed class LibraryModel
             if (i < 0) { paths[k] = ""; specs[k] = new ItemSpec(1.4f); continue; }     // a folder tile with no picture to show
             paths[k] = Path[i]; ow[k] = W[i]; ids[k] = Id[i];
             specs[k] = new ItemSpec(ThumbMaker.ClampAspect(W[i], H[i]));
-            badges[k] = (byte)(Kind[i] == (byte)MediaKind.Gif ? 1 : 0);
+            badges[k] = (byte)(Kind[i] == (byte)MediaKind.Gif ? 1 : Kind[i] == (byte)MediaKind.Video ? 2 : 0);
+            if (Kind[i] == (byte)MediaKind.Video) ow[k] = Math.Min(W[i], 320);      // no sharp versions from video files (the frame comes from ffmpeg)
             mp[k] = MicroPack[i]; mo[k] = MicroOff[i]; ml[k] = MicroLen[i];
             sp[k] = SmallPack[i]; so[k] = SmallOff[i]; sl[k] = SmallLen[i];
             fp[k] = FullPack[i]; fo[k] = FullOff[i]; fl[k] = FullLen[i];
@@ -186,7 +191,7 @@ public sealed class LibraryModel
             }
             byte lv = Level[i];
             if (lv == (byte)ContentLevel.General ? !q.General : lv == (byte)ContentLevel.Nsfw ? !q.Nsfw : !q.Very) continue;
-            if (Kind[i] == (byte)MediaKind.Image ? !q.Images : !q.Gifs) continue;
+            if (!KindShown(Kind[i], q)) continue;
             st.Own++; st.Size += Size[i]; if (FirstSeen[i] > st.Newest) st.Newest = FirstSeen[i];
         }
         return stats;

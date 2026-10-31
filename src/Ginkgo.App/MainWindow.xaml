@@ -53,6 +53,7 @@
                         <Button x:Name="FoldersBtn" Content="Select folders" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnFolders"/>
                         <ToggleButton x:Name="ImagesBtn" Content="Images" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged"/>
                         <ToggleButton x:Name="GifsBtn" Content="GIFs" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged"/>
+                        <ToggleButton x:Name="VideosBtn" Content="Videos" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged"/>
                         <ToggleButton x:Name="GeneralBtn" Style="{StaticResource ContentToggle}" Content="General" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged" ToolTip="Show General files (G)"/>
                         <ToggleButton x:Name="NsfwBtn" Style="{StaticResource ContentToggle}" Content="NSFW" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnFilterChanged" ToolTip="Show NSFW files (N)"/>
                         <ToggleButton x:Name="VeryBtn" Style="{StaticResource ContentToggle}" Content="Very" Height="{DynamicResource KeyHeight}" Margin="0,3,17,3" VerticalAlignment="Center" Click="OnFilterChanged" ToolTip="Show Very files (V)"/>
