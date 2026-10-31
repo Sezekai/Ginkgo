@@ -18,12 +18,22 @@ jobs:
         run: dotnet run --project tests/Ginkgo.Core.Tests -c Release
       - name: Get ffmpeg and ffprobe (video thumbnails and lengths)
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          Invoke-WebRequest -Uri https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-lgpl-shared.zip -OutFile ffmpeg.zip
-          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-x
-          New-Item -ItemType Directory -Force tools | Out-Null
-          Copy-Item (Get-ChildItem ffmpeg-x -Recurse -Directory -Filter bin | Select-Object -First 1).FullName\* tools\
-          Get-ChildItem tools | Select-Object Name, Length
+          try {
+            $rel = Invoke-RestMethod https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest -Headers @{ Authorization = "Bearer $env:GH_TOKEN" }
+            $asset = $rel.assets | Where-Object { $_.name -match 'win64-lgpl-shared' -and $_.name -match 'master' -and $_.name -like '*.zip' } | Select-Object -First 1
+            if (-not $asset) { $asset = $rel.assets | Where-Object { $_.name -match 'win64-lgpl-shared' -and $_.name -like '*.zip' } | Select-Object -First 1 }
+            if (-not $asset) { Write-Host "::error::no ffmpeg asset; have: $(($rel.assets | ForEach-Object name) -join ', ')"; exit 1 }
+            Write-Host "::notice::ffmpeg from $($asset.name)"
+            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile ffmpeg.zip
+            Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-x
+            $bin = Get-ChildItem ffmpeg-x -Recurse -Directory -Filter bin | Select-Object -First 1
+            New-Item -ItemType Directory -Force tools | Out-Null
+            Copy-Item -Path (Join-Path $bin.FullName '*') -Destination tools
+            Write-Host "::notice::tools: $((Get-ChildItem tools | ForEach-Object { $_.Name }) -join ', ')"
+          } catch { Write-Host "::error::getting ffmpeg failed: $($_.Exception.Message)"; exit 1 }
       - name: Data tests (scan, index, thumbnails on generated images)
         env:
           GINKGO_TOOLS: ${{ github.workspace }}\tools
