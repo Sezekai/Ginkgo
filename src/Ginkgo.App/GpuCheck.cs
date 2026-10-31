@@ -209,6 +209,7 @@ public sealed class GpuCheck
         public static unsafe (string name, long luid) MonitorOwner(IntPtr monitor)
         {
             if (CreateDXGIFactory1(ref IidFactory1, out var f) < 0 || f == IntPtr.Zero) return ("", 0);
+            var od = stackalloc byte[96];                                                                                              // DXGI_OUTPUT_DESC
             try
             {
                 for (uint i = 0; i < 16; i++)
@@ -221,7 +222,6 @@ public sealed class GpuCheck
                     {
                         IntPtr o;
                         if (((delegate* unmanaged[Stdcall]<IntPtr, uint, IntPtr*, int>)V(a)[7])(a, j, &o) < 0 || o == IntPtr.Zero) break;      // EnumOutputs
-                        var od = stackalloc byte[96];                                                                                          // DXGI_OUTPUT_DESC
                         if (((delegate* unmanaged[Stdcall]<IntPtr, byte*, int>)V(o)[7])(o, od) >= 0 && *(IntPtr*)(od + 88) == monitor) found = true;
                         Release(o);
                     }
