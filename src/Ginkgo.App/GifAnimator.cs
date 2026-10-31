@@ -10,6 +10,7 @@ namespace Ginkgo.App;
 /// </summary>
 public sealed class GifAnimator
 {
+    /// <summary>How many GIFs play at once (0 = every one on screen).</summary>
     public int Limit { get; set; } = 20;
     private const long BudgetPerGif = 24L << 20;     // decoded frames of one GIF; bigger ones are kept at a lower resolution
     private const int MaxFrames = 300;
@@ -70,7 +71,7 @@ public sealed class GifAnimator
         var keep = new HashSet<int>();
         foreach (var (i, w, h) in wanted)
         {
-            if (keep.Count >= Limit) break;
+            if (Limit > 0 && keep.Count >= Limit) break;
             if (w < 24 || h < 24) continue;
             string? path = _pathOf(i);
             if (path is null) continue;

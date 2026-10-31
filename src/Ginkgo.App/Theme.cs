@@ -26,6 +26,20 @@ public static class Theme
         catch { HasRoundedFrame = false; }
     }
 
+    /// <summary>Full screen: no rounded corners and no outline (DWMWCP_DONOTROUND / DWMWA_COLOR_NONE); off again restores them.</summary>
+    public static void FullScreenFrame(Window w, bool full, byte r, byte g, byte b)
+    {
+        try
+        {
+            var h = new WindowInteropHelper(w).Handle;
+            int round = full ? 1 : 2;
+            DwmSetWindowAttribute(h, 33, ref round, 4);
+            int colour = full ? unchecked((int)0xFFFFFFFE) : r | (g << 8) | (b << 16);
+            DwmSetWindowAttribute(h, 34, ref colour, 4);
+        }
+        catch { }
+    }
+
     /// <summary>Makes the system title bar of a normal window dark (used by the Settings window).</summary>
     public static void DarkTitleBar(Window w)
     {

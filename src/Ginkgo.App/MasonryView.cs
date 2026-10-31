@@ -65,7 +65,9 @@ public sealed class MasonryView : FrameworkElement
 
     public MasonryView()
     {
-        ClipToBounds = true;
+        // The view is cut off a little past its own top and bottom edges, under the title bar and the bottom bar, which are drawn
+        // over it. Cutting it off exactly at its edges left a dotted row of pixels there.
+        ClipToBounds = false;
         RenderOptions.SetBitmapScalingMode(this, BitmapScalingMode.NearestNeighbor);     // the surface is drawn pixel-for-pixel
         RenderOptions.SetEdgeMode(this, EdgeMode.Aliased);       // no soft half-pixel row where the view is cut off at its top and bottom edges
         Focusable = true;
@@ -350,7 +352,16 @@ public sealed class MasonryView : FrameworkElement
     protected override void OnRender(DrawingContext dc)
     {
         var sw = Stopwatch.StartNew();
-        dc.DrawRectangle(Background, null, new Rect(0, 0, ActualWidth, ActualHeight));
+        dc.PushClip(new RectangleGeometry(new Rect(0, -EdgeBleed, ActualWidth, ActualHeight + 2 * EdgeBleed)));
+        try { RenderInside(dc, sw); } finally { dc.Pop(); }
+    }
+
+    /// <summary>How far past its top and bottom edges the view draws (hidden under the bars next to it).</summary>
+    private const double EdgeBleed = 3;
+
+    private void RenderInside(DrawingContext dc, Stopwatch sw)
+    {
+        dc.DrawRectangle(Background, null, new Rect(0, -EdgeBleed, ActualWidth, ActualHeight + 2 * EdgeBleed));
         if (_layout is null) return;
         double dpi = VisualTreeHelper.GetDpi(this).PixelsPerDip;
         int offPx = (int)Math.Round(_offset * dpi);       // scroll position in whole device pixels

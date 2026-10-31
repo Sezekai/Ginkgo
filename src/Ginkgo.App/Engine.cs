@@ -57,7 +57,9 @@ public sealed class Engine : IDisposable
             ThumbDir = thumbDir;
             Stores = new ThumbStores(thumbDir, Settings.CacheDir);
             _saveTimer = new Timer(_ => SaveLargeBatch(), null, 2000, 2000);
-            if (Settings.WarmCache) Warmer.Start(Stores, _cts.Token);
+            Warmer.Enabled = Settings.WarmCache;
+            Warmer.Cap = (long)(Settings.ThumbMemoryCapGB * 1073741824.0);
+            Warmer.Start(Stores, _cts.Token);
             Opened?.Invoke();
             await Refresh(scan: true, confirmLargeRemoval: false);
             StartWatcher();

@@ -33,6 +33,9 @@ public partial class MainWindow : Window
 
     // folder pop-out
     private readonly System.Windows.Controls.Primitives.Popup _folderPopup;
+    private System.Windows.Controls.Primitives.Popup _optPopup = null!;
+    private OptimisePanel _opt = null!;
+    private long _optClosedAt;
     private readonly FolderPanel _folders;
     private long _popupClosedAt;
 
@@ -100,6 +103,7 @@ public partial class MainWindow : Window
         InitBrowse();
         _gifs = new GifAnimator(i => i >= 0 && i < _paths.Length ? _paths[i] : null, () => Dispatcher.BeginInvoke(View.Refresh));
         View.Gifs = _gifs;
+        _gifs.Limit = _settings.GifLimit;
         BarRow.MoreButton = MoreBtn;
         // a click anywhere else closes the drop-down; it also closes when everything fits again
         PreviewMouseDown += (_, e) =>
@@ -350,6 +354,33 @@ public partial class MainWindow : Window
     }
 
     private void OnSettings(object s, RoutedEventArgs e) => OpenSettings();
+
+    /// <summary>The Optimisations pop-out: thumbnails in memory (on/off and a limit) and how many GIFs play at once.</summary>
+    private void OnOptimise(object s, RoutedEventArgs e)
+    {
+        if (_opt is null)
+        {
+            _opt = new OptimisePanel(_settings, _engine.Warmer);
+            _opt.Changed += () => { _gifs.Limit = _settings.GifLimit; View.Refresh(); SaveSettings(); };
+            _optPopup = new System.Windows.Controls.Primitives.Popup
+            {
+                PlacementTarget = OptimiseBtn, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom, StaysOpen = false,
+                AllowsTransparency = true, PopupAnimation = System.Windows.Controls.Primitives.PopupAnimation.Fade, VerticalOffset = 2,
+                Child = new Border { Margin = new Thickness(6, 0, 20, 20), Child = _opt }
+            };
+            _optPopup.Closed += (_, _) => { _optClosedAt = Stopwatch.GetTimestamp(); ApplyBar(); };
+        }
+        if (_optPopup.IsOpen) { _optPopup.IsOpen = false; return; }
+        if ((Stopwatch.GetTimestamp() - _optClosedAt) / (double)Stopwatch.Frequency < 0.25) return;
+        _opt.Width = Math.Min(420, Math.Max(280, ActualWidth - 48));
+        // keep it inside the window
+        var btn = OptimiseBtn.IsVisible ? OptimiseBtn : (FrameworkElement)MoreBtn;
+        _optPopup.PlacementTarget = btn;
+        double x0 = btn.TranslatePoint(new Point(0, 0), this).X;
+        _optPopup.HorizontalOffset = Math.Min(0, ActualWidth - 10 - (_opt.Width + 26) - x0);
+        _optPopup.IsOpen = true;
+        ApplyBar();
+    }
     private void OpenSettings() => new SettingsWindow(this, _settings, _engine) { Owner = this }.ShowDialog();
 
     private void OnUpdateView(object s, RoutedEventArgs e) => _ = ReloadModel(true);
@@ -570,6 +601,7 @@ public partial class MainWindow : Window
             case Key.OemQuestion: RevealBar(); SearchBox.Focus(); e.Handled = true; break;
             case Key.K: ShowKeys(false); e.Handled = true; break;
             case Key.S: OpenSettings(); e.Handled = true; break;
+            case Key.O: RevealBar(); OnOptimise(this, e); e.Handled = true; break;
             case Key.F: case Key.F11: ToggleFullscreen(); e.Handled = true; break;
             case Key.F3: _diag = !_diag; DiagText.Visibility = _diag ? Visibility.Visible : Visibility.Collapsed; e.Handled = true; break;
             case Key.M: SetSidebar(!_sideOpen); e.Handled = true; break;
@@ -648,7 +680,7 @@ public partial class MainWindow : Window
         MaxBtn.Content = max ? "\uE923" : "\uE922";
         UpdateEdges();
         // windowed: Windows draws the outline and rounds the corners (Windows 11); maximised or full screen: no outline
-        WindowEdge.BorderThickness = !max && !Theme.HasRoundedFrame ? new Thickness(1) : new Thickness(0);
+        WindowEdge.BorderThickness = !max && !_fullscreen && !Theme.HasRoundedFrame ? new Thickness(1) : new Thickness(0);
     }
 
     // ---- a maximised or snapped window reaches past the visible screen by its (invisible) resize border: keep the content inside ----
@@ -665,7 +697,7 @@ public partial class MainWindow : Window
         bool snapped = !max && WindowState == WindowState.Normal && !rb.IsEmpty &&
                        (Math.Abs(rb.Width - ActualWidth) > 2 || Math.Abs(rb.Height - ActualHeight) > 2);
         Thickness pad = new(0);
-        if ((max || snapped) && hwnd != IntPtr.Zero)
+        if ((max || snapped) && hwnd != IntPtr.Zero && !_fullscreen)
         {
             uint dpi = GetDpiForWindow(hwnd);
             if (dpi == 0) dpi = 96;
@@ -680,7 +712,7 @@ public partial class MainWindow : Window
     // ---- top bar: slides away on scroll down, back on scroll up; H hides it for good until shown again ----
 
     private bool BarPinned =>
-        _folderPopup.IsOpen || _sideOpen || BarRow.Expanded || Banner.Visibility == Visibility.Visible || SearchBox.IsKeyboardFocused ||
+        _folderPopup.IsOpen || (_optPopup?.IsOpen ?? false) || _sideOpen || BarRow.Expanded || Banner.Visibility == Visibility.Visible || SearchBox.IsKeyboardFocused ||
         (TopBar.IsMouseOver && Stopwatch.GetTimestamp() > _ignoreOverUntil) || HoverStrip.IsMouseOver;
 
     private void ApplyBar()
@@ -788,7 +820,7 @@ public partial class MainWindow : Window
 
     private static readonly (string keys, string what)[] GridKeys =
     {
-        ("Ctrl+B  or  M", "Open or close the menu"), ("S  or  Ctrl+S", "Settings"), ("F  or  F11", "Full screen (Esc to leave)"), ("Ctrl+W", "Close Ginkgo"), ("H", "Hide or show the top bar"), ("/  or  Ctrl+F", "Search"),
+        ("Ctrl+B  or  M", "Open or close the menu"), ("S  or  Ctrl+S", "Settings"), ("O", "Optimisations (memory, GIFs)"), ("F  or  F11", "Full screen (Esc to leave)"), ("Ctrl+W", "Close Ginkgo"), ("H", "Hide or show the top bar"), ("/  or  Ctrl+F", "Search"),
         ("G   N   V", "Show General / NSFW / Very files"), ("L", "Equal columns  or  equal rows"), ("+   -   or  Ctrl + wheel", "Picture size"),
         ("R", "Reshuffle (when sorted randomly)"), ("Home   End", "Top / bottom"), ("Page Up   Page Down", "Scroll one screen"),
         ("Enter  or  double-click", "Open the picture under the mouse"), ("Middle button", "Scroll by moving the mouse"),
@@ -838,7 +870,7 @@ public partial class MainWindow : Window
     private double _zoom = 1, _panX, _panY;
     private bool _vFull, _dragging, _fullscreen;
     private Point _dragStart; private double _dragPanX, _dragPanY;
-    private WindowState _prevState; private WindowStyle _prevStyle;
+    private WindowState _prevState; private WindowStyle _prevStyle; private ResizeMode _prevResize;
     private readonly Dictionary<string, BitmapSource> _vCache = new();
     private readonly Queue<string> _vCacheOrder = new();
 
@@ -1186,15 +1218,48 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct RectI { public int L, T, R, B; }
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct MonitorInfo { public int Size; public RectI Monitor, Work; public uint Flags; }
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool GetMonitorInfo(IntPtr mon, ref MonitorInfo info);
+    private Rect _prevBounds;
+
+    /// <summary>
+    /// Full screen covers the whole monitor, taskbar included. A maximised window can't do that here (the custom frame keeps a
+    /// maximised window inside the work area), so the window is made a plain, frameless window exactly the size of the monitor.
+    /// </summary>
     private void ToggleFullscreen()
     {
+        var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
         if (!_fullscreen)
         {
-            _prevState = WindowState; _prevStyle = WindowStyle;
-            if (WindowState == WindowState.Maximized) WindowState = WindowState.Normal;      // re-maximising without the frame covers the taskbar too
-            WindowStyle = WindowStyle.None; WindowState = WindowState.Maximized; _fullscreen = true;
+            _prevState = WindowState; _prevStyle = WindowStyle; _prevResize = ResizeMode;
+            _prevBounds = WindowState == WindowState.Normal ? new Rect(Left, Top, Width, Height) : RestoreBounds;
+            var mi = new MonitorInfo { Size = System.Runtime.InteropServices.Marshal.SizeOf<MonitorInfo>() };
+            GetMonitorInfo(MonitorFromWindow(hwnd, 2), ref mi);
+            _fullscreen = true;
+            if (WindowState != WindowState.Normal) WindowState = WindowState.Normal;
+            WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize;
+            var m = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice ?? Matrix.Identity;
+            var tl = m.Transform(new Point(mi.Monitor.L, mi.Monitor.T));
+            var br = m.Transform(new Point(mi.Monitor.R, mi.Monitor.B));
+            Left = tl.X; Top = tl.Y; Width = br.X - tl.X; Height = br.Y - tl.Y;
+            Theme.FullScreenFrame(this, true, 0x4A, 0x4A, 0x54);
+            Activate();
         }
-        else { WindowStyle = _prevStyle; WindowState = _prevState; _fullscreen = false; }
+        else
+        {
+            _fullscreen = false;
+            WindowStyle = _prevStyle; ResizeMode = _prevResize;
+            Left = _prevBounds.Left; Top = _prevBounds.Top; Width = _prevBounds.Width; Height = _prevBounds.Height;
+            WindowState = _prevState;
+            Theme.FullScreenFrame(this, false, 0x4A, 0x4A, 0x54);
+        }
         TitleBar.Visibility = _fullscreen ? Visibility.Collapsed : Visibility.Visible;
+        WindowEdge.BorderThickness = new Thickness(0);
+        UpdateEdges();
+        if (!_fullscreen) OnStateChanged(null, EventArgs.Empty);
     }
 }

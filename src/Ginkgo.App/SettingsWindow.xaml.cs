@@ -49,7 +49,7 @@ public partial class SettingsWindow : Window
         if (_init) return;
         _s.LookAheadWindows = int.Parse((string)((ComboBoxItem)LookBox.SelectedItem).Tag); _main.ApplySettings();
     }
-    private void OnWarmChanged(object s, RoutedEventArgs e) { _s.WarmCache = WarmBox.IsChecked == true; _main.ApplySettings(); Result.Text = "Takes effect the next time Ginkgo starts."; }
+    private void OnWarmChanged(object s, RoutedEventArgs e) { _s.WarmCache = WarmBox.IsChecked == true; _engine.Warmer.Enabled = _s.WarmCache; _main.ApplySettings(); Result.Text = "The limit and GIF settings are in Optimisations (next to Settings in the menu bar)."; }
     private void OnLook(object s, RoutedEventArgs e) => _main.OpenLook();
     private void OnRoundChanged(object s, RoutedEventArgs e) { _s.CoverRounded = RoundBox.IsChecked == true; RadiusSlider.IsEnabled = _s.CoverRounded; _main.ApplySettings(); }
     private void OnRadiusChanged(object s, RoutedPropertyChangedEventArgs<double> e)

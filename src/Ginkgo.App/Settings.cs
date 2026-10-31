@@ -13,6 +13,10 @@ public sealed class AppSettings
     public bool UseFastCache { get; set; }
     /// <summary>Keep the thumbnail files in memory (instant lookups), using free memory and leaving a reserve for other programs.</summary>
     public bool WarmCache { get; set; } = true;
+    /// <summary>The most memory the thumbnails may use, in GB (0 = automatic: whatever is free, less a reserve).</summary>
+    public double ThumbMemoryCapGB { get; set; }
+    /// <summary>How many GIFs play at once in the grid (0 = all on screen).</summary>
+    public int GifLimit { get; set; } = 20;
 
     // content levels. NSFW and Very are never remembered: the app always starts with them off.
     public bool ShowGeneral { get; set; } = true;

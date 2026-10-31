@@ -15,6 +15,10 @@ public sealed class CacheWarmer
     public long InMemory;
     /// <summary>The size the grid is showing now (0 micro, 1 small, 2 full): loaded first.</summary>
     public volatile int Preferred = 2;
+    /// <summary>Keep thumbnails in memory at all. Turning it off gives all of it back at once.</summary>
+    public volatile bool Enabled = true;
+    /// <summary>The most memory the thumbnails may take, in bytes (0 = no limit beyond what is free).</summary>
+    public long Cap;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MemStatus { public uint Length, Load; public ulong TotalPhys, AvailPhys, TotalPage, AvailPage, TotalVirtual, AvailVirtual, AvailExt; }
@@ -43,6 +47,15 @@ public sealed class CacheWarmer
         {
             while (!ct.IsCancellationRequested)
             {
+                if (!Enabled)
+                {
+                    foreach (var st in tiers) st.DropAll();
+                    InMemory = Done = 0; Running = false; Note = "off";
+                    while (!Enabled && !ct.IsCancellationRequested) Thread.Sleep(250);
+                    Note = "";
+                    continue;
+                }
+                long cap = Interlocked.Read(ref Cap) > 0 ? Interlocked.Read(ref Cap) : long.MaxValue;
                 int pref = Math.Clamp(Preferred, 0, 2);
                 var all = new List<(ThumbStore st, int pack, int seg, int size, double score, bool loaded)>();
                 for (int t = 0; t < 3; t++)
@@ -65,13 +78,25 @@ public sealed class CacheWarmer
                 if (ceiling != long.MaxValue && sinceSqueeze > 120_000 && AvailableBytes() > Reserve + (2L << 30))
                     ceiling = long.MaxValue;
 
+                if (held > cap)
+                {
+                    // over the cap the user chose: let go of the least-viewed pieces until under it
+                    foreach (var c in all.Where(x => x.loaded).OrderBy(x => x.score))
+                    {
+                        if (held <= cap) break;
+                        c.st.DropSegment(c.pack, c.seg); held -= c.size;
+                    }
+                    all = all.Select(x => (x.st, x.pack, x.seg, x.size, x.score, loaded: x.st.IsInMemory(x.pack, x.seg))).ToList();
+                }
+                long limit = Math.Min(ceiling, cap);
+
                 var wanted = all.Where(x => !x.loaded).OrderByDescending(x => x.score).ToList();
                 var heldList = all.Where(x => x.loaded).OrderBy(x => x.score).ToList();      // least wanted first
                 int swaps = 0; bool full = false;
                 foreach (var w in wanted)
                 {
-                    if (ct.IsCancellationRequested) break;
-                    bool room = AvailableBytes() - w.size >= Reserve && held + w.size <= ceiling;
+                    if (ct.IsCancellationRequested || !Enabled || Interlocked.Read(ref Cap) != (cap == long.MaxValue ? 0 : cap)) break;
+                    bool room = AvailableBytes() - w.size >= Reserve && held + w.size <= limit;
                     if (!room)
                     {
                         // full: swap a piece nobody is looking at for one that is wanted much more (the total stays the same)
@@ -87,12 +112,12 @@ public sealed class CacheWarmer
                 }
                 Running = false;
                 Done = tiers.Sum(s => s.MemoryBytes);
-                Note = full ? "memory is full: the most-viewed thumbnails are kept" : "";
+                Note = full ? (held + (64L << 20) >= cap ? "at your limit: the most-viewed thumbnails are kept" : "memory is full: the most-viewed thumbnails are kept") : "";
                 InMemory = Done;
                 foreach (var st in tiers) st.DecayHits();
 
                 // watch memory for a couple of seconds; if other programs need room, give back just enough (least-viewed first)
-                for (int i = 0; i < 10 && !ct.IsCancellationRequested; i++)
+                for (int i = 0; i < 10 && !ct.IsCancellationRequested && Enabled && Interlocked.Read(ref Cap) == (cap == long.MaxValue ? 0 : cap); i++)
                 {
                     Thread.Sleep(200);
                     long avail = AvailableBytes();
