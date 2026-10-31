@@ -13,6 +13,15 @@ static class Program {
 [STAThread]
 static int Main(string[] args)
 {
+    // GPU grid phase 1: the test drawing works on Direct3D's software device (the runners have no GPU)
+    try
+    {
+        var err = GpuCheck.TestRender(IntPtr.Zero, Vortice.Direct3D.DriverType.Warp);
+        Console.WriteLine(err is null ? "::notice::GPU test drawing on WARP: ok" : "::error::GPU test drawing on WARP: " + err);
+        var g = GpuCheck.Run(IntPtr.Zero);
+        Console.WriteLine($"::notice::GPU check on the runner (expected to fail, no NVIDIA): {g.Short} ({g.Ms:F0} ms)");
+    }
+    catch (Exception ex) { Console.WriteLine("::error::GPU check crashed: " + ex); }
     var bt = new Thread(BarCheck); bt.SetApartmentState(ApartmentState.STA); bt.Start(); bt.Join();
     var rt = new Thread(RenderCheck); rt.SetApartmentState(ApartmentState.STA); rt.Start(); rt.Join();
     int total = 30000, screen = 700;

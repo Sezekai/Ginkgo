@@ -86,6 +86,9 @@ public sealed class GifAnimator
         foreach (var k in _anims.Keys.Where(k => !keep.Contains(k)).ToList()) { _anims[k].Cts.Cancel(); _anims.Remove(k); }
     }
 
+    /// <summary>GIFs playing now (loaded and on screen).</summary>
+    public int Playing => _anims.Values.Count(a => a.Ready);
+
     public void Clear() { foreach (var a in _anims.Values) a.Cts.Cancel(); _anims.Clear(); }
 
     private async Task Load(Anim a, string path)

@@ -114,7 +114,7 @@ public partial class MainWindow : Window
             BarRow.Expanded = false;
         };
         BarRow.LayoutUpdated += (_, _) => { if (BarRow.Expanded && !BarRow.HasOverflow) BarRow.Expanded = false; };
-        SourceInitialized += (_, _) => { Theme.RoundedFrame(this, 0x4A, 0x4A, 0x54); OnStateChanged(this, EventArgs.Empty); };
+        SourceInitialized += (_, _) => { Theme.RoundedFrame(this, 0x4A, 0x4A, 0x54); OnStateChanged(this, EventArgs.Empty); StartGpu(); };
         SizeChanged += (_, _) => Dispatcher.BeginInvoke(UpdateEdges, DispatcherPriority.Loaded);
         LocationChanged += (_, _) => Dispatcher.BeginInvoke(UpdateEdges, DispatcherPriority.Loaded);
         CompositionTarget.Rendering += (_, e) =>
@@ -155,6 +155,7 @@ public partial class MainWindow : Window
         Closing += (_, _) =>
         {
             _settings.BarHidden = _barManual;
+            CleanGpuExit();
             SaveSettings();
             _covers.Save();
             _loader?.Dispose();
@@ -462,7 +463,7 @@ public partial class MainWindow : Window
         if (_diag)
         {
             var (mr, _) = View.TakeWorst();
-            DiagText.Text = $"{_fps:F0} fps | worst gap {_worstGap:F0} ms | slow {_slowFrames} (gc {_slowGc}, ours {_slowOurs}, other {_slowOther}) | gc pause {(GC.GetTotalPauseDuration() - _gcAtTick).TotalMilliseconds:F0} ms | draw {mr:F1} (prep {Perf.PrepMax:F1}, paint {Perf.PaintMax:F1}/{Perf.PaintedBands}) drain {Perf.DrainMax:F1} | {View.LastVisibleCount} tiles, cached {_loader?.CachedCount ?? 0}, pending {_loader?.PendingCount ?? 0} | GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)} | read {_loader?.AvgReadMs ?? 0:F1} ms, decode {_loader?.AvgDecodeMs ?? 0:F1} ms{(_engine.FastCacheNote.Length > 0 ? " | " + _engine.FastCacheNote : "")} | thumbs in memory {_engine.Warmer.InMemory / 1073741824.0:F1} GB ({(_engine.Warmer.Total > 0 ? _engine.Warmer.Done * 100 / _engine.Warmer.Total : 0)}%{(_engine.Warmer.Running ? ", loading" : "")}) {_engine.Warmer.Note} | free RAM {CacheWarmer.AvailableBytes() / 1073741824.0:F1} GB";
+            DiagText.Text = $"{_fps:F0} fps | worst gap {_worstGap:F0} ms | slow {_slowFrames} (gc {_slowGc}, ours {_slowOurs}, other {_slowOther}) | gc pause {(GC.GetTotalPauseDuration() - _gcAtTick).TotalMilliseconds:F0} ms | draw {mr:F1} (prep {Perf.PrepMax:F1}, paint {Perf.PaintMax:F1}/{Perf.PaintedBands}) drain {Perf.DrainMax:F1} | {View.LastVisibleCount} tiles, cached {_loader?.CachedCount ?? 0}, pending {_loader?.PendingCount ?? 0} | GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)} | read {_loader?.AvgReadMs ?? 0:F1} ms, decode {_loader?.AvgDecodeMs ?? 0:F1} ms{(_engine.FastCacheNote.Length > 0 ? " | " + _engine.FastCacheNote : "")} | thumbs in memory {_engine.Warmer.InMemory / 1073741824.0:F1} GB ({(_engine.Warmer.Total > 0 ? _engine.Warmer.Done * 100 / _engine.Warmer.Total : 0)}%{(_engine.Warmer.Running ? ", loading" : "")}) {_engine.Warmer.Note} | free RAM {CacheWarmer.AvailableBytes() / 1073741824.0:F1} GB" + GpuDiag();
             _worstGap = 0; _slowFrames = _slowGc = _slowOurs = _slowOther = 0; _gcAtTick = GC.GetTotalPauseDuration(); Perf.Reset();
         }
         bool moving = _engine.Moving;

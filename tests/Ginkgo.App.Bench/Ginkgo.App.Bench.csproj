@@ -14,6 +14,8 @@
     <Compile Include="..\..\src\Ginkgo.App\Perf.cs" Link="Perf.cs" />
     <Compile Include="..\..\src\Ginkgo.App\BarPanel.cs" Link="BarPanel.cs" />
     <Compile Include="..\..\src\Ginkgo.App\GifAnimator.cs" Link="GifAnimator.cs" />
+    <Compile Include="..\..\src\Ginkgo.App\GpuCheck.cs" Link="GpuCheck.cs" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <ProjectReference Include="..\..\src\Ginkgo.Core\Ginkgo.Core.csproj" />
     <ProjectReference Include="..\..\src\Ginkgo.Data\Ginkgo.Data.csproj" />
   </ItemGroup>

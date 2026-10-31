@@ -18,6 +18,18 @@ public sealed class AppSettings
     /// <summary>How many GIFs play at once in the grid (0 = all on screen).</summary>
     public int GifLimit { get; set; } = 20;
 
+    // GPU grid (see the GPU grid build brief). Off by default; the GIF settings apply only while it is on.
+    /// <summary>"Current" (the strip renderer) or "GPU".</summary>
+    public string Renderer { get; set; } = "Current";
+    /// <summary>Times in a row Ginkgo did not close cleanly while the GPU grid was on; at 2 it starts with Current.</summary>
+    public int GpuUncleanExits { get; set; }
+    public bool GifAnimate { get; set; } = true;
+    public double GifLengthSec { get; set; } = 5;
+    public bool GifCrossFade { get; set; } = true;
+    public double GifCrossFadeSec { get; set; } = 0.3;
+    /// <summary>0 = automatic (the governor), else a fixed rate.</summary>
+    public int GifFps { get; set; }
+
     // content levels. NSFW and Very are never remembered: the app always starts with them off.
     public bool ShowGeneral { get; set; } = true;
     [System.Text.Json.Serialization.JsonIgnore] public bool ShowNsfw { get; set; }
