@@ -157,6 +157,7 @@ public partial class MainWindow : Window
         {
             _settings.BarHidden = _barManual;
             CleanGpuExit();
+            StopGrid();
             SaveSettings();
             _covers.Save();
             _loader?.Dispose();

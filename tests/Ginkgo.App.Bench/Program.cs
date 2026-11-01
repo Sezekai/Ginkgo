@@ -22,6 +22,7 @@ static int Main(string[] args)
         Console.WriteLine($"::notice::GPU check on the runner (expected to fail, no NVIDIA): {g.Short} ({g.Ms:F0} ms)");
     }
     catch (Exception ex) { Console.WriteLine("::error::GPU check crashed: " + ex); }
+    try { GpuParity(); } catch (Exception ex) { Console.WriteLine("::error::GPU grid parity check crashed: " + ex); }
     var bt = new Thread(BarCheck); bt.SetApartmentState(ApartmentState.STA); bt.Start(); bt.Join();
     var rt = new Thread(RenderCheck); rt.SetApartmentState(ApartmentState.STA); rt.Start(); rt.Join();
     int total = 30000, screen = 700;
@@ -199,4 +200,95 @@ static void Run(bool shuffled, int tileW, ThumbLoader.TierData[] tiers, string[]
     Thread.Sleep(300);
 }
 
+
+// GPU grid (phase 2): the GPU draws the same picture as the strip painter. WARP (Direct3D's software device) stands in for the GPU.
+static void GpuParity()
+{
+    var rnd = new Random(11);
+    const int W = 900, H = 700, PageH = 7000;
+    uint bg = Ginkgo.Core.Imaging.TileBlit.Pack(18, 18, 20), fade = Ginkgo.Core.Imaging.TileBlit.Pack(40, 40, 46);
+    ThumbLoader.Pix Pic(int w, int h)
+    {
+        var d = new byte[w * h * 4];
+        int r0 = rnd.Next(256), g0 = rnd.Next(256), b0 = rnd.Next(256);
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                int i = (y * w + x) * 4;
+                d[i] = (byte)((b0 + x * 160 / w) & 255); d[i + 1] = (byte)((g0 + y * 160 / h) & 255); d[i + 2] = (byte)((r0 + (x + y) * 80 / (w + h)) & 255); d[i + 3] = 255;
+            }
+        return new ThumbLoader.Pix { Data = d, W = w, H = h, SrcW = w };
+    }
+    var tiles = new List<(GpuTile t, int mode)>();      // mode 0 exact, 1 scaled, 2 fade, 3 plain
+    for (int col = 0; col < 4; col++)
+    {
+        int x = col * 226, y = 0;
+        while (y < PageH)
+        {
+            int w = 222, h = rnd.Next(150, 400);
+            var t = new GpuTile { X = x, Y = y, W = w, H = h, A = 1, Fill = fade };
+            int r = rnd.Next(100), mode;
+            if (r < 55) { t.Pix = Pic(w, h); mode = 0; }
+            else if (r < 70) { t.Pix = Pic(w / 2, h / 2); mode = 1; }
+            else if (r < 80) { t.Pix = Pic(w * 3 / 2, h * 3 / 2); mode = 1; }
+            else if (r < 90) { t.Pix = Pic(w, h); t.Prev = Pic(w / 2, h / 2); t.A = (float)(0.2 + rnd.NextDouble() * 0.6); mode = 2; }
+            else if (r < 94) { t.Pix = Pic(w, h); t.A = 0.5f; mode = 2; }
+            else { t.Fill = Ginkgo.Core.Imaging.TileBlit.Pack((byte)rnd.Next(256), (byte)rnd.Next(256), (byte)rnd.Next(256)); mode = 3; }
+            tiles.Add((t, mode));
+            y += h + 4;
+        }
+    }
+    var list = tiles.Select(p => p.t).ToList();
+    byte[] Cpu(int off)
+    {
+        var buf = new byte[W * H * 4];
+        Ginkgo.Core.Imaging.TileBlit.Fill(buf, W * 4, W, H, 0, 0, W, H, bg);
+        foreach (var (t, mode) in tiles)
+        {
+            int y = t.Y - off;
+            if (y >= H || y + t.H <= 0) continue;
+            if (t.Pix is null) Ginkgo.Core.Imaging.TileBlit.Fill(buf, W * 4, W, H, t.X, y, t.W, t.H, t.Fill);
+            else if (t.A < 1)
+                Ginkgo.Core.Imaging.TileBlit.Blend(buf, W * 4, W, H, t.X, y, t.W, t.H, t.Pix.Data, t.Pix.W, t.Pix.H,
+                    t.Prev is null ? ReadOnlySpan<byte>.Empty : t.Prev.Data, t.Prev?.W ?? 0, t.Prev?.H ?? 0, (int)(t.A * 256), t.Fill);
+            else if (t.Pix.W == t.W && t.Pix.H == t.H) Ginkgo.Core.Imaging.TileBlit.Copy(buf, W * 4, W, H, t.X, y, t.Pix.Data, t.Pix.W, t.Pix.H);
+            else Ginkgo.Core.Imaging.TileBlit.CopyScaledSmooth(buf, W * 4, W, H, t.X, y, t.W, t.H, t.Pix.Data, t.Pix.W, t.Pix.H);
+        }
+        return buf;
+    }
+    var sw = Stopwatch.StartNew();
+    var grid = new GpuGrid(IntPtr.Zero, Vortice.Direct3D.DriverType.Warp, 2, "WARP");
+    int good = 0, all = 0; double worstMean = 0; var bad = new List<string>(); var per = new List<string>();
+    int[] offsets = { 0, 37, 255, 256, 257, 300, 513, 1000, 2047, 2048, 5000, 4999, 1000, 12, 6300 };
+    for (int oi = 0; oi <= offsets.Length; oi++)
+    {
+        bool lost = oi == offsets.Length;
+        int off = lost ? 2048 : offsets[oi];
+        if (lost) { grid.Dispose(); grid = new GpuGrid(IntPtr.Zero, Vortice.Direct3D.DriverType.Warp, 2, "WARP"); }   // a lost device: make it again, upload again
+        bool complete = grid.Render(list, off, W, H, bg, 10_000);
+        var gpu = grid.ReadBack();
+        var cpu = Cpu(off);
+        long sum = 0;
+        for (int i = 0; i < gpu.Length; i++) sum += Math.Abs(gpu[i] - cpu[i]);
+        double mean = sum / (double)gpu.Length;
+        worstMean = Math.Max(worstMean, mean);
+        int ok = 0, n = 0;
+        foreach (var (t, mode) in tiles)
+        {
+            int y0 = Math.Max(0, t.Y - off), y1 = Math.Min(H, t.Y - off + t.H);
+            if (y1 <= y0) continue;
+            int cx = t.X + t.W / 2, cy = (y0 + y1) / 2;
+            int i = (cy * W + cx) * 4, d = 0;
+            for (int c = 0; c < 4; c++) d = Math.Max(d, Math.Abs(gpu[i + c] - cpu[i + c]));
+            int tol = mode switch { 0 => 1, 3 => 1, 2 => 14, _ => 24 };
+            n++;
+            if (d <= tol) ok++; else if (bad.Count < 6) bad.Add($"off {off} tile at {t.X},{t.Y} mode {mode}: off by {d}");
+        }
+        good += ok; all += n;
+        per.Add($"{(lost ? "after reset " : "")}{off}:{ok}/{n}{(complete ? "" : " (incomplete)")}, mean {mean:F2}");
+    }
+    grid.Dispose();
+    string line = $"GPU grid parity (WARP): {good}/{all} tile centres match the strip painter, worst mean difference {worstMean:F2}/255 per channel, {sw.ElapsedMilliseconds} ms | " + string.Join(" | ", per);
+    Console.WriteLine((good == all && worstMean < 3 ? "::notice::" : "::error::") + line + (bad.Count > 0 ? " || " + string.Join("; ", bad) : ""));
+}
 }

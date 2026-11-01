@@ -3,7 +3,7 @@ using System.Windows;
 
 namespace Ginkgo.App;
 
-/// <summary>The GPU grid (phase 1): the GPU check, crash safety and what F3 shows. Drawing still uses the Current renderer.</summary>
+/// <summary>The GPU grid: the GPU check, starting and stopping the GPU drawing, recovering when the device is lost, crash safety and F3.</summary>
 public partial class MainWindow
 {
     private GpuCheck? _gpu;
@@ -33,7 +33,71 @@ public partial class MainWindow
         }
         SaveSettings();
         MarkGpuRunning(_settings.Renderer == "GPU");
+        View.GpuFailed += OnGpuFailed;
+        View.GpuFrontBufferBack += () => { GpuDeviceResets++; StopGrid(); ApplyRenderer(); };
         if (_settings.Renderer == "GPU") CheckGpu(null);
+    }
+
+    private GpuGrid? _grid;
+    private GpuPresenter? _presenter;
+    private readonly List<long> _gpuFailures = new();
+    private bool _gpuOffForSession;
+
+    /// <summary>Starts or stops the GPU drawing to match the Drawing setting and the check.</summary>
+    private void ApplyRenderer()
+    {
+        bool want = _settings.Renderer == "GPU" && _gpu is { Ok: true } && !_gpuOffForSession;
+        if (want && _grid is null) StartGrid();
+        else if (!want && _grid is not null) StopGrid();
+    }
+
+    private void StartGrid()
+    {
+        var g = _gpu!;
+        var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        IntPtr adapter = GpuCheck.AdapterByLuid(g.Luid);
+        try
+        {
+            if (adapter == IntPtr.Zero) throw new InvalidOperationException("the NVIDIA GPU went missing");
+            int slices = (int)Math.Clamp(g.VideoMemory / 2 / ((long)GpuGrid.Page * GpuGrid.Page * 4), 2, 12);   // up to half its memory, at most 768 MB of pages
+            _grid = new GpuGrid(adapter, Vortice.Direct3D.DriverType.Unknown, slices, g.Name);
+            _presenter = new GpuPresenter(hwnd, g.Luid);
+            View.UseGpu(_grid, _presenter);
+            _gpuFallback = "";
+        }
+        catch (Exception ex)
+        {
+            StopGrid();
+            _gpuFallback = $"GPU grid couldn't start ({ex.Message}), so Current is drawing";
+            StatusText.Text = _gpuFallback + ".";
+        }
+        finally { if (adapter != IntPtr.Zero) GpuCheck.Release(adapter); }
+    }
+
+    private void StopGrid()
+    {
+        View.UseGpu(null, null);
+        try { _grid?.Dispose(); } catch { }
+        try { _presenter?.Dispose(); } catch { }
+        _grid = null; _presenter = null;
+    }
+
+    /// <summary>Drawing failed (device lost and the like): make it again; twice within a minute and Current draws for the rest of the session.</summary>
+    private void OnGpuFailed(Exception ex)
+    {
+        GpuDeviceResets++;
+        StopGrid();
+        long now = Environment.TickCount64;
+        _gpuFailures.Add(now);
+        _gpuFailures.RemoveAll(t => now - t > 60_000);
+        if (_gpuFailures.Count >= 2)
+        {
+            _gpuOffForSession = true;
+            _gpuFallback = $"the GPU grid failed twice within a minute ({ex.Message}), so Current is drawing until Ginkgo restarts";
+            StatusText.Text = "The " + _gpuFallback + ".";
+            return;
+        }
+        ApplyRenderer();
     }
 
     private static void MarkGpuRunning(bool on)
@@ -60,8 +124,10 @@ public partial class MainWindow
             Dispatcher.BeginInvoke(() =>
             {
                 _gpu = r; _gpuChecking = false;
+                if (r.Ok) _gpuOffForSession = false;
                 if (_settings.Renderer == "GPU" && !r.Ok) _gpuFallback = $"GPU grid can't be used ({r.FailedStep}: {r.Status}), so Current is drawing";
                 else if (r.Ok && _gpuFallback.StartsWith("GPU grid can't")) _gpuFallback = "";
+                ApplyRenderer();
                 done?.Invoke();
             });
         }) { IsBackground = true, Name = "gpu-check" };
@@ -76,7 +142,11 @@ public partial class MainWindow
         if (r != "GPU") _gpuFallback = "";
         MarkGpuRunning(r == "GPU");
         SaveSettings();
+        if (r == "GPU" && _gpu is null) CheckGpu(null); else ApplyRenderer();
     }
+
+    /// <summary>The GPU grid is drawing now.</summary>
+    public bool GpuDrawing => View.UsingGpu;
 
     /// <summary>Restart Ginkgo (after setting the GPU preference, which Windows reads at start).</summary>
     public void Restart()
@@ -92,9 +162,11 @@ public partial class MainWindow
 
     private string GpuDiag()
     {
-        string renderer = _settings.Renderer == "GPU"
-            ? (_gpu is { Ok: true } ? "GPU chosen (check passed; this build still draws with Current)" : _gpuChecking ? "GPU chosen (checking...)" : "Current (" + (_gpuFallback.Length > 0 ? _gpuFallback : "GPU check pending") + ")")
+        string renderer = View.UsingGpu ? "GPU" : _settings.Renderer == "GPU"
+            ? (_gpuChecking ? "GPU chosen (checking...)" : "Current (" + (_gpuFallback.Length > 0 ? _gpuFallback : "GPU grid not started") + ")")
             : "Current";
+        if (View.Gpu is { } gg)
+            renderer += $" | vram {gg.UsedBytes / 1048576} / {gg.BudgetBytes / 1048576} MB | uploads {Perf.GpuUploads}/s, max {Perf.GpuUploadMax:F1} ms | gpu draw {Perf.GpuDrawMax:F1} ms";
         string gpu = _gpu is null ? "not checked" : _gpu.Ok ? _gpu.Short : $"{(_gpu.Name.Length > 0 ? _gpu.Name + ", " : "")}{_gpu.FailedStep}: {_gpu.Status}";
         return $" | renderer {renderer} | gpu {gpu} | gifs {_gifs.Playing} playing (limit {(_gifs.Limit == 0 ? "all" : _gifs.Limit.ToString())}) | device resets {GpuDeviceResets}";
     }

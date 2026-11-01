@@ -131,7 +131,7 @@ public partial class SettingsWindow : Window
         GpuPanel.Children.Add(new TextBlock
         {
             TextWrapping = TextWrapping.Wrap, Foreground = Brush("#9AA0A6"),
-            Text = "The GPU grid draws the thumbnails and GIFs on the NVIDIA graphics card instead of the processor. It is being built in stages: this version checks your GPU; drawing still uses Current until the next stage."
+            Text = "The GPU grid draws the thumbnails on the NVIDIA graphics card instead of the processor. It is being built in stages: this version draws still pictures (GIFs play the same way as before). Press F3 in the grid to compare the two."
         });
         GpuPanel.Children.Add(_gpuStatus);
         var buttons = new WrapPanel();
@@ -196,7 +196,7 @@ public partial class SettingsWindow : Window
     {
         var g = _main.Gpu;
         if (g is null) { _gpuStatus.Text = _main.GpuChecking ? "Checking the GPU..." : "Not checked yet."; }
-        else if (g.Ok) _gpuStatus.Text = $"{g.Name} · {g.VideoMemory / 1073741824.0:0} GB · {g.Status}";
+        else if (g.Ok) _gpuStatus.Text = $"{g.Name} · {g.VideoMemory / 1073741824.0:0} GB · {g.Status}" + (_main.GpuDrawing ? " · drawing the grid" : "");
         else _gpuStatus.Text = $"{(g.Name.Length > 0 ? g.Name + " · " : "")}can't be used: {g.FailedStep}: {g.Status}." + (_s.Renderer == "GPU" ? " Current is drawing." : "");
         if (_main.GpuFallback.Length > 0 && (g is null || g.Ok)) _gpuStatus.Text += "\n" + _main.GpuFallback + ".";
         bool needPref = g is not null && !g.OnNvidia && g.Name.Length > 0 && !GpuCheck.PreferenceIsSet();

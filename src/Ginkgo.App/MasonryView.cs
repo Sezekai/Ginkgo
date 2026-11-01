@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
 using System.Windows.Media;
+using System.Windows.Interop;
 using System.Windows.Media.Imaging;
 using Ginkgo.Core.Imaging;
 using Ginkgo.Core.Layout;
@@ -401,13 +402,13 @@ public sealed class MasonryView : FrameworkElement
             _thumbs.SetScreen(sLo, sHi);
         }
 
-        if (!ReferenceEquals(_layout, _lastLayout) || dpi != _lastDpi || pw != _bandW) ResetBands(pw);
+        if (_gpu is null && (!ReferenceEquals(_layout, _lastLayout) || dpi != _lastDpi || pw != _bandW)) ResetBands(pw);
         _lastLayout = _layout; _lastDpi = dpi;
         int k0 = Math.Max(0, (int)Math.Floor(topPx / (double)BandH)), k1 = Math.Max(k0, (int)Math.Floor((botPx - 1) / (double)BandH));
         _dropKeys.Clear();
         foreach (var k in _bands.Keys) if (k < k0 || k > k1) _dropKeys.Add(k);
         foreach (var k in _dropKeys) { _bandPool.Push(_bands[k].Bmp); _bands.Remove(k); }
-        for (int k = k0; k <= k1; k++)
+        for (int k = k0; k <= k1 && _gpu is null; k++)
             if (!_bands.ContainsKey(k))
                 _bands[k] = new Band { K = k, Fresh = true, Bmp = _bandPool.Count > 0 ? _bandPool.Pop() : new WriteableBitmap(pw, BandH, 96, 96, PixelFormats.Pbgra32, null) };
 
@@ -456,11 +457,20 @@ public sealed class MasonryView : FrameworkElement
         Perf.PrepMax = Math.Max(Perf.PrepMax, sw.Elapsed.TotalMilliseconds);
 
         long pt0 = Stopwatch.GetTimestamp();
-        PaintBands(pw, k0, k1);
+        if (!RenderGpu(dc, offPx, pw, ph, dpi))
+        {
+            if (_bands.Count == 0 || _bandW != pw)
+            {
+                // just came back from the GPU grid: make the strips again
+                ResetBands(pw); _lastLayout = _layout; _lastDpi = dpi;
+                for (int k = k0; k <= k1; k++)
+                    _bands[k] = new Band { K = k, Fresh = true, Bmp = new WriteableBitmap(pw, BandH, 96, 96, PixelFormats.Pbgra32, null) };
+            }
+            PaintBands(pw, k0, k1);
+            foreach (var kv in _bands.Values)
+                dc.DrawImage(kv.Bmp, new Rect(0, (kv.K * BandH - offPx) / dpi, pw / dpi, BandH / dpi));
+        }
         Perf.PaintMax = Math.Max(Perf.PaintMax, Perf.Ms(Stopwatch.GetTimestamp() - pt0));
-
-        foreach (var kv in _bands.Values)
-            dc.DrawImage(kv.Bmp, new Rect(0, (kv.K * BandH - offPx) / dpi, pw / dpi, BandH / dpi));
         foreach (var (r, hovered, gif, label, index) in _overlay)
         {
             if (label >= 0) { if (label < CoverCount) DrawCaptionBelow(dc, r, label, dpi); else DrawCaption(dc, r, label, dpi); }
@@ -472,6 +482,87 @@ public sealed class MasonryView : FrameworkElement
         _maxRender = Math.Max(_maxRender, LastRenderMs);
         Perf.Add(sw.ElapsedTicks);
     }
+
+    // ---- the GPU grid (when on, it draws the tiles instead of the strips) ----
+
+    private GpuGrid? _gpu;
+    private GpuPresenter? _presenter;
+    private D3DImage? _d3d;
+    private readonly List<GpuTile> _gpuTiles = new();
+    /// <summary>The GPU grid failed while drawing (device lost and the like). Raised on the UI thread; drawing is back on the strips.</summary>
+    public event Action<Exception>? GpuFailed;
+    /// <summary>The front buffer went away and came back (sleep, a driver update, a monitor change): the GPU objects need making again.</summary>
+    public event Action? GpuFrontBufferBack;
+    public bool UsingGpu => _gpu is not null;
+    public GpuGrid? Gpu => _gpu;
+
+    /// <summary>Draw with the GPU grid (or null for the strips again). The caller owns the objects and disposes them after switching away.</summary>
+    public void UseGpu(GpuGrid? grid, GpuPresenter? presenter)
+    {
+        if (_d3d is not null) _d3d.IsFrontBufferAvailableChanged -= OnFrontBuffer;
+        _gpu = grid; _presenter = presenter;
+        _d3d = grid is null ? null : new D3DImage();
+        if (_d3d is not null) _d3d.IsFrontBufferAvailableChanged += OnFrontBuffer;
+        // the strips are let go while the GPU draws (and made fresh when it stops)
+        _bandPool.Clear(); _bands.Clear(); _sigPrev.Clear(); _bandW = -1; _lastLayout = null;
+        InvalidateVisual();
+    }
+
+    private void OnFrontBuffer(object? s, DependencyPropertyChangedEventArgs e)
+    {
+        if (_d3d is not null && _d3d.IsFrontBufferAvailable) GpuFrontBufferBack?.Invoke();
+    }
+
+    /// <summary>Draws the tiles with the GPU grid. False if it failed (the strips draw this frame instead).</summary>
+    private bool RenderGpu(DrawingContext dc, int offPx, int pw, int ph, double dpi)
+    {
+        if (_gpu is null || _presenter is null || _d3d is null) return false;
+        _gpuTiles.Clear();
+        for (int k = _tiles.Count - 1; k >= 0; k--)          // _tiles runs bottom to top; the GPU uploads top first
+        {
+            var t = _tiles[k];
+            var g = new GpuTile { X = t.X, Y = t.Y, W = t.W, H = t.H, A = 1 };
+            if (t.Over is { } o) { g.Pix = o; g.Fill = BgPixel; }
+            else if (t.E is null) g.Fill = Palette()[(t.Index * 7) % Palette().Length];
+            else if (t.E.Pix.Data.Length < t.E.Pix.W * t.E.Pix.H * 4) g.Fill = FadePixel;
+            else
+            {
+                g.Pix = t.E.Pix; g.Fill = FadePixel;
+                if (t.A < 1)
+                {
+                    g.A = (float)t.A;
+                    var prev = t.E.Prev;
+                    if (prev is not null && prev.Data.Length >= prev.W * prev.H * 4) g.Prev = prev;
+                }
+            }
+            _gpuTiles.Add(g);
+        }
+        bool locked = false;
+        try
+        {
+            _d3d.Lock(); locked = true;
+            bool complete = _gpu.Render(_gpuTiles, offPx, pw, ph, BgPixel, 2.0);
+            var surf = _presenter.Surface(_gpu.SharedHandle, _gpu.Width, _gpu.Height);
+            _d3d.SetBackBuffer(D3DResourceType.IDirect3DSurface9, surf, true);
+            _d3d.AddDirtyRect(new Int32Rect(0, 0, _gpu.Width, _gpu.Height));
+            _d3d.Unlock(); locked = false;
+            if (!complete) _needsRender = true;            // some pictures wait for the next frame's upload time
+            dc.DrawImage(_d3d, new Rect(0, 0, pw / dpi, ph / dpi));
+            Perf.GpuDrawMax = Math.Max(Perf.GpuDrawMax, _gpu.LastDrawMs);
+            Perf.GpuUploadMax = Math.Max(Perf.GpuUploadMax, _gpu.LastUploadMs);
+            Perf.GpuUploads += _gpu.LastUploads;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (locked) try { _d3d.Unlock(); } catch { }
+            UseGpu(null, null);
+            Dispatcher.BeginInvoke(() => GpuFailed?.Invoke(ex));
+            return false;
+        }
+    }
+
+    private uint[] Palette() => _paletteBgra ??= Enumerable.Range(0, 24).Select(i => { var c = HsvToColor(i * 15.0, 0.35, 0.55); return TileBlit.Pack(c.R, c.G, c.B); }).ToArray();
 
     private void ResetBands(int pw)
     {
@@ -488,7 +579,7 @@ public sealed class MasonryView : FrameworkElement
     /// <summary>Repaints the strips that need it: new ones completely, the others only where a picture changed. Big jobs are shared across cores.</summary>
     private unsafe void PaintBands(int pw, int k0, int k1)
     {
-        _paletteBgra ??= Enumerable.Range(0, 24).Select(i => { var c = HsvToColor(i * 15.0, 0.35, 0.55); return TileBlit.Pack(c.R, c.G, c.B); }).ToArray();
+        Palette();
         _work.Clear(); _pieces.Clear();
         long area = 0;
         foreach (var b in _bands.Values)

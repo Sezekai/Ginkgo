@@ -20,6 +20,8 @@ public sealed class GpuCheck
     public bool Ok;
     public string Name = "", Status = "not checked yet", FailedStep = "";
     public long VideoMemory;
+    /// <summary>The NVIDIA GPU's id (LUID), for making the devices on it.</summary>
+    public long Luid;
     /// <summary>Windows already runs Ginkgo on the high-performance GPU (per-app preference, or WPF's adapter is the NVIDIA one).</summary>
     public bool OnNvidia;
     public bool PreferenceSet;
@@ -60,7 +62,7 @@ public sealed class GpuCheck
             Dxgi.Release(adapters);
             return;
         }
-        Name = nv.Name; VideoMemory = nv.Memory;
+        Name = nv.Name; VideoMemory = nv.Memory; Luid = nv.Luid;
 
         // 2. is WPF (Direct3D 9Ex) drawing on it?
         FailedStep = "checking Ginkgo runs on it";
@@ -155,6 +157,17 @@ public sealed class GpuCheck
         }
         catch { return false; }
     }
+
+    /// <summary>The DXGI adapter with this id (the caller releases it with <see cref="Release"/>), or zero.</summary>
+    public static IntPtr AdapterByLuid(long luid)
+    {
+        var all = Dxgi.HighPerformanceAdapters();
+        IntPtr found = IntPtr.Zero;
+        foreach (var a in all) { if (found == IntPtr.Zero && a.Luid == luid) found = a.Ptr; else Dxgi.Release(a.Ptr); }
+        return found;
+    }
+
+    public static void Release(IntPtr com) => Dxgi.Release(com);
 
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
 

@@ -11,7 +11,9 @@ public static class Perf
     public static long BusyTicks;
     public static double RenderMax, PaintMax, PrepMax, DrainMax, TickMax;
     public static int PaintedBands;
+    public static double GpuDrawMax, GpuUploadMax;
+    public static int GpuUploads;
     public static void Add(long ticks) => BusyTicks += ticks;
     public static double Ms(long ticks) => ticks * 1000.0 / Stopwatch.Frequency;
-    public static void Reset() { RenderMax = PaintMax = PrepMax = DrainMax = TickMax = 0; PaintedBands = 0; }
+    public static void Reset() { RenderMax = PaintMax = PrepMax = DrainMax = TickMax = 0; PaintedBands = 0; GpuDrawMax = GpuUploadMax = 0; GpuUploads = 0; }
 }
