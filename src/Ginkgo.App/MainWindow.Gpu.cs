@@ -82,6 +82,7 @@ public partial class MainWindow
             _presenter = new GpuPresenter(hwnd, g.Luid);
             View.UseGpu(_grid, _presenter);
             _gpuFallback = "";
+            _engine.StartGifRenditions();      // the GIF versions it will play (made in the background, paused while scrolling)
         }
         catch (Exception ex)
         {
@@ -189,6 +190,8 @@ public partial class MainWindow
         string gpu = _gpu is null ? "not checked" : _gpu.Ok ? _gpu.Short : $"{(_gpu.Name.Length > 0 ? _gpu.Name + ", " : "")}{_gpu.FailedStep}: {_gpu.Status}";
         var vw = _engine.Warmer;
         string vram = vw.Vram is { } vt && vw.VramActive ? $" | thumbs on card {vt.Bytes / 1073741824.0:F1} GB, {Interlocked.Read(ref vt.Reads)} lookups, refused {vt.Refused}, remade {vw.VramRemade}" : "";
-        return vram + $" | renderer {renderer} | gpu {gpu} | gifs {_gifs.Playing} playing (limit {(_gifs.Limit == 0 ? "all" : _gifs.Limit.ToString())}) | device resets {GpuDeviceResets}";
+        string gifr = _engine.GifMaker is { } gm && gm.Stats.Running
+            ? $" | gif renditions {gm.Stats.Made:N0}/{gm.Stats.Animated - gm.Stats.Stills:N0} made, {gm.Stats.Pending:N0} to do, {gm.Stats.Bytes / 1048576:N0} MB{(gm.Stats.Paused ? ", paused while scrolling" : "")}{(gm.Stats.Failed > 0 ? $", {gm.Stats.Failed} failed" : "")}" : "";
+        return vram + gifr + $" | renderer {renderer} | gpu {gpu} | gifs {_gifs.Playing} playing (limit {(_gifs.Limit == 0 ? "all" : _gifs.Limit.ToString())}) | device resets {GpuDeviceResets}";
     }
 }

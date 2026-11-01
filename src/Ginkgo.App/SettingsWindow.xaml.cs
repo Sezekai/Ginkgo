@@ -181,9 +181,31 @@ public partial class SettingsWindow : Window
         if (fps.SelectedItem is null) fps.SelectedIndex = 0;
         fps.SelectionChanged += (_, _) => { if (_init) return; _s.GifFps = (int)((ComboBoxItem)fps.SelectedItem).Tag; _main.ApplySettings(); };
         _gifPanel.Children.Add(Row("GIF frame rate (Automatic lowers it when many GIFs are on screen)", fps));
+        _gifStat.Foreground = Brush("#9AA0A6"); _gifStat.TextWrapping = TextWrapping.Wrap; _gifStat.Margin = new Thickness(0, 4, 0, 0);
+        _gifPanel.Children.Add(_gifStat);
         GpuPanel.Children.Add(_gifPanel);
+        var tick = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        tick.Tick += (_, _) => GifStat();
+        Loaded += (_, _) => tick.Start(); Closed += (_, _) => tick.Stop();
+        GifStat();
 
         if (_main.Gpu is null && !_main.GpuChecking) RunGpuCheck(); else ShowGpu();
+    }
+
+    private readonly TextBlock _gifStat = new();
+
+    private void GifStat()
+    {
+        var gm = _engine.GifMaker;
+        if (gm is null || !gm.Stats.Running) { _gifStat.Text = "GIF versions for the GPU grid are made once the GPU grid is drawing."; return; }
+        var st = gm.Stats;
+        long animated = Math.Max(0, st.Animated - st.Stills);
+        double avg = st.Made > 0 ? st.Bytes / (double)st.Made : 0;
+        string est = st.Made >= 20 && st.Pending > 0 ? $" · about {(st.Bytes + avg * st.Pending) / 1073741824.0:0.0} GB when all are made" : "";
+        _gifStat.Text = $"GIF versions: {st.Made:N0} of {animated:N0} animated GIFs made ({st.Stills:N0} are still pictures) · {st.Bytes / 1048576.0:N0} MB on {_s.CacheDir}{est}"
+                      + (st.Paused ? " · paused while you scroll" : st.Pending > 0 ? " · making them in the background" : "")
+                      + (st.Failed > 0 ? $" · {st.Failed} couldn't be read ({st.LastError})" : "")
+                      + ". Changing the length remakes them in the background; the old ones are used until then.";
     }
 
     private void RunGpuCheck()
@@ -205,6 +227,6 @@ public partial class SettingsWindow : Window
         bool gpuOn = _s.Renderer == "GPU" && g is { Ok: true };
         foreach (UIElement c in _gifPanel.Children) if (c != _gifOff) c.IsEnabled = gpuOn;
         _gifPanel.Opacity = gpuOn ? 1 : 0.55;
-        _gifOff.Text = gpuOn ? "GIF settings for the GPU grid (it takes them up in the GIF stage of the build)." : "These apply only while the GPU grid is drawing.";
+        _gifOff.Text = gpuOn ? "GIF settings for the GPU grid. Playing them in the grid comes in the next build; this one makes the GIF versions." : "These apply only while the GPU grid is drawing.";
     }
 }

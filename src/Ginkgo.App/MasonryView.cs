@@ -494,6 +494,14 @@ public sealed class MasonryView : FrameworkElement
     /// <summary>The front buffer went away and came back (sleep, a driver update, a monitor change): the GPU objects need making again.</summary>
     public event Action? GpuFrontBufferBack;
     public bool UsingGpu => _gpu is not null;
+
+    /// <summary>The GIF tiles on screen now (for making their GPU versions first).</summary>
+    public List<int> VisibleGifs()
+    {
+        var l = new List<int>();
+        if (Badges is { } b) foreach (int i in _visible) if (i < b.Length && b[i] == 1) l.Add(i);
+        return l;
+    }
     public GpuGrid? Gpu => _gpu;
 
     /// <summary>Draw with the GPU grid (or null for the strips again). The caller owns the objects and disposes them after switching away.</summary>

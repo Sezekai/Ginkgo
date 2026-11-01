@@ -461,6 +461,12 @@ public partial class MainWindow : Window
         _fps = _frames / ((now - _lastTick) / (double)Stopwatch.Frequency); _frames = 0; _lastTick = now;
         if (_syncPending) SyncBar();
         if (_engine.Warmer.Vram is { Alive: false }) ApplyVramTier();
+        if (_engine.GifMaker is { } gm && gm.Stats.Running && _model is not null)
+        {
+            gm.CapMs = (int)(_settings.GifLengthSec * 1000);
+            var ids = View.VisibleGifs().Where(i => i < _order.Length && _order[i] >= 0 && _order[i] < _model.Id.Length).Select(i => _model.Id[_order[i]]).ToList();
+            if (ids.Count > 0) gm.Want(ids);
+        }
         double tilePx = View.TileTarget * VisualTreeHelper.GetDpi(View).PixelsPerDip;
         _engine.Warmer.Preferred = tilePx <= 120 ? 0 : tilePx <= 200 ? 1 : 2;
         if (View.HoverIndex < 0) StatusText.Text = StatusLine();

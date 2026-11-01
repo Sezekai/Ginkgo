@@ -437,6 +437,101 @@ Check(again.BackfillTotal == 0, "backfill has nothing left");
     ss.Dispose();
 }
 
+// ---- GIF renditions (GPU grid): frame clock, short delays, length limit, disposal, encoding, pausing while scrolling ----
+{
+    var tl = GifRenditions.Timeline(new[] { 0, 200, 50 }, 10, 5000, out bool cut1, out int len1, out int src1);
+    Check(tl.SequenceEqual(new[] { 0, 1, 1, 2 }) && !cut1 && len1 == 350 && src1 == 350, "GIF frames are put on a fixed 10 fps clock using their real delays");
+    Check(GifRenditions.Delay(0) == 100 && GifRenditions.Delay(10) == 100 && GifRenditions.Delay(20) == 20, "delays of 0-10 ms play as 100 ms, like browsers");
+    var tl2 = GifRenditions.Timeline(Enumerable.Repeat(100, 8).ToArray(), 10, 5000, out bool cut2, out int len2, out int src2);
+    Check(tl2.Length == 50 && cut2 && len2 == 5000 && src2 == 8000 && tl2[^1] == 4, "a GIF longer than the limit is cut there and marked as cut");
+    var tl3 = GifRenditions.Timeline(new[] { 100, 100 }, 15, 5000, out bool cut3, out _, out _);
+    Check(tl3.Length == 3 && !cut3, "a short GIF stays whole (no cut, nothing to cross-fade)");
+
+    // a real GIF: frames that draw on top, restore to background, and restore to previous
+    byte[] Rect(int w, int h, byte v) => Enumerable.Repeat(v, w * h).ToArray();
+    var gif = TinyGif.Make(8, 8, new[]
+    {
+        new TinyGif.Frame(0, 0, 8, 8, Rect(8, 8, 1), 10, 1, false),   // red everywhere, keep
+        new TinyGif.Frame(1, 1, 2, 2, Rect(2, 2, 2), 10, 2, false),   // green square, then cleared to background
+        new TinyGif.Frame(5, 5, 2, 2, Rect(2, 2, 3), 10, 1, false),   // blue square, keep
+        new TinyGif.Frame(1, 5, 2, 2, Rect(2, 2, 4), 10, 3, false),   // yellow square, then back to how it was before
+        new TinyGif.Frame(7, 7, 1, 1, Rect(1, 1, 0), 10, 1, true),    // nothing visible
+    });
+    var fr = GifRenditions.Frames(new MemoryStream(gif), 192, 10, 5000, CancellationToken.None);
+    bool Px(byte[] f, int x, int y, byte r, byte g, byte b, byte a)
+    {
+        int i = (y * 8 + x) * 4;
+        return Math.Abs(f[i] - b) <= 2 && Math.Abs(f[i + 1] - g) <= 2 && Math.Abs(f[i + 2] - r) <= 2 && Math.Abs(f[i + 3] - a) <= 2;
+    }
+    Check(fr is { } v && v.frames.Count == 5 && v.w == 8 && v.h == 8, "a five-frame GIF gives five frames at its own size (never enlarged)");
+    if (fr is { } q && q.frames.Count == 5)
+    {
+        var f = q.frames;
+        Check(Px(f[0], 0, 0, 255, 0, 0, 255) && Px(f[0], 1, 1, 255, 0, 0, 255), "frame 1: all red");
+        Check(Px(f[1], 1, 1, 0, 255, 0, 255) && Px(f[1], 4, 4, 255, 0, 0, 255), "frame 2: green drawn on top of red");
+        Check(Px(f[2], 1, 1, 0, 0, 0, 0) && Px(f[2], 5, 5, 0, 0, 255, 255) && Px(f[2], 0, 0, 255, 0, 0, 255), "frame 3: the green square cleared (restore to background), blue drawn");
+        Check(Px(f[3], 1, 5, 255, 255, 0, 255) && Px(f[3], 5, 5, 0, 0, 255, 255), "frame 4: yellow drawn on frame 3");
+        Check(Px(f[4], 1, 5, 255, 0, 0, 255) && Px(f[4], 5, 5, 0, 0, 255, 255) && Px(f[4], 1, 1, 0, 0, 0, 0), "frame 5: yellow taken away again (restore to previous)");
+        Check(q.alpha, "the cleared square makes it see-through (BC7)");
+    }
+    var oneFrame = TinyGif.Make(4, 4, new[] { new TinyGif.Frame(0, 0, 4, 4, Rect(4, 4, 1), 10, 1, false) });
+    Check(GifRenditions.Frames(new MemoryStream(oneFrame), 192, 10, 5000, CancellationToken.None) is null, "a single-frame GIF has nothing to play");
+
+    // encoding: BC1 when nothing is see-through, BC7 when something is; the round trip stays close
+    List<byte[]> Grad(int w, int h, int n, bool holes)
+    {
+        var l = new List<byte[]>();
+        for (int k = 0; k < n; k++)
+        {
+            var b = new byte[w * h * 4];
+            for (int y = 0; y < h; y++) for (int x = 0; x < w; x++)
+            {
+                int i = (y * w + x) * 4; bool hole = holes && x < 6 && y < 6;
+                b[i] = hole ? (byte)0 : (byte)(x * 255 / w); b[i + 1] = hole ? (byte)0 : (byte)(y * 255 / h); b[i + 2] = hole ? (byte)0 : (byte)(k * 40); b[i + 3] = hole ? (byte)0 : (byte)255;
+            }
+            l.Add(b);
+        }
+        return l;
+    }
+    foreach (bool holes in new[] { false, true })
+    {
+        int w = 42, h = 30;
+        var frames = Grad(w, h, 3, holes);
+        var blob = GifRenditions.Encode(frames, w, h, holes, 10, holes, 300, 900);
+        var r = GifRenditions.Read(blob);
+        double err = 0; int n = 0;
+        for (int k = 0; k < 3; k++)
+        {
+            var d = GifRenditions.DecodeFrame(r, k);
+            for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) for (int c = 0; c < 4; c++) { err += Math.Abs(d[(y * r.PW + x) * 4 + c] - frames[k][(y * w + x) * 4 + c]); n++; }
+        }
+        Check(r.W == w && r.H == h && r.PW == 44 && r.PH == 32 && r.Frames == 3 && r.Fps == 10 && r.Cut == holes && r.Bc7 == holes && r.LengthMs == 300 && r.SourceMs == 900,
+              $"rendition header round trip ({(holes ? "BC7" : "BC1")})");
+        Check(err / n < 6, $"{(holes ? "BC7" : "BC1")} frames come back close to the originals (mean difference {err / n:F2})");
+    }
+
+    // making them in the background: waits while scrolling, then makes the GIF and records it
+    var gdir = Path.Combine(tmp, "gifs"); Directory.CreateDirectory(gdir);
+    var gpath = Path.Combine(gdir, "a.gif"); File.WriteAllBytes(gpath, gif);
+    var gdb = new IndexDb(Path.Combine(tmp, "gifdb", "index.db"));
+    using (var c = gdb.Open())
+        IndexDb.Exec(c, $"INSERT INTO files (id, path, folder, top, size, mtime, kind, level, first_seen, state) VALUES (77, '{gpath.Replace("'", "''")}', '', '', {gif.Length}, 0, 1, 0, 1, 1)");
+    var maker = new GifRenditionMaker(gdb, Path.Combine(tmp, "gifcache"), new PipelineStats());
+    bool busy = true;
+    maker.Busy = () => busy;
+    using var gcts = new CancellationTokenSource();
+    var mt = new Thread(() => maker.Run(gcts.Token)) { IsBackground = true }; mt.Start();
+    Thread.Sleep(700);
+    Check(maker.Stats.Paused && maker.Where(77, 0) is null, "GIF versions wait while scrolling");
+    busy = false;
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    while (maker.Where(77, 1) is null && sw.ElapsedMilliseconds < 15000) Thread.Sleep(50);
+    var made0 = maker.Load(77, 0); var made1 = maker.Load(77, 1);
+    Check(made0 is { Frames: 5, Fps: 10 } && made1 is { Frames: 8, Fps: 15 }, "after scrolling stops, both versions are made (10 fps small, 15 fps large) and can be read back");
+    gcts.Cancel(); mt.Join(3000);
+    Check(maker.Stats.Pending == 0 && maker.Stats.Failed == 0, "nothing left to make, nothing failed");
+}
+
 // ---- moving the small thumbnails to a fast drive ----
 {
     var from = Path.Combine(tmp, "mv-old"); var to = Path.Combine(tmp, "mv-fast");
@@ -536,6 +631,40 @@ class ContentIds : IFileIdProvider
             return "d:" + Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(string.Join("|", parts))));
         }
         catch { return null; }
+    }
+}
+
+/// <summary>Writes small GIFs for the tests (uncompressed LZW: a clear code every 250 pixels keeps the codes 9 bits wide).</summary>
+static class TinyGif
+{
+    public record Frame(int X, int Y, int W, int H, byte[] Idx, int DelayCs, int Disposal, bool Transparent);
+    public static byte[] Make(int w, int h, IList<Frame> frames)
+    {
+        var o = new MemoryStream();
+        void U16(int v) { o.WriteByte((byte)v); o.WriteByte((byte)(v >> 8)); }
+        o.Write("GIF89a"u8);
+        U16(w); U16(h); o.WriteByte(0xF7); o.WriteByte(0); o.WriteByte(0);
+        var pal = new byte[256 * 3];
+        byte[][] cols = { new byte[] { 0, 0, 0 }, new byte[] { 255, 0, 0 }, new byte[] { 0, 255, 0 }, new byte[] { 0, 0, 255 }, new byte[] { 255, 255, 0 } };
+        for (int i = 0; i < cols.Length; i++) cols[i].CopyTo(pal, i * 3);
+        o.Write(pal);
+        o.Write(new byte[] { 0x21, 0xFF, 0x0B }); o.Write("NETSCAPE2.0"u8); o.Write(new byte[] { 3, 1, 0, 0, 0 });
+        foreach (var f in frames)
+        {
+            o.Write(new byte[] { 0x21, 0xF9, 4, (byte)((f.Disposal << 2) | (f.Transparent ? 1 : 0)) }); U16(f.DelayCs); o.WriteByte(0); o.WriteByte(0);
+            o.WriteByte(0x2C); U16(f.X); U16(f.Y); U16(f.W); U16(f.H); o.WriteByte(0);
+            o.WriteByte(8);
+            var bits = new List<byte>(); int acc = 0, nb = 0;
+            void Code(int c) { acc |= c << nb; nb += 9; while (nb >= 8) { bits.Add((byte)acc); acc >>= 8; nb -= 8; } }
+            Code(256); int run = 0;
+            foreach (var p in f.Idx) { if (run == 250) { Code(256); run = 0; } Code(p); run++; }
+            Code(257);
+            if (nb > 0) bits.Add((byte)acc);
+            for (int i = 0; i < bits.Count; i += 255) { int n = Math.Min(255, bits.Count - i); o.WriteByte((byte)n); o.Write(bits.GetRange(i, n).ToArray()); }
+            o.WriteByte(0);
+        }
+        o.WriteByte(0x3B);
+        return o.ToArray();
     }
 }
 

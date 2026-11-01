@@ -62,6 +62,7 @@ public sealed class Engine : IDisposable
             Warmer.VramMode = Settings.ThumbVramMode;
             Warmer.VramOnBattery = Settings.ThumbVramOnBattery;
             Warmer.Start(Stores, _cts.Token);
+            GifMaker = new GifRenditionMaker(Db, Settings.CacheDir, Pipe) { CapMs = (int)(Settings.GifLengthSec * 1000) };
             Opened?.Invoke();
             await Refresh(scan: true, confirmLargeRemoval: false);
             StartWatcher();
@@ -75,6 +76,15 @@ public sealed class Engine : IDisposable
     public volatile bool Moving; public long MoveDone, MoveTotal;
     public volatile string FastCacheNote = "";
     public CacheWarmer Warmer { get; } = new();
+    /// <summary>Makes the GIF versions the GPU grid plays (started when the GPU grid is chosen).</summary>
+    public GifRenditionMaker? GifMaker { get; private set; }
+    private bool _gifsStarted;
+    public void StartGifRenditions()
+    {
+        if (_gifsStarted || GifMaker is null) return;
+        _gifsStarted = true;
+        GifMaker.Start(_cts.Token);
+    }
 
     private static string Root(string path) { try { return System.IO.Path.GetPathRoot(System.IO.Path.GetFullPath(path)) ?? ""; } catch { return ""; } }
 
