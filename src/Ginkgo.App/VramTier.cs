@@ -26,6 +26,10 @@ public sealed unsafe class VramTier : ISecondHome, IDisposable
     public int Pieces { get { lock (_lock) return _held.Count; } }
     public string Name { get; }
     public volatile string Problem = "";
+    /// <summary>Times the card said no (out of room) and times it was really reset: for the status line and F3.</summary>
+    public int Refused, Resets;
+    // after the card says it's out of room, hold at what fits for a minute before trying for more
+    private long _softLimit = long.MaxValue, _softUntil;
     /// <summary>The most it may hold (bytes, 0 = Windows' allowance decides).</summary>
     public long Cap;
     public long Reads, ReadTicks;
@@ -69,6 +73,7 @@ public sealed unsafe class VramTier : ISecondHome, IDisposable
     {
         long held = Bytes;
         long limit = Cap > 0 ? Cap : long.MaxValue;
+        if (Environment.TickCount64 < Interlocked.Read(ref _softUntil)) limit = Math.Min(limit, Interlocked.Read(ref _softLimit));
         var (budget, usage) = Allowance();
         if (budget > 0)
         {
@@ -95,7 +100,7 @@ public sealed unsafe class VramTier : ISecondHome, IDisposable
                 new ReadOnlySpan<byte>((void*)m.DataPointer, dst.Length).CopyTo(dst);
                 _ctx.Unmap(_staging, 0);
             }
-            catch (Exception ex) { Lost(ex); return false; }
+            catch (Exception ex) { Failed(ex); return false; }
         }
         Interlocked.Increment(ref Reads);
         Interlocked.Add(ref ReadTicks, System.Diagnostics.Stopwatch.GetTimestamp() - t0);
@@ -136,7 +141,7 @@ public sealed unsafe class VramTier : ISecondHome, IDisposable
                 Interlocked.Add(ref _bytes, length);
                 return true;
             }
-            catch (Exception ex) { Lost(ex); return false; }
+            catch (Exception ex) { Failed(ex); return false; }
         }
     }
 
@@ -174,6 +179,21 @@ public sealed unsafe class VramTier : ISecondHome, IDisposable
             _held.Clear(); Interlocked.Exchange(ref _bytes, 0);
             FreeDevice();
         }
+    }
+
+    /// <summary>
+    /// Something the card refused. Only a real reset (sleep, a driver update) loses what is held; anything else (usually: no room
+    /// right now) just means holding at what fits for a while. Treating every refusal as a reset is what emptied it before.
+    /// </summary>
+    private void Failed(Exception ex)
+    {
+        bool removed;
+        try { removed = _dev is null || _dev.DeviceRemovedReason.Failure; } catch { removed = true; }
+        if (removed) { Resets++; Lost(ex); return; }
+        Refused++;
+        Interlocked.Exchange(ref _softLimit, Math.Max(0, Bytes - (64L << 20)));
+        Interlocked.Exchange(ref _softUntil, Environment.TickCount64 + 60_000);
+        Problem = "the card is out of room for now, so it holds what fits";
     }
 
     /// <summary>The card was reset (sleep, driver update): everything here is gone; it is filled again from the drive.</summary>

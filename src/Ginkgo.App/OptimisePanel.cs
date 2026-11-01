@@ -165,6 +165,7 @@ public sealed class OptimisePanel : Border
         string allow = budget > 0 ? $"  ·  Windows allows Ginkgo {budget / 1073741824.0:0.0} GB on the card, Ginkgo uses {usage / 1073741824.0:0.0} GB" : "";
         long reads = Interlocked.Read(ref v.Reads);
         string speed = reads > 0 ? $"  ·  {reads:N0} lookups, {Interlocked.Read(ref v.ReadTicks) * 1000.0 / System.Diagnostics.Stopwatch.Frequency / reads:0.00} ms each" : "";
-        _vramStat.Text = $"On {v.Name}: {Interlocked.Read(ref _warmer.InVram) / 1073741824.0:0.0} GB of thumbnails{allow}{speed}" + (v.Problem.Length > 0 ? "  ·  " + v.Problem : "");
+        string trouble = v.Refused + v.Resets + _warmer.VramRemade > 0 ? $"  ·  card said no {v.Refused}×, card resets {_warmer.VramRemade}" : "";
+        _vramStat.Text = $"On {v.Name}: {Interlocked.Read(ref _warmer.InVram) / 1073741824.0:0.0} GB of thumbnails{allow}{speed}{trouble}" + (v.Problem.Length > 0 ? "  ·  " + v.Problem : "");
     }
 }

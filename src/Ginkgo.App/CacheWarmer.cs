@@ -46,6 +46,8 @@ public sealed class CacheWarmer
     public volatile bool VramActive;
     /// <summary>Why the graphics card's memory isn't available (shown in Optimisations).</summary>
     public volatile string VramStatus = "";
+    /// <summary>Times the graphics-memory store had to be made again (the card was reset).</summary>
+    public int VramRemade;
 
     private void Run(ThumbStores stores, CancellationToken ct)
     {
@@ -125,6 +127,9 @@ public sealed class CacheWarmer
                 {
                     if (ct.IsCancellationRequested || !Same()) break;
                     if (full || !ramOn) { notPlaced.Add(w); continue; }
+                    // already on the card: only bring it back into memory when there's plenty to spare, or pieces would go back
+                    // and forth (memory frees up because pieces moved to the card, so they'd be loaded again, and so on)
+                    if (w.onCard && AvailableBytes() < Reserve + (2L << 30)) continue;
                     bool room = AvailableBytes() - w.size >= Reserve && held + w.size <= limit;
                     if (!room)
                     {
@@ -139,8 +144,7 @@ public sealed class CacheWarmer
                     Running = true;
                     if (w.st.LoadSegment(w.pack, w.seg, ct))
                     {
-                        held += w.size;
-                        if (w.onCard) w.st.DropSecond(w.pack, w.seg);       // in memory now: the card's copy isn't needed
+                        held += w.size;           // the card's copy stays: if memory runs short again, nothing has to be read twice
                     }
                 }
 
@@ -167,7 +171,8 @@ public sealed class CacheWarmer
                 }
                 Running = false;
                 InVram = vram?.Bytes ?? 0;
-                Done = tiers.Sum(s => s.MemoryBytes) + (tierOn ? InVram : 0);
+                // a piece can be in memory and on the card at once: count it once
+                Done = all.Where(x => x.st.IsInMemory(x.pack, x.seg) || (tierOn && x.st.InSecond(x.pack, x.seg))).Sum(x => (long)x.size);
                 Note = full ? (held + (64L << 20) >= cap ? "at your limit: the most-viewed thumbnails are kept" : "memory is full: the most-viewed thumbnails are kept") : "";
                 if (tierOn && full) Note = InVram > 0 ? "the rest are on the graphics card" : Note;
                 InMemory = tiers.Sum(s => s.MemoryBytes);
@@ -190,7 +195,7 @@ public sealed class CacheWarmer
                     }
                     InMemory = tiers.Sum(s => s.MemoryBytes);
                     InVram = vram?.Bytes ?? 0;
-                    Done = InMemory + (tierOn ? InVram : 0);
+                    Done = Math.Min(Total, Math.Max(Done, InMemory));
                 }
             }
         }

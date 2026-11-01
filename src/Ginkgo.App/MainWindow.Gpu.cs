@@ -42,7 +42,7 @@ public partial class MainWindow
     private void ApplyVramTier()
     {
         var w = _engine.Warmer;
-        if (w.Vram is { Alive: false } dead) { w.Vram = null; Task.Delay(1500).ContinueWith(_ => dead.Dispose()); GpuDeviceResets++; }
+        if (w.Vram is { Alive: false } dead) { w.Vram = null; Task.Delay(1500).ContinueWith(_ => dead.Dispose()); GpuDeviceResets++; w.VramRemade++; }
         if (w.Vram is not null || _gpu is null) return;
         if (_gpu.Luid == 0) { w.VramStatus = "No NVIDIA graphics card with its own memory was found, so this isn't available."; return; }
         IntPtr adapter = GpuCheck.AdapterByLuid(_gpu.Luid);
@@ -188,7 +188,7 @@ public partial class MainWindow
             renderer += $" | vram {gg.UsedBytes / 1048576} / {gg.BudgetBytes / 1048576} MB ({gg.PageCount} pages, {gg.Evictions} emptied) | uploads {Perf.GpuUploads}/s, max {Perf.GpuUploadMax:F1} ms, waiting {Perf.GpuWaiting} | gpu draw {Perf.GpuDrawMax:F1} ms (card {Perf.GpuTimeMax:F2} ms)";
         string gpu = _gpu is null ? "not checked" : _gpu.Ok ? _gpu.Short : $"{(_gpu.Name.Length > 0 ? _gpu.Name + ", " : "")}{_gpu.FailedStep}: {_gpu.Status}";
         var vw = _engine.Warmer;
-        string vram = vw.Vram is { } vt && vw.VramActive ? $" | thumbs on card {vt.Bytes / 1073741824.0:F1} GB, {Interlocked.Read(ref vt.Reads)} lookups" : "";
+        string vram = vw.Vram is { } vt && vw.VramActive ? $" | thumbs on card {vt.Bytes / 1073741824.0:F1} GB, {Interlocked.Read(ref vt.Reads)} lookups, refused {vt.Refused}, remade {vw.VramRemade}" : "";
         return vram + $" | renderer {renderer} | gpu {gpu} | gifs {_gifs.Playing} playing (limit {(_gifs.Limit == 0 ? "all" : _gifs.Limit.ToString())}) | device resets {GpuDeviceResets}";
     }
 }
