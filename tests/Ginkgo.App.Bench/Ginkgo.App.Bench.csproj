@@ -17,6 +17,7 @@
     <Compile Include="..\..\src\Ginkgo.App\GpuCheck.cs" Link="GpuCheck.cs" />
     <Compile Include="..\..\src\Ginkgo.App\GpuGrid.cs" Link="GpuGrid.cs" />
     <Compile Include="..\..\src\Ginkgo.App\VramTier.cs" Link="VramTier.cs" />
+    <Compile Include="..\..\src\Ginkgo.App\GifPlayer.cs" Link="GifPlayer.cs" />
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
     <ProjectReference Include="..\..\src\Ginkgo.Core\Ginkgo.Core.csproj" />
