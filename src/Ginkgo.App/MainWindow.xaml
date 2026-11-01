@@ -37,7 +37,8 @@
         <Border x:Name="StatusBar" Grid.Row="1" Background="{StaticResource Bar}" BorderBrush="#2A2A31" BorderThickness="0,1,0,0" Padding="14,6">
             <DockPanel>
                 <Button x:Name="UpdateBtn" DockPanel.Dock="Right" Content="Update view" Visibility="Collapsed" Margin="8,0,0,0" Padding="8,2" Click="OnUpdateView"/>
-                <TextBlock x:Name="DiagText" DockPanel.Dock="Right" Foreground="#E0B060" FontFamily="Consolas" Margin="12,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
+                <Button x:Name="DiagMoreBtn" DockPanel.Dock="Right" Content="Full status" Visibility="Collapsed" Margin="8,0,0,0" Padding="8,0" Height="22" ToolTip="Show the whole F3 status" Click="OnDiagMore"/>
+                <TextBlock x:Name="DiagText" DockPanel.Dock="Right" TextTrimming="CharacterEllipsis" Foreground="#E0B060" FontFamily="Consolas" Margin="12,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
                 <TextBlock x:Name="CountText" DockPanel.Dock="Right" Foreground="{StaticResource Text}" Margin="12,0,0,0" VerticalAlignment="Center"/>
                 <ProgressBar x:Name="IdBar" DockPanel.Dock="Right" Width="120" Minimum="0" Maximum="1" Margin="12,0,0,0" Visibility="Collapsed" VerticalAlignment="Center"/>
                 <TextBlock x:Name="StatusText" Foreground="{StaticResource Dim}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
@@ -74,7 +75,7 @@
                         <Button x:Name="SettingsBtn" Style="{StaticResource IconButton}" Content="&#xE713;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Settings" Click="OnSettings"/>
                         <Button x:Name="KeysBtn" Style="{StaticResource IconButton}" Content="&#xE765;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Keyboard shortcuts (K)" Click="OnKeysClick"/>
                         <Button x:Name="MoreBtn" local:BarPanel.Pinned="True" Style="{StaticResource IconButton}" Content="&#xE712;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="More" Click="OnMoreBar"/>
-                        <Button x:Name="HideBarBtn" local:BarPanel.Pinned="True" Style="{StaticResource IconButton}" Content="&#xE70E;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Hide this bar (H)" Click="OnHideBar"/>
+                        <Button x:Name="HideBarBtn" local:BarPanel.Pinned="True" Style="{StaticResource IconButton}" Content="&#xE70E;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Hide this bar (H). Press H again to hide the bottom bar too, and once more to bring both back" Click="OnHideBar"/>
                     </local:BarPanel>
             </Border>
             <Border x:Name="BrowseBar" Background="#1C1C20" BorderBrush="#34343C" BorderThickness="0,0,0,1" Padding="14,7" Visibility="Collapsed"
@@ -113,6 +114,18 @@
                 </DockPanel>
             </Border>
         </StackPanel>
+
+        <!-- the whole F3 status, one item per line -->
+        <Border x:Name="DiagFull" Grid.Row="0" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="12" MaxWidth="760" Padding="14,10"
+                Background="#1C1C20" BorderBrush="#3A3A42" BorderThickness="1" CornerRadius="8" Visibility="Collapsed">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                    <Button Content="Copy" Padding="10,0" Height="24" Click="OnDiagCopy"/>
+                    <Button Content="Close" Padding="10,0" Height="24" Margin="6,0,0,0" Click="OnDiagMore"/>
+                </StackPanel>
+                <TextBlock x:Name="DiagFullText" Foreground="#E0B060" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap" LineHeight="17"/>
+            </DockPanel>
+        </Border>
 
         <!-- hover here to bring a hidden bar back; or use the little button -->
         <Border x:Name="HoverStrip" Grid.RowSpan="2" VerticalAlignment="Top" Height="6" Background="Transparent" Visibility="Collapsed"/>
@@ -191,7 +204,7 @@
         </Grid>
 
         <!-- viewer -->
-        <Grid x:Name="ViewerRoot" Grid.RowSpan="2" Background="Black" Visibility="Collapsed" Focusable="True">
+        <Grid x:Name="ViewerRoot" Grid.RowSpan="2" Background="Black" Visibility="Collapsed" Focusable="True" FocusVisualStyle="{x:Null}">
             <Grid x:Name="PicHost" ClipToBounds="True" Background="Black" MouseWheel="OnViewerWheel" MouseLeftButtonDown="OnViewerDown"
                   MouseMove="OnViewerMove" MouseLeftButtonUp="OnViewerUp" SizeChanged="OnViewerSize">
                 <Image x:Name="Pic" Stretch="Uniform" RenderTransformOrigin="0.5,0.5" RenderOptions.BitmapScalingMode="HighQuality">

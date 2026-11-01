@@ -75,6 +75,7 @@ public partial class MainWindow : Window
         ShuffleBtn.Visibility = _settings.Sort == "Random" ? Visibility.Visible : Visibility.Collapsed;
         View.LookAheadWindows = _settings.LookAheadWindows;
         _barManual = _settings.BarHidden;
+        if (_barManual && _settings.StatusHidden) StatusBar.Visibility = Visibility.Collapsed;
         UpdateFoldersLabel();
 
         _folders = new FolderPanel(_settings.FolderSort, _settings.FolderSortReverse);
@@ -464,6 +465,7 @@ public partial class MainWindow : Window
         {
             var (mr, _) = View.TakeWorst();
             DiagText.Text = $"{_fps:F0} fps | worst gap {_worstGap:F0} ms | slow {_slowFrames} (gc {_slowGc}, ours {_slowOurs}, other {_slowOther}) | gc pause {(GC.GetTotalPauseDuration() - _gcAtTick).TotalMilliseconds:F0} ms | draw {mr:F1} (prep {Perf.PrepMax:F1}, paint {Perf.PaintMax:F1}/{Perf.PaintedBands}) drain {Perf.DrainMax:F1} | {View.LastVisibleCount} tiles, cached {_loader?.CachedCount ?? 0}, pending {_loader?.PendingCount ?? 0} | GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)} | read {_loader?.AvgReadMs ?? 0:F1} ms, decode {_loader?.AvgDecodeMs ?? 0:F1} ms{(_engine.FastCacheNote.Length > 0 ? " | " + _engine.FastCacheNote : "")} | thumbs in memory {_engine.Warmer.InMemory / 1073741824.0:F1} GB ({(_engine.Warmer.Total > 0 ? _engine.Warmer.Done * 100 / _engine.Warmer.Total : 0)}%{(_engine.Warmer.Running ? ", loading" : "")}) {_engine.Warmer.Note} | free RAM {CacheWarmer.AvailableBytes() / 1073741824.0:F1} GB" + GpuDiag();
+            if (DiagFull.Visibility == Visibility.Visible) DiagFullText.Text = DiagText.Text.Replace(" | ", "\n");
             _worstGap = 0; _slowFrames = _slowGc = _slowOurs = _slowOther = 0; _gcAtTick = GC.GetTotalPauseDuration(); Perf.Reset();
         }
         bool moving = _engine.Moving;
@@ -604,9 +606,9 @@ public partial class MainWindow : Window
             case Key.S: OpenSettings(); e.Handled = true; break;
             case Key.O: RevealBar(); OnOptimise(this, e); e.Handled = true; break;
             case Key.F: case Key.F11: ToggleFullscreen(); e.Handled = true; break;
-            case Key.F3: _diag = !_diag; DiagText.Visibility = _diag ? Visibility.Visible : Visibility.Collapsed; e.Handled = true; break;
+            case Key.F3: _diag = !_diag; DiagText.Visibility = DiagMoreBtn.Visibility = _diag ? Visibility.Visible : Visibility.Collapsed; if (!_diag) DiagFull.Visibility = Visibility.Collapsed; e.Handled = true; break;
             case Key.M: SetSidebar(!_sideOpen); e.Handled = true; break;
-            case Key.H: if (_barManual) OnShowBar(this, e); else OnHideBar(this, e); e.Handled = true; break;
+            case Key.H: OnHideBar(this, e); e.Handled = true; break;
             case Key.G: GeneralBtn.IsChecked = GeneralBtn.IsChecked != true; OnFilterChanged(this, e); e.Handled = true; break;
             case Key.N: NsfwBtn.IsChecked = NsfwBtn.IsChecked != true; OnFilterChanged(this, e); e.Handled = true; break;
             case Key.V: VeryBtn.IsChecked = VeryBtn.IsChecked != true; OnFilterChanged(this, e); e.Handled = true; break;
@@ -747,18 +749,40 @@ public partial class MainWindow : Window
 
     private void UpdateInset() => View.TopInset = _barManual ? 0 : (float)BarHost.ActualHeight;
 
+    /// <summary>Hide, in steps: first the top bar, then the bottom bar too; the next press brings both back.</summary>
     private void OnHideBar(object s, RoutedEventArgs e)
     {
-        _barManual = true;
-        _ignoreOverUntil = Stopwatch.GetTimestamp() + Stopwatch.Frequency;      // the mouse is still on the bar for a moment
-        UpdateInset(); ApplyBar();
+        if (!_barManual)
+        {
+            _barManual = true;
+            _ignoreOverUntil = Stopwatch.GetTimestamp() + Stopwatch.Frequency;      // the mouse is still on the bar for a moment
+            UpdateInset(); ApplyBar();
+        }
+        else if (StatusBar.Visibility == Visibility.Visible) SetBottomBar(false);
+        else OnShowBar(s, e);
     }
 
     private void OnShowBar(object s, RoutedEventArgs e)
     {
         _barManual = false; _barAuto = false;
+        SetBottomBar(true);
         UpdateInset(); ApplyBar();
     }
+
+    private void SetBottomBar(bool show)
+    {
+        StatusBar.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        _settings.StatusHidden = !show;
+    }
+
+    private void OnDiagMore(object s, RoutedEventArgs e)
+    {
+        bool open = DiagFull.Visibility != Visibility.Visible;
+        DiagFull.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        if (open) DiagFullText.Text = DiagText.Text.Replace(" | ", "\n");
+    }
+
+    private void OnDiagCopy(object s, RoutedEventArgs e) { try { Clipboard.SetText(DiagText.Text); StatusText.Text = "Status copied."; } catch { } }
 
     private void RevealBar() { if (_barManual || _barAuto) { _barManual = false; _barAuto = false; UpdateInset(); } ApplyBar(); }
 

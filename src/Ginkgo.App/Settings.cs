@@ -49,6 +49,8 @@ public sealed class AppSettings
     /// <summary>true = rows of equal height; false = equal-width columns.</summary>
     public bool RowsLayout { get; set; }
     public bool BarHidden { get; set; }
+    /// <summary>The bottom bar is hidden too (second press of H).</summary>
+    public bool StatusHidden { get; set; }
     /// <summary>How the buttons look (shape, colours, outline, glow).</summary>
     public ButtonLook Look { get; set; } = new();
 

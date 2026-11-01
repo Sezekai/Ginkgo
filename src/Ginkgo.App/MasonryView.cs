@@ -71,6 +71,7 @@ public sealed class MasonryView : FrameworkElement
         RenderOptions.SetBitmapScalingMode(this, BitmapScalingMode.NearestNeighbor);     // the surface is drawn pixel-for-pixel
         RenderOptions.SetEdgeMode(this, EdgeMode.Aliased);       // no soft half-pixel row where the view is cut off at its top and bottom edges
         Focusable = true;
+        FocusVisualStyle = null;     // the default focus rectangle is a dotted line right round the view's edges
         // fades are redrawn once per screen refresh (never faster)
         Loaded += (_, _) => CompositionTarget.Rendering += OnRefresh;
         Unloaded += (_, _) => CompositionTarget.Rendering -= OnRefresh;

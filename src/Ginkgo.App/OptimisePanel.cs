@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Media;
 
 namespace Ginkgo.App;
@@ -34,6 +35,8 @@ public sealed class OptimisePanel : Border
         _s = s; _warmer = warmer;
         Background = Frozen("#1C1C20"); BorderBrush = Frozen("#3A3A42"); BorderThickness = new Thickness(1); CornerRadius = new CornerRadius(10);
         Padding = new Thickness(16, 14, 16, 14); Width = 420;
+        // the pop-out takes its font from the button it hangs from, which is an icon font: set the normal one
+        TextElement.SetFontFamily(this, new FontFamily("Segoe UI")); TextElement.SetFontSize(this, 12);
         Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 14, ShadowDepth = 3, Opacity = 0.55 };
 
         var stack = new StackPanel();
