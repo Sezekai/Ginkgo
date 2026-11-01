@@ -23,6 +23,7 @@ static int Main(string[] args)
     }
     catch (Exception ex) { Console.WriteLine("::error::GPU check crashed: " + ex); }
     try { GpuParity(); } catch (Exception ex) { Console.WriteLine("::error::GPU grid parity check crashed: " + ex); }
+    var pt = new Thread(PresenterCheck); pt.SetApartmentState(ApartmentState.STA); pt.Start(); pt.Join();
     var bt = new Thread(BarCheck); bt.SetApartmentState(ApartmentState.STA); bt.Start(); bt.Join();
     var rt = new Thread(RenderCheck); rt.SetApartmentState(ApartmentState.STA); rt.Start(); rt.Join();
     int total = 30000, screen = 700;
@@ -290,5 +291,26 @@ static void GpuParity()
     grid.Dispose();
     string line = $"GPU grid parity (WARP): {good}/{all} tile centres match the strip painter, worst mean difference {worstMean:F2}/255 per channel, {sw.ElapsedMilliseconds} ms | " + string.Join(" | ", per);
     Console.WriteLine((good == all && worstMean < 3 ? "::notice::" : "::error::") + line + (bad.Count > 0 ? " || " + string.Join("; ", bad) : ""));
+}
+
+[System.Runtime.InteropServices.DllImport("user32.dll")] static extern IntPtr GetDesktopWindow();
+
+// the hand-off to WPF: the Direct3D 11 target opened by Direct3D 9Ex and given to a D3DImage (on the runner's own display device)
+static void PresenterCheck()
+{
+    try
+    {
+        using var grid = new GpuGrid(IntPtr.Zero, Vortice.Direct3D.DriverType.Hardware, 1, "default");
+        grid.Render(new List<GpuTile> { new GpuTile { X = 10, Y = 10, W = 50, H = 50, A = 1, Fill = 0xFF336699 } }, 0, 320, 200, 0xFF121214, 100);
+        using var pres = new GpuPresenter(GetDesktopWindow(), 0);
+        var surf = pres.Surface(grid.SharedHandle, grid.Width, grid.Height);
+        var img = new System.Windows.Interop.D3DImage();
+        img.Lock();
+        img.SetBackBuffer(System.Windows.Interop.D3DResourceType.IDirect3DSurface9, surf, true);
+        img.AddDirtyRect(new Int32Rect(0, 0, grid.Width, grid.Height));
+        img.Unlock();
+        Console.WriteLine($"::notice::GPU hand-off: shared texture opened by Direct3D 9Ex and accepted by D3DImage ({img.PixelWidth}x{img.PixelHeight}, front buffer {(img.IsFrontBufferAvailable ? "available" : "not available")})");
+    }
+    catch (Exception ex) { Console.WriteLine("::warning::GPU hand-off check failed on the runner: " + ex.Message); }
 }
 }
