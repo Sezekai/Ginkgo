@@ -442,7 +442,7 @@ Check(again.BackfillTotal == 0, "backfill has nothing left");
     var tl = GifRenditions.Timeline(new[] { 0, 200, 50 }, 10, 5000, out bool cut1, out int len1, out int src1);
     Check(tl.SequenceEqual(new[] { 0, 1, 1, 2 }) && !cut1 && len1 == 350 && src1 == 350, "GIF frames are put on a fixed 10 fps clock using their real delays");
     Check(GifRenditions.Delay(0) == 100 && GifRenditions.Delay(10) == 100 && GifRenditions.Delay(20) == 20, "delays of 0-10 ms play as 100 ms, like browsers");
-    var tl2 = GifRenditions.Timeline(Enumerable.Repeat(100, 8).ToArray(), 10, 5000, out bool cut2, out int len2, out int src2);
+    var tl2 = GifRenditions.Timeline(Enumerable.Repeat(1000, 8).ToArray(), 10, 5000, out bool cut2, out int len2, out int src2);
     Check(tl2.Length == 50 && cut2 && len2 == 5000 && src2 == 8000 && tl2[^1] == 4, "a GIF longer than the limit is cut there and marked as cut");
     var tl3 = GifRenditions.Timeline(new[] { 100, 100 }, 15, 5000, out bool cut3, out _, out _);
     Check(tl3.Length == 3 && !cut3, "a short GIF stays whole (no cut, nothing to cross-fade)");
