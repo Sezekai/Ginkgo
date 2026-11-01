@@ -77,7 +77,7 @@ public partial class MainWindow
         try
         {
             if (adapter == IntPtr.Zero) throw new InvalidOperationException("the NVIDIA GPU went missing");
-            int slices = (int)Math.Clamp(g.VideoMemory / 2 / GpuGrid.PageBytes, 2, 24);   // pages are made as needed: up to half its memory, at most 1.5 GB
+            int slices = (int)Math.Clamp(g.VideoMemory / 4 / GpuGrid.PageBytes, 4, 12);   // pages are made as needed and let go after 10 s unused: at most 768 MB
             _grid = new GpuGrid(adapter, Vortice.Direct3D.DriverType.Unknown, slices, g.Name);
             _presenter = new GpuPresenter(hwnd, g.Luid);
             View.UseGpu(_grid, _presenter);

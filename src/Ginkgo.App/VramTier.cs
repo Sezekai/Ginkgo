@@ -7,6 +7,19 @@ using Vortice.Mathematics;
 namespace Ginkgo.App;
 
 /// <summary>
+/// What Ginkgo itself keeps on the graphics card, counted the moment it changes. Windows' own figure for what a program uses lags
+/// behind (memory let go shows up later), and going by it made the thumbnails give back everything at once.
+/// </summary>
+public static class GpuMemory
+{
+    public static long GridBytes, ThumbBytes;
+    /// <summary>Kept free on the card for WPF and Windows.</summary>
+    public const long Spare = 256L << 20;
+    /// <summary>The GPU grid can always have this much, whatever the thumbnails hold.</summary>
+    public const long GridFloor = 256L << 20;
+}
+
+/// <summary>
 /// Thumbnails in the graphics card's own memory: pieces of the pack files kept in GPU buffers when memory (RAM) runs short, so
 /// lookups don't go back to the hard drive. A lookup copies the thumbnail's bytes back (one small copy, well under a millisecond),
 /// which is slower than memory but far faster than the drive. Only the NVIDIA card's own memory is used; Windows' allowance for
@@ -74,11 +87,12 @@ public sealed unsafe class VramTier : ISecondHome, IDisposable
         long held = Bytes;
         long limit = Cap > 0 ? Cap : long.MaxValue;
         if (Environment.TickCount64 < Interlocked.Read(ref _softUntil)) limit = Math.Min(limit, Interlocked.Read(ref _softLimit));
-        var (budget, usage) = Allowance();
+        var (budget, _) = Allowance();
         if (budget > 0)
         {
-            long others = Math.Max(0, usage - held);                     // the GPU grid and anything else Ginkgo has on the card
-            long fromWindows = (long)(budget * 0.85) - others - (512L << 20);
+            // Windows' allowance, less what the GPU grid holds (at least its floor) and a little spare
+            long grid = Math.Max(Interlocked.Read(ref GpuMemory.GridBytes), GpuMemory.GridFloor);
+            long fromWindows = (long)(budget * 0.9) - grid - GpuMemory.Spare;
             limit = Math.Min(limit, Math.Max(0, fromWindows));
         }
         return limit - held;
@@ -138,7 +152,7 @@ public sealed unsafe class VramTier : ISecondHome, IDisposable
                 _ctx.UpdateSubresource(buf, 0, null, data, (uint)length, 0);
                 _ctx.Flush();
                 _held[(store, key)] = (buf, length);
-                Interlocked.Add(ref _bytes, length);
+                Interlocked.Add(ref _bytes, length); Interlocked.Add(ref GpuMemory.ThumbBytes, length);
                 return true;
             }
             catch (Exception ex) { Failed(ex); return false; }
@@ -150,8 +164,9 @@ public sealed unsafe class VramTier : ISecondHome, IDisposable
         lock (_lock)
         {
             if (!_held.Remove((store, key), out var h)) return;
-            Interlocked.Add(ref _bytes, -h.len);
+            Interlocked.Add(ref _bytes, -h.len); Interlocked.Add(ref GpuMemory.ThumbBytes, -h.len);
             h.buf.Dispose();
+            try { _ctx?.Flush(); } catch { }          // so the card really lets go of it now
         }
     }
 
@@ -160,7 +175,7 @@ public sealed unsafe class VramTier : ISecondHome, IDisposable
         lock (_lock)
             foreach (var k in _held.Keys.Where(k => k.Item1 == store && (int)(k.Item2 >> 20) == pack).ToList())
             {
-                var h = _held[k]; _held.Remove(k); Interlocked.Add(ref _bytes, -h.len); h.buf.Dispose();
+                var h = _held[k]; _held.Remove(k); Interlocked.Add(ref _bytes, -h.len); Interlocked.Add(ref GpuMemory.ThumbBytes, -h.len); h.buf.Dispose();
             }
     }
 
@@ -176,7 +191,7 @@ public sealed unsafe class VramTier : ISecondHome, IDisposable
         lock (_lock)
         {
             foreach (var h in _held.Values) h.buf.Dispose();
-            _held.Clear(); Interlocked.Exchange(ref _bytes, 0);
+            _held.Clear(); Interlocked.Add(ref GpuMemory.ThumbBytes, -Interlocked.Exchange(ref _bytes, 0));
             FreeDevice();
         }
     }
@@ -201,7 +216,7 @@ public sealed unsafe class VramTier : ISecondHome, IDisposable
     {
         Problem = "graphics memory lost: " + ex.Message;
         foreach (var h in _held.Values) { try { h.buf.Dispose(); } catch { } }
-        _held.Clear(); Interlocked.Exchange(ref _bytes, 0);
+        _held.Clear(); Interlocked.Add(ref GpuMemory.ThumbBytes, -Interlocked.Exchange(ref _bytes, 0));
         FreeDevice();
         _lost = true;
     }
@@ -214,7 +229,7 @@ public sealed unsafe class VramTier : ISecondHome, IDisposable
         lock (_lock)
         {
             foreach (var h in _held.Values) h.buf.Dispose();
-            _held.Clear(); Interlocked.Exchange(ref _bytes, 0);
+            _held.Clear(); Interlocked.Add(ref GpuMemory.ThumbBytes, -Interlocked.Exchange(ref _bytes, 0));
             FreeDevice();
             _lost = true;
         }

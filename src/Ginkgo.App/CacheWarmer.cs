@@ -44,6 +44,7 @@ public sealed class CacheWarmer
     public volatile bool VramOnBattery;
     public long InVram;
     public volatile bool VramActive;
+    private long _cardOverSince;
     /// <summary>Why the graphics card's memory isn't available (shown in Optimisations).</summary>
     public volatile string VramStatus = "";
     /// <summary>Times the graphics-memory store had to be made again (the card was reset).</summary>
@@ -153,7 +154,17 @@ public sealed class CacheWarmer
                 {
                     var onCard = all.Where(x => x.onCard && !x.st.IsInMemory(x.pack, x.seg)).OrderBy(x => x.score).ToList();
                     // Windows' allowance shrank (a game started, say): give back the least-viewed pieces
-                    while (vram.Room() < 0 && onCard.Count > 0) { var c = onCard[0]; onCard.RemoveAt(0); c.st.DropSecond(c.pack, c.seg); }
+                    // (only when it's clearly over for a few seconds: Windows' figure can dip for a moment)
+                    long over = -vram.Room();
+                    if (over > (128L << 20)) { if (_cardOverSince == 0) _cardOverSince = Environment.TickCount64; }
+                    else _cardOverSince = 0;
+                    if (_cardOverSince != 0 && Environment.TickCount64 - _cardOverSince > 3000)
+                    {
+                        long freed = 0;
+                        while (freed < over && onCard.Count > 0) { var c = onCard[0]; onCard.RemoveAt(0); c.st.DropSecond(c.pack, c.seg); freed += c.size; }
+                        _cardOverSince = 0;
+                        Note = $"gave {freed / 1048576} MB of the card back";
+                    }
                     int cardSwaps = 0;
                     foreach (var w in notPlaced)
                     {

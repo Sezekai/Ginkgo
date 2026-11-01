@@ -175,8 +175,9 @@ float4 PS(VO v) : SV_Target
     private bool MayAddPage()
     {
         if (_pages.Count >= MaxPages) return false;
-        var (budget, usage) = VramTier.Allowance(_adapter3);
-        return budget <= 0 || usage + PageBytes <= budget * 0.85;
+        if ((_pages.Count + 1) * PageBytes <= GpuMemory.GridFloor) return true;      // always allowed a few pages
+        var (budget, _) = VramTier.Allowance(_adapter3);
+        return budget <= 0 || Interlocked.Read(ref GpuMemory.GridBytes) + Interlocked.Read(ref GpuMemory.ThumbBytes) + PageBytes + GpuMemory.Spare <= budget * 0.9;
     }
 
     private PageInfo NewPage()
@@ -189,6 +190,7 @@ float4 PS(VO v) : SV_Target
         });
         pg.View = _dev.CreateShaderResourceView(pg.Tex);
         _pages.Add(pg);
+        Interlocked.Add(ref GpuMemory.GridBytes, PageBytes);
         return pg;
     }
 
@@ -204,6 +206,7 @@ float4 PS(VO v) : SV_Target
         Empty(o);
         o.View.Dispose(); o.Tex.Dispose();
         _pages.Remove(o);
+        Interlocked.Add(ref GpuMemory.GridBytes, -PageBytes);
     }
 
     /// <summary>Finds room for a w x h picture; null when every page holds something on screen now.</summary>
@@ -389,9 +392,9 @@ float4 PS(VO v) : SV_Target
         foreach (var pg in _pages) if (pg.Used == _frame) pg.UsedAt = now;
         if (_frame % 60 == 0)
         {
-            var (budget, usage) = VramTier.Allowance(_adapter3);
-            bool over = budget > 0 && usage > budget * 0.95;
-            foreach (var pg in _pages.Where(p => p.Used < _frame && (now - p.UsedAt > 30_000 || over)).OrderBy(p => p.Used).Take(over ? 2 : 1).ToList()) FreePage(pg);
+            var (budget, _) = VramTier.Allowance(_adapter3);
+            bool over = budget > 0 && Interlocked.Read(ref GpuMemory.GridBytes) + Interlocked.Read(ref GpuMemory.ThumbBytes) > budget * 0.95;
+            foreach (var pg in _pages.Where(p => p.Used < _frame && (now - p.UsedAt > 10_000 || over)).OrderBy(p => p.Used).Take(over ? 2 : 1).ToList()) FreePage(pg);
         }
         LastDrawMs = (Stopwatch.GetTimestamp() - t1) * 1000.0 / Stopwatch.Frequency;
         return waiting == 0;
@@ -437,6 +440,7 @@ float4 PS(VO v) : SV_Target
     public void Dispose()
     {
         foreach (var p in _pages) { p.View.Dispose(); p.Tex.Dispose(); }
+        Interlocked.Add(ref GpuMemory.GridBytes, -_pages.Count * PageBytes);
         _pages.Clear(); _where.Clear(); _shown.Clear();
         for (int k = 0; k < 4; k++) { _tsDisjoint[k].Dispose(); _tsStart[k].Dispose(); _tsEnd[k].Dispose(); }
         _rtv?.Dispose(); _target?.Dispose(); _instView?.Dispose(); _insts?.Dispose();
