@@ -252,6 +252,18 @@ public sealed class GifRenditionMaker
         return r.Read() && r.GetInt32(2) > 0 ? (r.GetInt32(0), r.GetInt64(1), r.GetInt32(2)) : null;
     }
 
+    /// <summary>Every rendition made so far: (file id, tier).</summary>
+    public List<(long id, int tier)> Made()
+    {
+        var l = new List<(long, int)>();
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT id, tier FROM gif_renditions WHERE len>0";
+        using var r = cmd.ExecuteReader();
+        while (r.Read()) l.Add((r.GetInt64(0), r.GetInt32(1)));
+        return l;
+    }
+
     public GifRendition? Load(long id, int tier)
     {
         var at = Where(id, tier);

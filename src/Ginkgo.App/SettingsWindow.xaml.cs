@@ -131,7 +131,7 @@ public partial class SettingsWindow : Window
         GpuPanel.Children.Add(new TextBlock
         {
             TextWrapping = TextWrapping.Wrap, Foreground = Brush("#9AA0A6"),
-            Text = "The GPU grid draws the thumbnails on the NVIDIA graphics card instead of the processor. It is being built in stages: this version draws still pictures (GIFs play the same way as before). Press F3 in the grid to compare the two."
+            Text = "The GPU grid draws the thumbnails and plays the GIFs on the NVIDIA graphics card instead of the processor. Press F3 in the grid to compare it with Current."
         });
         GpuPanel.Children.Add(_gpuStatus);
         var buttons = new WrapPanel();
@@ -227,6 +227,6 @@ public partial class SettingsWindow : Window
         bool gpuOn = _s.Renderer == "GPU" && g is { Ok: true };
         foreach (UIElement c in _gifPanel.Children) if (c != _gifOff) c.IsEnabled = gpuOn;
         _gifPanel.Opacity = gpuOn ? 1 : 0.55;
-        _gifOff.Text = gpuOn ? "GIF settings for the GPU grid. Playing them in the grid comes in the next build; this one makes the GIF versions." : "These apply only while the GPU grid is drawing.";
+        _gifOff.Text = gpuOn ? "GIFs play from their GPU versions as they're made (until then, the first frame shows). Hovering a GIF plays the original at full length." : "These apply only while the GPU grid is drawing.";
     }
 }

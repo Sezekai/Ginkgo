@@ -20,6 +20,21 @@ public struct GpuTile
     public ThumbLoader.Pix? Prev;
     public float A;
     public uint Fill;
+    /// <summary>A playing GIF (its rendition): drawn instead of <see cref="Pix"/> once it's on the card.</summary>
+    public GifClip? Gif;
+    public int FrameA, FrameB;
+    /// <summary>Cross-fade at the loop: how much of <see cref="FrameB"/> (the matching frame from the start) is mixed in.</summary>
+    public float Weight;
+}
+
+/// <summary>One GIF rendition ready to play (its frames in RAM until they're on the card).</summary>
+public sealed class GifClip
+{
+    public long Id; public int Tier;
+    public Ginkgo.Data.GifRendition R = null!;
+    /// <summary>When it started playing (ms), so each GIF starts at its first frame.</summary>
+    public long Start;
+    public long Bytes => R.Blocks.Length;
 }
 
 /// <summary>
@@ -33,6 +48,7 @@ public sealed unsafe class GpuGrid : IDisposable
 {
     public const int Page = 4096;
     public const long PageBytes = (long)Page * Page * 4;
+    private const int GifGroup = 1 << 20;     // draw groups at or above this are GIFs (one per GIF)
 
     [StructLayout(LayoutKind.Sequential)]
     private struct Inst
@@ -49,6 +65,7 @@ struct Inst { float4 dst; float4 uv; float4 uvp; float4 p; float4 col; };
 StructuredBuffer<Inst> Insts : register(t1);
 Texture2D<float4> Cur : register(t0);
 Texture2D<float4> Old : register(t2);
+Texture2DArray<float4> Gif : register(t3);
 SamplerState Lin : register(s0);
 cbuffer C : register(b0) { float2 Screen; uint Base; uint Unused; };
 struct VO { float4 pos : SV_Position; float2 t : T0; float2 tp : T1; nointerpolation uint id : ID; };
@@ -73,6 +90,14 @@ float4 GetCur(float2 t, float4 r, float mode)
 float4 PS(VO v) : SV_Target
 {
     Inst i = Insts[v.id];
+    if (i.p.w > 2.5)
+    {
+        // a GIF frame (and, at the loop, the matching frame from the start)
+        float2 c = clamp(v.t, 0.5, i.uv.zw - 0.5) / float2(i.p.x, i.p.y);
+        float4 a = Gif.SampleLevel(Lin, float3(c, i.uvp.x), 0);
+        if (i.uvp.z > 0.001) a = lerp(a, Gif.SampleLevel(Lin, float3(c, i.uvp.y), 0), i.uvp.z);
+        return a;
+    }
     if (i.p.w > 1.5) return i.col;
     float4 n = GetCur(v.t, i.uv, i.p.w);
     if (i.p.z >= 0.999) return n;
@@ -110,6 +135,60 @@ float4 PS(VO v) : SV_Target
     private readonly Dictionary<ThumbLoader.Pix, (PageInfo page, int x, int y)> _where = new(ReferenceEqualityComparer.Instance);
     /// <summary>What each tile showed last (still on the card): shown while its new picture waits for upload.</summary>
     private readonly Dictionary<int, ThumbLoader.Pix> _shown = new();
+    private sealed class GifTex { public ID3D11Texture2D Tex = null!; public ID3D11ShaderResourceView View = null!; public long Bytes; public long Used; public long UsedAt; }
+    private readonly Dictionary<GifClip, GifTex> _gifs = new(ReferenceEqualityComparer.Instance);
+    private readonly List<GifTex> _gifSlots = new();
+    private long _gifBytes;
+    /// <summary>The most graphics memory the playing GIFs may take.</summary>
+    public long MaxGifBytes { get; set; } = 512L << 20;
+    public long GifBytes => _gifBytes;
+    public int GifTextures => _gifs.Count;
+    public int LastGifsDrawn;
+
+    private void FreeGif(GifClip c, GifTex g)
+    {
+        g.View.Dispose(); g.Tex.Dispose();
+        _gifs.Remove(c);
+        _gifBytes -= g.Bytes;
+        Interlocked.Add(ref GpuMemory.GridBytes, -g.Bytes);
+    }
+
+    /// <summary>The GIF's frames on the card, uploading them if there's time and room (null: shows its cover this frame).</summary>
+    private GifTex? PlaceGif(GifClip c, long budgetEnd)
+    {
+        if (_gifs.TryGetValue(c, out var g)) { g.Used = _frame; return g; }
+        var r = c.R;
+        if (r.Frames <= 0 || r.Blocks.Length < (long)r.FrameBytes * r.Frames || Stopwatch.GetTimestamp() > budgetEnd) return null;
+        long bytes = r.Blocks.Length;
+        // room: let go of GIFs not on screen, oldest first
+        while (_gifBytes + bytes > MaxGifBytes)
+        {
+            GifClip? old = null; GifTex? og = null;
+            foreach (var (k, v) in _gifs) if (v.Used < _frame && (og is null || v.Used < og.Used)) { old = k; og = v; }
+            if (old is null) return null;
+            FreeGif(old, og!);
+        }
+        int blockBytes = r.Bc7 ? 16 : 8;
+        uint rowPitch = (uint)(r.PW / 4 * blockBytes);
+        var init = new SubresourceData[r.Frames];
+        fixed (byte* b = r.Blocks)
+        {
+            for (int f = 0; f < r.Frames; f++) init[f] = new SubresourceData((IntPtr)(b + (long)f * r.FrameBytes), rowPitch, (uint)r.FrameBytes);
+            var tex = _dev.CreateTexture2D(new Texture2DDescription
+            {
+                Width = (uint)r.PW, Height = (uint)r.PH, MipLevels = 1, ArraySize = (uint)r.Frames,
+                Format = r.Bc7 ? Format.BC7_UNorm : Format.BC1_UNorm, SampleDescription = new SampleDescription(1, 0),
+                Usage = ResourceUsage.Immutable, BindFlags = BindFlags.ShaderResource,
+            }, init.AsSpan());
+            g = new GifTex { Tex = tex, View = _dev.CreateShaderResourceView(tex), Bytes = bytes, Used = _frame, UsedAt = Environment.TickCount64 };
+        }
+        _gifs[c] = g;
+        _gifBytes += bytes;
+        Interlocked.Add(ref GpuMemory.GridBytes, bytes);
+        LastUploads++;
+        return g;
+    }
+
     private long _frame;
     private Inst[] _buf = new Inst[256];
     private (int page, int prev, int i)[] _order = new (int, int, int)[256];
@@ -285,7 +364,11 @@ float4 PS(VO v) : SV_Target
             if (t.Pix is not null && _where.TryGetValue(t.Pix, out var a)) a.page.Used = _frame;
             if (t.Prev is not null && _where.TryGetValue(t.Prev, out var b)) b.page.Used = _frame;
             if (_shown.TryGetValue(t.Index, out var s) && _where.TryGetValue(s, out var c)) c.page.Used = _frame;
+            if (t.Gif is not null && _gifs.TryGetValue(t.Gif, out var gt)) gt.Used = _frame;
         }
+        _gifSlots.Clear();
+        var gifSlot = new Dictionary<GifTex, int>();
+        int gifsDrawn = 0;
 
         // 2. the instances (uploading what's new, on-screen tiles nearest the top first)
         if (_buf.Length < tiles.Count) { _buf = new Inst[tiles.Count * 2]; _order = new (int, int, int)[tiles.Count * 2]; _sorted = new Inst[tiles.Count * 2]; }
@@ -302,6 +385,18 @@ float4 PS(VO v) : SV_Target
             Col(ref i, t.Fill);
             i.Alpha = Math.Clamp(t.A, 0, 1);
             int page = -1, prevPage = -1;
+            if (t.Gif is { } clip && PlaceGif(clip, budgetEnd) is { } gtex)
+            {
+                if (!gifSlot.TryGetValue(gtex, out int sl)) { sl = _gifSlots.Count; _gifSlots.Add(gtex); gifSlot[gtex] = sl; }
+                var r = clip.R;
+                i.Mode = 3; i.Alpha = 1;
+                i.U0 = 0; i.V0 = 0; i.U1 = r.W; i.V1 = r.H;
+                i.HasPrev = r.PW; i.Unused = r.PH;
+                i.PU0 = Math.Clamp(t.FrameA, 0, r.Frames - 1); i.PV0 = Math.Clamp(t.FrameB, 0, r.Frames - 1); i.PU1 = Math.Clamp(t.Weight, 0, 1);
+                _order[n] = (GifGroup + sl, -1, n);
+                n++; gifsDrawn++;
+                continue;
+            }
             var pix = t.Pix;
             var at = pix is null ? null : Place(pix, budgetEnd);
             if (at is null && pix is not null)
@@ -328,7 +423,7 @@ float4 PS(VO v) : SV_Target
             _order[n] = (page, prevPage, n);
             n++;
         }
-        _waiting = waiting; LastWaiting = waiting;
+        _waiting = waiting; LastWaiting = waiting; LastGifsDrawn = gifsDrawn;
         if (_shown.Count > 20000) _shown.Clear();
         var t1 = Stopwatch.GetTimestamp();
         LastUploadMs = (t1 - t0) * 1000.0 / Stopwatch.Frequency;
@@ -376,7 +471,8 @@ float4 PS(VO v) : SV_Target
                 while (end < n && _order[end].page == pg && _order[end].prev == pv) end++;
                 cb[2] = (uint)start;
                 _ctx.UpdateSubresource(_cb, 0, null, (IntPtr)cb, 16, 0);
-                if (pg >= 0) _ctx.PSSetShaderResource(0, _pages[pg].View);
+                if (pg >= GifGroup) _ctx.PSSetShaderResource(3, _gifSlots[pg - GifGroup].View);
+                else if (pg >= 0) _ctx.PSSetShaderResource(0, _pages[pg].View);
                 if (pv >= 0) _ctx.PSSetShaderResource(2, _pages[pv].View);
                 _ctx.DrawInstanced(4, (uint)(end - start), 0, 0);
                 start = end;
@@ -390,6 +486,8 @@ float4 PS(VO v) : SV_Target
         // pages nobody has used for half a minute are given back (old sizes after zooming)
         long now = Environment.TickCount64;
         foreach (var pg in _pages) if (pg.Used == _frame) pg.UsedAt = now;
+        foreach (var gt in _gifs.Values) if (gt.Used == _frame) gt.UsedAt = now;
+        if (_frame % 30 == 0) foreach (var (k, gt) in _gifs.Where(p => p.Value.Used < _frame && now - p.Value.UsedAt > 10_000).ToList()) FreeGif(k, gt);
         if (_frame % 60 == 0)
         {
             var (budget, _) = VramTier.Allowance(_adapter3);
@@ -441,6 +539,7 @@ float4 PS(VO v) : SV_Target
     {
         foreach (var p in _pages) { p.View.Dispose(); p.Tex.Dispose(); }
         Interlocked.Add(ref GpuMemory.GridBytes, -_pages.Count * PageBytes);
+        foreach (var (k, gt) in _gifs.ToList()) FreeGif(k, gt);
         _pages.Clear(); _where.Clear(); _shown.Clear();
         for (int k = 0; k < 4; k++) { _tsDisjoint[k].Dispose(); _tsStart[k].Dispose(); _tsEnd[k].Dispose(); }
         _rtv?.Dispose(); _target?.Dispose(); _instView?.Dispose(); _insts?.Dispose();

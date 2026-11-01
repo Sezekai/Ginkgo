@@ -24,6 +24,7 @@ static int Main(string[] args)
     catch (Exception ex) { Console.WriteLine("::error::GPU check crashed: " + ex); }
     try { GpuParity(); } catch (Exception ex) { Console.WriteLine("::error::GPU grid parity check crashed: " + ex); }
     try { GpuKeepsOld(); } catch (Exception ex) { Console.WriteLine("::error::GPU grid keep-old check crashed: " + ex); }
+    try { GpuGifCheck(); } catch (Exception ex) { Console.WriteLine("::error::GPU GIF check crashed: " + ex); }
     try { VramCheck(); } catch (Exception ex) { Console.WriteLine("::error::graphics-memory thumbnails check crashed: " + ex); }
     var pt = new Thread(PresenterCheck); pt.SetApartmentState(ApartmentState.STA); pt.Start(); pt.Join();
     var bt = new Thread(BarCheck); bt.SetApartmentState(ApartmentState.STA); bt.Start(); bt.Join();
@@ -379,5 +380,51 @@ static void VramCheck()
     tier.Clear();
     Console.WriteLine((ok ? "::notice::" : "::error::") + $"graphics-memory thumbnails on {name}: put {putMs:F1} ms, {items.Count} reads match: {all} ({each:F3} ms each), allowance {budget / 1048576} MB, usage {usage / 1048576} MB, after clear {tier.Bytes} bytes");
     st.Dispose(); tier.Dispose();
+}
+
+// GIF playback in the GPU grid: frames come off the card as encoded, and the loop cross-fade mixes the two frames
+static void GpuGifCheck()
+{
+    var results = new List<string>(); bool ok = true;
+    foreach (bool alpha in new[] { false, true })
+    {
+        int w = 64, h = 48;
+        var frames = new List<byte[]>();
+        for (int k = 0; k < 3; k++)
+        {
+            var b = new byte[w * h * 4];
+            for (int y = 0; y < h; y++) for (int x = 0; x < w; x++)
+            {
+                int i = (y * w + x) * 4;
+                b[i] = (byte)(k * 100); b[i + 1] = (byte)(x * 4); b[i + 2] = (byte)(y * 5); b[i + 3] = 255;
+            }
+            frames.Add(b);
+        }
+        var r = Ginkgo.Data.GifRenditions.Read(Ginkgo.Data.GifRenditions.Encode(frames, w, h, alpha, 10, true, 300, 900));
+        var clip = new GifClip { Id = 1, Tier = 0, R = r };
+        using var grid = new GpuGrid(IntPtr.Zero, Vortice.Direct3D.DriverType.Warp, 2, "WARP");
+        uint bg = Ginkgo.Core.Imaging.TileBlit.Pack(18, 18, 20);
+        int Diff(byte[] a, int ai, byte[] b, int bi) { int d = 0; for (int c = 0; c < 4; c++) d = Math.Max(d, Math.Abs(a[ai + c] - b[bi + c])); return d; }
+        var f1 = Ginkgo.Data.GifRenditions.DecodeFrame(r, 1);
+        var f0 = Ginkgo.Data.GifRenditions.DecodeFrame(r, 0); var f2 = Ginkgo.Data.GifRenditions.DecodeFrame(r, 2);
+        var tile = new GpuTile { Index = 0, X = 10, Y = 10, W = w, H = h, A = 1, Fill = bg, Gif = clip, FrameA = 1, FrameB = 1 };
+        grid.Render(new List<GpuTile> { tile }, 0, 100, 80, bg, 1000);
+        var px = grid.ReadBack();
+        int worst = 0;
+        foreach (var (x, y) in new[] { (5, 5), (32, 24), (60, 40) }) worst = Math.Max(worst, Diff(px, ((10 + y) * 100 + 10 + x) * 4, f1, (y * r.PW + x) * 4));
+        tile.FrameA = 0; tile.FrameB = 2; tile.Weight = 0.5f;
+        grid.Render(new List<GpuTile> { tile }, 0, 100, 80, bg, 1000);
+        var mix = grid.ReadBack();
+        int mixWorst = 0;
+        foreach (var (x, y) in new[] { (5, 5), (32, 24), (60, 40) })
+        {
+            int gi = ((10 + y) * 100 + 10 + x) * 4, si = (y * r.PW + x) * 4;
+            for (int c = 0; c < 4; c++) mixWorst = Math.Max(mixWorst, Math.Abs(mix[gi + c] - (f0[si + c] + f2[si + c]) / 2));
+        }
+        bool drew = grid.LastGifsDrawn == 1;
+        ok &= worst <= 3 && mixWorst <= 4 && drew;
+        results.Add($"{(alpha ? "BC7" : "BC1")}: frame off by {worst}, cross-fade off by {mixWorst}, drawn {drew}");
+    }
+    Console.WriteLine((ok ? "::notice::" : "::error::") + "GPU grid plays GIF renditions: " + string.Join("; ", results));
 }
 }

@@ -83,6 +83,14 @@ public partial class MainWindow
             View.UseGpu(_grid, _presenter);
             _gpuFallback = "";
             _engine.StartGifRenditions();      // the GIF versions it will play (made in the background, paused while scrolling)
+            if (_engine.GifMaker is { } gm)
+            {
+                _player ??= new GifPlayer(gm);
+                _player.Loaded += () => Dispatcher.BeginInvoke(View.Refresh);
+                ApplyGifSettings();
+                View.Player = _player;
+                View.IdOf = i => _model is not null && i >= 0 && i < _order.Length && _order[i] >= 0 && _order[i] < _model.Id.Length ? _model.Id[_order[i]] : -1;
+            }
         }
         catch (Exception ex)
         {
@@ -93,8 +101,24 @@ public partial class MainWindow
         finally { if (adapter != IntPtr.Zero) GpuCheck.Release(adapter); }
     }
 
+    private GifPlayer? _player;
+
+    /// <summary>The GIF settings (Settings → GPU grid, and GIFs playing at once in Optimisations).</summary>
+    public void ApplyGifSettings()
+    {
+        if (_player is null) return;
+        _player.Animate = _settings.GifAnimate;
+        _player.CrossFade = _settings.GifCrossFade;
+        _player.CrossFadeSec = _settings.GifCrossFadeSec;
+        _player.FixedFps = _settings.GifFps;
+        _player.Limit = _settings.GifLimit;
+        if (_engine.GifMaker is { } gm) gm.CapMs = (int)(_settings.GifLengthSec * 1000);
+        View.Refresh();
+    }
+
     private void StopGrid()
     {
+        View.Player = null;
         View.UseGpu(null, null);
         try { _grid?.Dispose(); } catch { }
         try { _presenter?.Dispose(); } catch { }
@@ -190,8 +214,10 @@ public partial class MainWindow
         string gpu = _gpu is null ? "not checked" : _gpu.Ok ? _gpu.Short : $"{(_gpu.Name.Length > 0 ? _gpu.Name + ", " : "")}{_gpu.FailedStep}: {_gpu.Status}";
         var vw = _engine.Warmer;
         string vram = vw.Vram is { } vt && vw.VramActive ? $" | thumbs on card {vt.Bytes / 1073741824.0:F1} GB, {Interlocked.Read(ref vt.Reads)} lookups, refused {vt.Refused}, remade {vw.VramRemade}" : "";
+        string play = View.UsingGpu && _player is { } pl
+            ? $" | gifs {pl.Playing}/{pl.OnScreen} playing at {pl.Fps} fps, {pl.TierNote}{(pl.Paused ? ", paused (Ginkgo not in front)" : "")}, {(View.Gpu?.GifTextures ?? 0)} on card ({(View.Gpu?.GifBytes ?? 0) / 1048576} MB), {pl.RamBytes / 1048576} MB in memory" : "";
         string gifr = _engine.GifMaker is { } gm && gm.Stats.Running
             ? $" | gif renditions {gm.Stats.Made:N0}/{gm.Stats.Animated - gm.Stats.Stills:N0} made, {gm.Stats.Pending:N0} to do, {gm.Stats.Bytes / 1048576:N0} MB{(gm.Stats.Paused ? ", paused while scrolling" : "")}{(gm.Stats.Failed > 0 ? $", {gm.Stats.Failed} failed" : "")}" : "";
-        return vram + gifr + $" | renderer {renderer} | gpu {gpu} | gifs {_gifs.Playing} playing (limit {(_gifs.Limit == 0 ? "all" : _gifs.Limit.ToString())}) | device resets {GpuDeviceResets}";
+        return vram + play + gifr + $" | renderer {renderer} | gpu {gpu} | gifs {_gifs.Playing} playing (limit {(_gifs.Limit == 0 ? "all" : _gifs.Limit.ToString())}) | device resets {GpuDeviceResets}";
     }
 }

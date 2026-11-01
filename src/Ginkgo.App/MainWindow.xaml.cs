@@ -151,7 +151,7 @@ public partial class MainWindow : Window
         TopBar.MouseLeave += (_, _) => _ignoreOverUntil = 0;
         Loaded += (_, _) => { _engine.Start(); UpdateInset(); ApplyBar(); };
         // while Ginkgo is the window in use, it comes first; in the background it is an ordinary program again
-        Activated += (_, _) => { try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.AboveNormal; } catch { } };
+        Activated += (_, _) => { try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.AboveNormal; } catch { } View.Refresh(); };
         Deactivated += (_, _) => { try { Process.GetCurrentProcess().PriorityClass = ProcessPriorityClass.Normal; } catch { } };
         Closing += (_, _) =>
         {
@@ -365,7 +365,7 @@ public partial class MainWindow : Window
         if (_opt is null)
         {
             _opt = new OptimisePanel(_settings, _engine.Warmer);
-            _opt.Changed += () => { _gifs.Limit = _settings.GifLimit; View.Refresh(); SaveSettings(); };
+            _opt.Changed += () => { _gifs.Limit = _settings.GifLimit; ApplyGifSettings(); SaveSettings(); };
             _optPopup = new System.Windows.Controls.Primitives.Popup
             {
                 PlacementTarget = OptimiseBtn, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom, StaysOpen = false,
@@ -399,6 +399,7 @@ public partial class MainWindow : Window
         _loader?.SetBudgets(d, c);
         View.PrefetchBudgetBytes = d * 36 / 100;
         if (_loader is not null) _loader.FadeEnabled = _settings.FadeSharpening;
+        ApplyGifSettings();
         SaveSettings();
         double r = _settings.CoverRounded ? _settings.CoverRadius : 0;
         if (InBrowse && Math.Abs(View.CoverRadius - r) > 0.1) BuildView(true);     // covers are cut with their corners: remake them
@@ -455,12 +456,16 @@ public partial class MainWindow : Window
         UpdateBtn.Content = n > 0 ? $"Update view ({n:N0} changes)" : "Update view";
     }
 
+    private int _slowAtLastTick;
+
     private void Tick()
     {
         long now = Stopwatch.GetTimestamp();
         _fps = _frames / ((now - _lastTick) / (double)Stopwatch.Frequency); _frames = 0; _lastTick = now;
         if (_syncPending) SyncBar();
         if (_engine.Warmer.Vram is { Alive: false }) ApplyVramTier();
+        _player?.Tick(_slowFrames - _slowAtLastTick);
+        _slowAtLastTick = _diag ? 0 : _slowFrames;
         if (_engine.GifMaker is { } gm && gm.Stats.Running && _model is not null)
         {
             gm.CapMs = (int)(_settings.GifLengthSec * 1000);
@@ -475,6 +480,7 @@ public partial class MainWindow : Window
             var (mr, _) = View.TakeWorst();
             DiagText.Text = $"{_fps:F0} fps | worst gap {_worstGap:F0} ms | slow {_slowFrames} (gc {_slowGc}, ours {_slowOurs}, other {_slowOther}) | gc pause {(GC.GetTotalPauseDuration() - _gcAtTick).TotalMilliseconds:F0} ms | draw {mr:F1} (prep {Perf.PrepMax:F1}, paint {Perf.PaintMax:F1}/{Perf.PaintedBands}) drain {Perf.DrainMax:F1} | {View.LastVisibleCount} tiles, cached {_loader?.CachedCount ?? 0}, pending {_loader?.PendingCount ?? 0} | GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)} | read {_loader?.AvgReadMs ?? 0:F1} ms, decode {_loader?.AvgDecodeMs ?? 0:F1} ms{(_engine.FastCacheNote.Length > 0 ? " | " + _engine.FastCacheNote : "")} | thumbs in memory {_engine.Warmer.InMemory / 1073741824.0:F1} GB ({(_engine.Warmer.Total > 0 ? _engine.Warmer.Done * 100 / _engine.Warmer.Total : 0)}%{(_engine.Warmer.Running ? ", loading" : "")}) {_engine.Warmer.Note} | free RAM {CacheWarmer.AvailableBytes() / 1073741824.0:F1} GB" + GpuDiag();
             if (DiagFull.Visibility == Visibility.Visible) DiagFullText.Text = DiagText.Text.Replace(" | ", "\n");
+            _slowAtLastTick = 0;
             _worstGap = 0; _slowFrames = _slowGc = _slowOurs = _slowOther = 0; _gcAtTick = GC.GetTotalPauseDuration(); Perf.Reset();
         }
         bool moving = _engine.Moving;

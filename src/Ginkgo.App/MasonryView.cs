@@ -149,6 +149,8 @@ public sealed class MasonryView : FrameworkElement
     private void OnRefresh(object? sender, EventArgs e)
     {
         if (Gifs is not null && Gifs.Due()) _needsRender = true;            // a playing GIF moves on to its next frame
+        // GPU grid: GIFs on screen move on at the governor's frame rate (and start again 150 ms after a scroll stops)
+        if (_gpu is not null && Player is { OnScreen: > 0, Animate: true, Paused: false } p && p.NowMs - _lastGifFrameMs >= 1000 / Math.Max(1, p.Fps) - 2) _needsRender = true;
         if (_fadingNow || _needsRender) { _fadingNow = false; _needsRender = false; InvalidateVisual(); }
     }
 
@@ -415,7 +417,7 @@ public sealed class MasonryView : FrameworkElement
         // what each tile shows now, and which ones differ from what is already painted
         bool fading = false;
         long tick = Stopwatch.GetTimestamp();
-        _tiles.Clear(); _overlay.Clear(); _sigNow.Clear();
+        _tiles.Clear(); _overlay.Clear(); _sigNow.Clear(); _hoverOver = null;
         for (int vi = _visible.Count - 1; vi >= 0; vi--)   // bottom to top, so the newest-first queue serves the top tiles first
         {
             int i = _visible[vi];
@@ -432,9 +434,11 @@ public sealed class MasonryView : FrameworkElement
             }
             // a playing GIF shows its current frame instead of the still picture
             ThumbLoader.Pix? over = null;
-            if (Gifs is not null && e is not null && Badges is { } gb && i < gb.Length && gb[i] == 1 && y < offPx + ph && y + hPx > offPx)
+            if (Gifs is not null && e is not null && Badges is { } gb && i < gb.Length && gb[i] == 1 && y < offPx + ph && y + hPx > offPx
+                && (Player is null || _gpu is null || i == _hoverIndex))
             {
                 over = Gifs.Frame(i);
+                if (i == _hoverIndex) _hoverOver = over;
                 double cy = y + hPx / 2.0 - offPx - ph / 2.0;
                 _gifWanted.Add((i, wPx, hPx, Math.Abs(cy)));
             }
@@ -494,6 +498,14 @@ public sealed class MasonryView : FrameworkElement
     /// <summary>The front buffer went away and came back (sleep, a driver update, a monitor change): the GPU objects need making again.</summary>
     public event Action? GpuFrontBufferBack;
     public bool UsingGpu => _gpu is not null;
+    /// <summary>Plays GIFs from their renditions while the GPU grid draws (null: they play the old way).</summary>
+    public GifPlayer? Player { get; set; }
+    /// <summary>The file id of tile i (for the GIF renditions).</summary>
+    public Func<int, long>? IdOf { get; set; }
+    private long _lastGifFrameMs, _lastMoveMs;
+    private int _lastOffPx = int.MinValue;
+    private ThumbLoader.Pix? _hoverOver;
+    private readonly List<(int index, long id, int w, int h, double dist)> _gpuGifs = new();
 
     /// <summary>The GIF tiles on screen now (for making their GPU versions first).</summary>
     public List<int> VisibleGifs()
@@ -544,6 +556,29 @@ public sealed class MasonryView : FrameworkElement
                 }
             }
             _gpuTiles.Add(g);
+        }
+        if (Player is { } player && IdOf is { } idOf && Badges is { } badges)
+        {
+            long nowMs = player.NowMs;
+            if (offPx != _lastOffPx) { _lastOffPx = offPx; _lastMoveMs = nowMs; }
+            _gpuGifs.Clear();
+            for (int k = 0; k < _gpuTiles.Count; k++)
+            {
+                var g = _gpuTiles[k];
+                if (g.Index >= badges.Length || badges[g.Index] != 1 || g.Y + g.H <= offPx || g.Y >= offPx + ph) continue;
+                double cy = g.Y + g.H / 2.0 - offPx - ph / 2.0;
+                _gpuGifs.Add((k, idOf(g.Index), g.W, g.H, Math.Abs(cy)));
+            }
+            bool active = Window.GetWindow(this)?.IsActive ?? true;
+            var frames = player.Frame(_gpuGifs, nowMs - _lastMoveMs < 150, active);
+            foreach (var (k, f) in frames)
+            {
+                var g = _gpuTiles[k];
+                if (g.Index == _hoverIndex && g.Pix is not null && ReferenceEquals(g.Pix, _hoverOver)) continue;   // the hovered GIF plays the original
+                g.Gif = f.clip; g.FrameA = f.a; g.FrameB = f.b; g.Weight = f.w;
+                _gpuTiles[k] = g;
+            }
+            _lastGifFrameMs = nowMs;
         }
         bool locked = false;
         try
