@@ -7,6 +7,21 @@ namespace Ginkgo.Data;
 /// Thumbnails packed end to end into a few big files (pack-00000.bin, ...). A hard drive reads one big file far
 /// faster than hundreds of thousands of tiny ones. Where each thumbnail sits is recorded in the index.
 /// </summary>
+/// <summary>
+/// A second place to keep pieces of the pack files when memory runs short (the graphics card's own memory). Slower to read from
+/// than memory, far faster than the drive. Keys are the store's piece keys.
+/// </summary>
+public interface ISecondHome
+{
+    bool Has(ThumbStore store, long key);
+    /// <summary>Copies <paramref name="dst"/>.Length bytes starting <paramref name="inSeg"/> bytes into the piece.</summary>
+    bool Read(ThumbStore store, long key, int inSeg, Span<byte> dst);
+    /// <summary>Keeps a copy of a piece (false: no room, or not available).</summary>
+    bool Put(ThumbStore store, long key, IntPtr data, int length);
+    void Remove(ThumbStore store, long key);
+    void RemovePack(ThumbStore store, int pack);
+}
+
 public sealed class ThumbStore : IDisposable
 {
     private const long PackLimit = 512L * 1024 * 1024;
@@ -51,6 +66,7 @@ public sealed class ThumbStore : IDisposable
                 if (!int.TryParse(Path.GetFileNameWithoutExtension(f).AsSpan(_prefix.Length + 1), out int n) || n >= firstKept) continue;
                 if (_readers.TryRemove(n, out var h)) h.Dispose();
                 DropPack(n);
+                Second?.RemovePack(this, n);
                 try { File.Delete(f); } catch { }
             }
             Interlocked.Exchange(ref _size, -1);
@@ -103,7 +119,69 @@ public sealed class ThumbStore : IDisposable
     private readonly ReaderWriterLockSlim _memLock = new(LockRecursionPolicy.NoRecursion);
     private readonly ConcurrentDictionary<long, int> _hits = new();
     private long _memBytes;
-    private static long Key(int pack, int seg) => ((long)pack << 20) | (uint)seg;
+    public static long Key(int pack, int seg) => ((long)pack << 20) | (uint)seg;
+    /// <summary>Where pieces go when memory is short (null: nowhere; they are read from the drive again).</summary>
+    public ISecondHome? Second { get; set; }
+    public bool InSecond(int pack, int seg) => Second?.Has(this, Key(pack, seg)) ?? false;
+    public void DropSecond(int pack, int seg) => Second?.Remove(this, Key(pack, seg));
+
+    /// <summary>Moves a piece held in memory to the second home (copied there first, then let go here).</summary>
+    public bool MoveToSecond(int pack, int seg)
+    {
+        var sec = Second; long key = Key(pack, seg);
+        if (sec is null) return false;
+        bool ok = sec.Has(this, key);
+        if (!ok)
+        {
+            _memLock.EnterReadLock();
+            try { if (_mem.TryGetValue(key, out var m)) ok = sec.Put(this, key, m.P, m.Len); }
+            finally { _memLock.ExitReadLock(); }
+        }
+        if (ok) DropKey(key);
+        return ok;
+    }
+
+    /// <summary>Reads one piece from the drive straight into the second home (not into memory).</summary>
+    public bool LoadToSecond(int pack, int seg, CancellationToken ct)
+    {
+        var sec = Second; long key = Key(pack, seg);
+        if (sec is null) return false;
+        if (sec.Has(this, key)) return true;
+        var (ptr, size) = ReadPiece(pack, seg, ct);
+        if (ptr == IntPtr.Zero) return false;
+        try { return sec.Put(this, key, ptr, size); }
+        finally { Free(ptr); }
+    }
+
+    /// <summary>One piece of a pack read into native memory (one sequential read), or zero.</summary>
+    private (IntPtr ptr, int size) ReadPiece(int pack, int seg, CancellationToken ct)
+    {
+        if (_dirty) Flush();
+        string path = PackPath(pack);
+        if (!File.Exists(path)) return (IntPtr.Zero, 0);
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 20, FileOptions.SequentialScan);
+        long start = (long)seg * SegSize;
+        int size = (int)Math.Min(SegSize, fs.Length - start);
+        if (size <= 0) return (IntPtr.Zero, 0);
+        IntPtr ptr;
+        unsafe { ptr = (IntPtr)System.Runtime.InteropServices.NativeMemory.Alloc((nuint)size); }
+        try
+        {
+            fs.Position = start;
+            int pos = 0;
+            while (pos < size)
+            {
+                ct.ThrowIfCancellationRequested();
+                int n;
+                unsafe { n = fs.Read(new Span<byte>((byte*)ptr + pos, Math.Min(4 << 20, size - pos))); }
+                if (n <= 0) break;
+                pos += n;
+            }
+            if (pos < size) { Free(ptr); return (IntPtr.Zero, 0); }
+        }
+        catch { Free(ptr); throw; }
+        return (ptr, size);
+    }
     /// <summary>Bytes of this store currently held in memory.</summary>
     public long MemoryBytes => Interlocked.Read(ref _memBytes);
 
@@ -138,30 +216,8 @@ public sealed class ThumbStore : IDisposable
     {
         long key = Key(pack, seg);
         if (_mem.ContainsKey(key)) return true;
-        if (_dirty) Flush();
-        string path = PackPath(pack);
-        if (!File.Exists(path)) return false;
-        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 20, FileOptions.SequentialScan);
-        long start = (long)seg * SegSize;
-        int size = (int)Math.Min(SegSize, fs.Length - start);
-        if (size <= 0) return false;
-        IntPtr ptr;
-        unsafe { ptr = (IntPtr)System.Runtime.InteropServices.NativeMemory.Alloc((nuint)size); }
-        try
-        {
-            fs.Position = start;
-            int pos = 0;
-            while (pos < size)
-            {
-                ct.ThrowIfCancellationRequested();
-                int n;
-                unsafe { n = fs.Read(new Span<byte>((byte*)ptr + pos, Math.Min(4 << 20, size - pos))); }
-                if (n <= 0) break;
-                pos += n;
-            }
-            if (pos < size) { Free(ptr); return false; }
-        }
-        catch { Free(ptr); throw; }
+        var (ptr, size) = ReadPiece(pack, seg, ct);
+        if (ptr == IntPtr.Zero) return false;
         if (_mem.TryAdd(key, new Seg { P = ptr, Len = size })) Interlocked.Add(ref _memBytes, size); else Free(ptr);
         return true;
     }
@@ -223,6 +279,17 @@ public sealed class ThumbStore : IDisposable
                     }
                 }
                 finally { _memLock.ExitReadLock(); }
+            }
+        }
+        if (offset >= 0 && Second is { } sec)
+        {
+            int seg = (int)(offset / SegSize);
+            long key = Key(pack, seg);
+            int inSeg = (int)(offset - (long)seg * SegSize);
+            if (inSeg + length <= SegSize && sec.Has(this, key))
+            {
+                var buf2 = new byte[length];
+                if (sec.Read(this, key, inSeg, buf2)) return buf2;
             }
         }
         if (_dirty) Flush(); // a thumbnail written a moment ago may not be in the file yet

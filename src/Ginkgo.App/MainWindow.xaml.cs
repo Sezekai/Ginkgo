@@ -158,6 +158,7 @@ public partial class MainWindow : Window
             _settings.BarHidden = _barManual;
             CleanGpuExit();
             StopGrid();
+            _engine.Warmer.Vram = null;        // the process is ending: the card's memory goes with it
             SaveSettings();
             _covers.Save();
             _loader?.Dispose();
@@ -459,6 +460,7 @@ public partial class MainWindow : Window
         long now = Stopwatch.GetTimestamp();
         _fps = _frames / ((now - _lastTick) / (double)Stopwatch.Frequency); _frames = 0; _lastTick = now;
         if (_syncPending) SyncBar();
+        if (_engine.Warmer.Vram is { Alive: false }) ApplyVramTier();
         double tilePx = View.TileTarget * VisualTreeHelper.GetDpi(View).PixelsPerDip;
         _engine.Warmer.Preferred = tilePx <= 120 ? 0 : tilePx <= 200 ? 1 : 2;
         if (View.HoverIndex < 0) StatusText.Text = StatusLine();

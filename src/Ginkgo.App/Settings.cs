@@ -17,6 +17,11 @@ public sealed class AppSettings
     public double ThumbMemoryCapGB { get; set; }
     /// <summary>How many GIFs play at once in the grid (0 = all on screen).</summary>
     public int GifLimit { get; set; } = 20;
+    /// <summary>The graphics card's memory for thumbnails: "Off", "Overflow" (when memory is full) or "GpuOnly".</summary>
+    public string ThumbVramMode { get; set; } = "Overflow";
+    /// <summary>The most graphics memory for thumbnails, in GB (0 = automatic: Windows' allowance).</summary>
+    public double ThumbVramCapGB { get; set; }
+    public bool ThumbVramOnBattery { get; set; }
 
     // GPU grid (see the GPU grid build brief). Off by default; the GIF settings apply only while it is on.
     /// <summary>"Current" (the strip renderer) or "GPU".</summary>

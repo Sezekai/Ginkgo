@@ -35,7 +35,25 @@ public partial class MainWindow
         MarkGpuRunning(_settings.Renderer == "GPU");
         View.GpuFailed += OnGpuFailed;
         View.GpuFrontBufferBack += () => { GpuDeviceResets++; StopGrid(); ApplyRenderer(); };
-        if (_settings.Renderer == "GPU") CheckGpu(null);
+        CheckGpu(null);          // also finds the card for thumbnails in graphics memory
+    }
+
+    /// <summary>Makes (or remakes, after the card was reset) the store for thumbnails in the NVIDIA card's memory.</summary>
+    private void ApplyVramTier()
+    {
+        var w = _engine.Warmer;
+        if (w.Vram is { Alive: false } dead) { w.Vram = null; Task.Delay(1500).ContinueWith(_ => dead.Dispose()); GpuDeviceResets++; }
+        if (w.Vram is not null || _gpu is null) return;
+        if (_gpu.Luid == 0) { w.VramStatus = "No NVIDIA graphics card with its own memory was found, so this isn't available."; return; }
+        IntPtr adapter = GpuCheck.AdapterByLuid(_gpu.Luid);
+        try
+        {
+            if (adapter == IntPtr.Zero) throw new InvalidOperationException("the NVIDIA card went missing");
+            w.Vram = new VramTier(adapter, _gpu.Name) { Cap = (long)(_settings.ThumbVramCapGB * 1073741824.0) };
+            w.VramStatus = "";
+        }
+        catch (Exception ex) { w.VramStatus = "The graphics card's memory couldn't be used: " + ex.Message; }
+        finally { if (adapter != IntPtr.Zero) GpuCheck.Release(adapter); }
     }
 
     private GpuGrid? _grid;
@@ -59,7 +77,7 @@ public partial class MainWindow
         try
         {
             if (adapter == IntPtr.Zero) throw new InvalidOperationException("the NVIDIA GPU went missing");
-            int slices = (int)Math.Clamp(g.VideoMemory / 2 / ((long)GpuGrid.Page * GpuGrid.Page * 4), 2, 12);   // up to half its memory, at most 768 MB of pages
+            int slices = (int)Math.Clamp(g.VideoMemory / 2 / GpuGrid.PageBytes, 2, 24);   // pages are made as needed: up to half its memory, at most 1.5 GB
             _grid = new GpuGrid(adapter, Vortice.Direct3D.DriverType.Unknown, slices, g.Name);
             _presenter = new GpuPresenter(hwnd, g.Luid);
             View.UseGpu(_grid, _presenter);
@@ -128,6 +146,7 @@ public partial class MainWindow
                 if (_settings.Renderer == "GPU" && !r.Ok) _gpuFallback = $"GPU grid can't be used ({r.FailedStep}: {r.Status}), so Current is drawing";
                 else if (r.Ok && _gpuFallback.StartsWith("GPU grid can't")) _gpuFallback = "";
                 ApplyRenderer();
+                ApplyVramTier();
                 done?.Invoke();
             });
         }) { IsBackground = true, Name = "gpu-check" };
@@ -166,8 +185,10 @@ public partial class MainWindow
             ? (_gpuChecking ? "GPU chosen (checking...)" : "Current (" + (_gpuFallback.Length > 0 ? _gpuFallback : "GPU grid not started") + ")")
             : "Current";
         if (View.Gpu is { } gg)
-            renderer += $" | vram {gg.UsedBytes / 1048576} / {gg.BudgetBytes / 1048576} MB | uploads {Perf.GpuUploads}/s, max {Perf.GpuUploadMax:F1} ms | gpu draw {Perf.GpuDrawMax:F1} ms";
+            renderer += $" | vram {gg.UsedBytes / 1048576} / {gg.BudgetBytes / 1048576} MB ({gg.PageCount} pages, {gg.Evictions} emptied) | uploads {Perf.GpuUploads}/s, max {Perf.GpuUploadMax:F1} ms, waiting {Perf.GpuWaiting} | gpu draw {Perf.GpuDrawMax:F1} ms (card {Perf.GpuTimeMax:F2} ms)";
         string gpu = _gpu is null ? "not checked" : _gpu.Ok ? _gpu.Short : $"{(_gpu.Name.Length > 0 ? _gpu.Name + ", " : "")}{_gpu.FailedStep}: {_gpu.Status}";
-        return $" | renderer {renderer} | gpu {gpu} | gifs {_gifs.Playing} playing (limit {(_gifs.Limit == 0 ? "all" : _gifs.Limit.ToString())}) | device resets {GpuDeviceResets}";
+        var vw = _engine.Warmer;
+        string vram = vw.Vram is { } vt && vw.VramActive ? $" | thumbs on card {vt.Bytes / 1073741824.0:F1} GB, {Interlocked.Read(ref vt.Reads)} lookups" : "";
+        return vram + $" | renderer {renderer} | gpu {gpu} | gifs {_gifs.Playing} playing (limit {(_gifs.Limit == 0 ? "all" : _gifs.Limit.ToString())}) | device resets {GpuDeviceResets}";
     }
 }

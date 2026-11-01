@@ -59,6 +59,8 @@ public sealed class Engine : IDisposable
             _saveTimer = new Timer(_ => SaveLargeBatch(), null, 2000, 2000);
             Warmer.Enabled = Settings.WarmCache;
             Warmer.Cap = (long)(Settings.ThumbMemoryCapGB * 1073741824.0);
+            Warmer.VramMode = Settings.ThumbVramMode;
+            Warmer.VramOnBattery = Settings.ThumbVramOnBattery;
             Warmer.Start(Stores, _cts.Token);
             Opened?.Invoke();
             await Refresh(scan: true, confirmLargeRemoval: false);

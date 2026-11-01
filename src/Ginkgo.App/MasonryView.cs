@@ -521,7 +521,7 @@ public sealed class MasonryView : FrameworkElement
         for (int k = _tiles.Count - 1; k >= 0; k--)          // _tiles runs bottom to top; the GPU uploads top first
         {
             var t = _tiles[k];
-            var g = new GpuTile { X = t.X, Y = t.Y, W = t.W, H = t.H, A = 1 };
+            var g = new GpuTile { Index = t.Index, X = t.X, Y = t.Y, W = t.W, H = t.H, A = 1 };
             if (t.Over is { } o) { g.Pix = o; g.Fill = BgPixel; }
             else if (t.E is null) g.Fill = Palette()[(t.Index * 7) % Palette().Length];
             else if (t.E.Pix.Data.Length < t.E.Pix.W * t.E.Pix.H * 4) g.Fill = FadePixel;
@@ -549,6 +549,8 @@ public sealed class MasonryView : FrameworkElement
             if (!complete) _needsRender = true;            // some pictures wait for the next frame's upload time
             dc.DrawImage(_d3d, new Rect(0, 0, pw / dpi, ph / dpi));
             Perf.GpuDrawMax = Math.Max(Perf.GpuDrawMax, _gpu.LastDrawMs);
+            Perf.GpuTimeMax = Math.Max(Perf.GpuTimeMax, _gpu.GpuMs);
+            Perf.GpuWaiting = Math.Max(Perf.GpuWaiting, _gpu.LastWaiting);
             Perf.GpuUploadMax = Math.Max(Perf.GpuUploadMax, _gpu.LastUploadMs);
             Perf.GpuUploads += _gpu.LastUploads;
             return true;

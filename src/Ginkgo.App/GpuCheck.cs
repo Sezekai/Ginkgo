@@ -28,12 +28,14 @@ public sealed class GpuCheck
     /// <summary>The monitor is driven by another GPU: Windows copies each frame across.</summary>
     public bool CrossGpu;
     public string DisplayGpu = "";
+    /// <summary>The chip driving the screen could be found (otherwise nothing is said about it).</summary>
+    public bool DisplayKnown;
     public double Ms;
 
     public const uint Nvidia = 0x10DE;
     private const long MinMemory = 4L << 30;
 
-    public string Short => Ok ? $"{Name} · {VideoMemory / 1073741824.0:0} GB{(CrossGpu ? $" · display on {DisplayGpu}, cross-GPU copy" : "")}" : $"{FailedStep}: {Status}";
+    public string Short => Ok ? $"{Name} · {VideoMemory / 1073741824.0:0} GB{(CrossGpu ? $" · display on {DisplayGpu}, cross-GPU copy" : DisplayKnown ? " · display on it too" : " · display chip unknown")}" : $"{FailedStep}: {Status}";
 
     public static GpuCheck Run(IntPtr hwnd)
     {
@@ -70,9 +72,24 @@ public sealed class GpuCheck
         var wpfLuid = D3D9.AdapterLuidFor(monitor);
         OnNvidia = wpfLuid == nv.Luid;
         // 4. (noted before step 3 so a failure still reports it) which GPU owns the monitor
-        var owner = Dxgi.MonitorOwner(monitor);
-        DisplayGpu = owner.name;
-        CrossGpu = owner.luid != 0 && owner.luid != nv.Luid;
+        // Windows' display settings name the chip really wired to the screen (on laptops with two chips, DXGI makes the
+        // integrated chip's screens look as if they belong to the graphics card)
+        long ownerLuid = DisplayConfig.AdapterFor(monitor);
+        if (ownerLuid != 0)
+        {
+            DisplayGpu = adapters.FirstOrDefault(a => a.Luid == ownerLuid).Name ?? Dxgi.NameOf(ownerLuid);
+            if (string.IsNullOrEmpty(DisplayGpu)) DisplayGpu = Dxgi.NameOf(ownerLuid);
+            if (string.IsNullOrEmpty(DisplayGpu)) DisplayGpu = "another chip";
+            CrossGpu = ownerLuid != nv.Luid;
+            DisplayKnown = true;
+        }
+        else
+        {
+            var owner = Dxgi.MonitorOwner(monitor);
+            DisplayGpu = owner.name;
+            CrossGpu = owner.luid != 0 && owner.luid != nv.Luid;
+            DisplayKnown = owner.luid != 0;
+        }
         if (!OnNvidia)
         {
             string wpf = adapters.FirstOrDefault(a => a.Luid == wpfLuid).Name ?? "another GPU";
@@ -90,7 +107,8 @@ public sealed class GpuCheck
 
         FailedStep = "";
         Ok = true;
-        Status = CrossGpu ? $"ready; the screen is driven by {DisplayGpu}, so Windows copies each frame across (can affect smoothness)" : "ready";
+        Status = CrossGpu ? $"ready; the screen is driven by {DisplayGpu}, so Windows copies each frame across (can affect smoothness)"
+               : DisplayKnown ? "ready; the screen is driven by this card too" : "ready (couldn't tell which chip drives the screen)";
     }
 
     /// <summary>
@@ -169,6 +187,14 @@ public sealed class GpuCheck
 
     public static void Release(IntPtr com) => Dxgi.Release(com);
 
+    /// <summary>The first adapter in high-performance order (for tests), or zero. The caller releases it.</summary>
+    public static (IntPtr ptr, string name) DefaultAdapter()
+    {
+        var all = Dxgi.HighPerformanceAdapters();
+        for (int i = 1; i < all.Count; i++) Dxgi.Release(all[i].Ptr);
+        return all.Count > 0 ? (all[0].Ptr, all[0].Name) : (IntPtr.Zero, "");
+    }
+
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
 
     // ---- DXGI, by hand (only enumeration is needed here) ----
@@ -216,6 +242,24 @@ public sealed class GpuCheck
             }
             finally { Release(f); }
             return list;
+        }
+
+        /// <summary>The name of the adapter with this id (any order), or "".</summary>
+        public static unsafe string NameOf(long luid)
+        {
+            if (CreateDXGIFactory1(ref IidFactory1, out var f) < 0 || f == IntPtr.Zero) return "";
+            try
+            {
+                for (uint i = 0; i < 16; i++)
+                {
+                    IntPtr a;
+                    if (((delegate* unmanaged[Stdcall]<IntPtr, uint, IntPtr*, int>)V(f)[12])(f, i, &a) < 0 || a == IntPtr.Zero) break;
+                    var d = Describe(a); Release(a);
+                    if (d.Luid == luid) return d.Name;
+                }
+            }
+            finally { Release(f); }
+            return "";
         }
 
         /// <summary>The GPU whose output shows the monitor (EnumAdapters1 → EnumOutputs → GetDesc).</summary>
@@ -272,6 +316,51 @@ public sealed class GpuCheck
                 return ((delegate* unmanaged[Stdcall]<IntPtr, uint, long*, int>)v[21])(d, 0, &l0) >= 0 ? l0 : 0;
             }
             finally { ((delegate* unmanaged[Stdcall]<IntPtr, uint>)v[2])(d); }
+        }
+    }
+
+    // ---- Windows' display configuration: which chip each screen is really connected to ----
+
+    private static class DisplayConfig
+    {
+        [DllImport("user32.dll")] private static extern int GetDisplayConfigBufferSizes(uint flags, out uint paths, out uint modes);
+        [DllImport("user32.dll")] private static extern unsafe int QueryDisplayConfig(uint flags, ref uint paths, byte* pathArray, ref uint modes, byte* modeArray, IntPtr topology);
+        [DllImport("user32.dll")] private static extern unsafe int DisplayConfigGetDeviceInfo(byte* packet);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool GetMonitorInfoW(IntPtr mon, ref MonitorInfoEx info);
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct MonitorInfoEx { public int Size; public int L, T, R, B, WL, WT, WR, WB; public uint Flags; [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string Device; }
+
+        /// <summary>The adapter id (LUID) of the chip the monitor is connected to, or 0.</summary>
+        public static unsafe long AdapterFor(IntPtr monitor)
+        {
+            try
+            {
+                var mi = new MonitorInfoEx { Size = Marshal.SizeOf<MonitorInfoEx>() };
+                if (!GetMonitorInfoW(monitor, ref mi) || string.IsNullOrEmpty(mi.Device)) return 0;
+                if (GetDisplayConfigBufferSizes(2 /* QDC_ONLY_ACTIVE_PATHS */, out uint np, out uint nm) != 0 || np == 0) return 0;
+                var paths = new byte[np * 72]; var modes = new byte[Math.Max(1, nm) * 64];
+                var pkt = stackalloc byte[84];                                                 // DISPLAYCONFIG_SOURCE_DEVICE_NAME
+                fixed (byte* pp = paths) fixed (byte* pm = modes)
+                {
+                    if (QueryDisplayConfig(2, ref np, pp, ref nm, pm, IntPtr.Zero) != 0) return 0;
+                    for (int i = 0; i < np; i++)
+                    {
+                        byte* path = pp + i * 72;
+                        long luid = (long)*(uint*)path | ((long)*(int*)(path + 4) << 32);   // sourceInfo.adapterId
+                        uint id = *(uint*)(path + 8);                                          // sourceInfo.id
+                        new Span<byte>(pkt, 84).Clear();
+                        *(uint*)pkt = 1;                                                       // DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME
+                        *(uint*)(pkt + 4) = 84;
+                        *(long*)(pkt + 8) = luid;
+                        *(uint*)(pkt + 16) = id;
+                        if (DisplayConfigGetDeviceInfo(pkt) != 0) continue;
+                        string name = new string((char*)(pkt + 20)).TrimEnd('\0');
+                        if (string.Equals(name, mi.Device, StringComparison.OrdinalIgnoreCase)) return luid;
+                    }
+                }
+            }
+            catch { }
+            return 0;
         }
     }
 }

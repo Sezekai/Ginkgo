@@ -11,6 +11,8 @@ namespace Ginkgo.App;
 /// <summary>One tile for the GPU grid: where it goes (device pixels, in page coordinates) and what it shows.</summary>
 public struct GpuTile
 {
+    /// <summary>The tile's number in the grid (so it can keep showing its last picture while a new one waits for upload).</summary>
+    public int Index;
     public int X, Y, W, H;
     /// <summary>The picture (null = a plain colour, <see cref="Fill"/>).</summary>
     public ThumbLoader.Pix? Pix;
@@ -21,15 +23,16 @@ public struct GpuTile
 }
 
 /// <summary>
-/// The GPU grid (build brief, phase 2): Direct3D 11 draws every tile as a textured rectangle into one texture the size of the view,
-/// which WPF shows through a single D3DImage. Pictures are uploaded once into a texture array of 4096 x 4096 pages and drawn
-/// from there; everything on screen is one instanced draw. It does the same things the strip painter does: a straight copy when
-/// a picture is already the tile's size, smooth scaling when it isn't (until the right size arrives), and the soft-to-sharp fade.
+/// The GPU grid (build brief, phase 2): Direct3D 11 draws every tile as a textured rectangle into a texture the size of the view,
+/// which WPF shows through a single D3DImage. Pictures are uploaded once into 4096 x 4096 pages, made as needed, and drawn from
+/// there with one instanced draw per page. It does what the strip painter does: a straight copy when a picture is already the
+/// tile's size, smooth scaling when it isn't (until the right size arrives), and the soft-to-sharp fade.
 /// It takes the pixels the loader already decoded; nothing before drawing changes.
 /// </summary>
 public sealed unsafe class GpuGrid : IDisposable
 {
     public const int Page = 4096;
+    public const long PageBytes = (long)Page * Page * 4;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct Inst
@@ -37,92 +40,100 @@ public sealed unsafe class GpuGrid : IDisposable
         public float DstX, DstY, DstW, DstH;
         public float U0, V0, U1, V1;
         public float PU0, PV0, PU1, PV1;
-        public float Slice, PrevSlice, Alpha, Mode;      // mode 0 copy, 1 smooth, 2 plain colour
+        public float HasPrev, Unused, Alpha, Mode;      // mode 0 copy, 1 smooth, 2 plain colour
         public float R, G, B, A;
     }
 
     private const string Hlsl = @"
 struct Inst { float4 dst; float4 uv; float4 uvp; float4 p; float4 col; };
 StructuredBuffer<Inst> Insts : register(t1);
-Texture2DArray<float4> Atlas : register(t0);
+Texture2D<float4> Cur : register(t0);
+Texture2D<float4> Old : register(t2);
 SamplerState Lin : register(s0);
-cbuffer C : register(b0) { float2 Screen; float2 Unused; };
+cbuffer C : register(b0) { float2 Screen; uint Base; uint Unused; };
 struct VO { float4 pos : SV_Position; float2 t : T0; float2 tp : T1; nointerpolation uint id : ID; };
 VO VS(uint vid : SV_VertexID, uint iid : SV_InstanceID)
 {
-    Inst i = Insts[iid];
+    Inst i = Insts[Base + iid];
     float2 c = float2(vid & 1, vid >> 1);
     float2 px = i.dst.xy + c * i.dst.zw;
     VO o;
     o.pos = float4(px.x / Screen.x * 2 - 1, 1 - px.y / Screen.y * 2, 0, 1);
     o.t = lerp(i.uv.xy, i.uv.zw, c);
     o.tp = lerp(i.uvp.xy, i.uvp.zw, c);
-    o.id = iid;
+    o.id = Base + iid;
     return o;
 }
-float4 Get(float2 t, float4 r, float slice, float mode)
+float4 GetCur(float2 t, float4 r, float mode)
 {
-    if (mode < 0.5) return Atlas.Load(int4(int2(floor(t)), (int)slice, 0));
+    if (mode < 0.5) return Cur.Load(int3(int2(floor(t)), 0));
     float2 c = clamp(t, r.xy + 0.5, r.zw - 0.5);
-    return Atlas.SampleLevel(Lin, float3(c / 4096.0, slice), 0);
+    return Cur.SampleLevel(Lin, c / 4096.0, 0);
 }
 float4 PS(VO v) : SV_Target
 {
     Inst i = Insts[v.id];
     if (i.p.w > 1.5) return i.col;
-    float4 n = Get(v.t, i.uv, i.p.x, i.p.w);
+    float4 n = GetCur(v.t, i.uv, i.p.w);
     if (i.p.z >= 0.999) return n;
-    float4 prev = i.p.y >= 0 ? Get(v.tp, i.uvp, i.p.y, 0) : i.col;
+    float4 prev = i.p.x > 0.5 ? Old.Load(int3(int2(floor(v.tp)), 0)) : i.col;
     return lerp(prev, n, i.p.z);
 }";
 
     private ID3D11Device _dev;
     private ID3D11DeviceContext _ctx;
-    private readonly ID3D11Texture2D _atlas;
-    private readonly ID3D11ShaderResourceView _atlasView;
     private readonly ID3D11VertexShader _vs;
     private readonly ID3D11PixelShader _ps;
     private readonly ID3D11SamplerState _lin;
     private readonly ID3D11RasterizerState _raster;
     private readonly ID3D11Buffer _cb;
-    private readonly ID3D11Query _done;
     private ID3D11Buffer? _insts; private ID3D11ShaderResourceView? _instView; private int _instCap;
     private ID3D11Texture2D? _target; private ID3D11RenderTargetView? _rtv;
+    private IntPtr _adapter3;
     public int Width { get; private set; }
     public int Height { get; private set; }
     /// <summary>The target's handle for Direct3D 9Ex (the D3DImage side). Changes when the size changes.</summary>
     public IntPtr SharedHandle { get; private set; }
-    public int Slices { get; }
     public string AdapterName { get; }
+    /// <summary>The most pages (64 MB each) it may make; Windows' allowance can hold it to fewer.</summary>
+    public int MaxPages { get; set; } = 24;
 
-    // atlas pages: shelves of similar heights, filled left to right; a full array lets go of the page used longest ago
+    // pages: shelves of similar heights, filled left to right; made when needed, the one used longest ago is let go when full
     private sealed class Shelf { public int Y, H, X; }
-    private sealed class PageInfo { public readonly List<Shelf> Shelves = new(); public int Top; public long Used; public readonly List<ThumbLoader.Pix> Keys = new(); }
-    private readonly PageInfo[] _pages;
-    private readonly Dictionary<ThumbLoader.Pix, (int page, int x, int y)> _where = new(ReferenceEqualityComparer.Instance);
+    private sealed class PageInfo
+    {
+        public ID3D11Texture2D Tex = null!; public ID3D11ShaderResourceView View = null!;
+        public readonly List<Shelf> Shelves = new(); public int Top; public long Used; public long UsedAt;
+        public readonly List<ThumbLoader.Pix> Keys = new();
+    }
+    private readonly List<PageInfo> _pages = new();
+    private readonly Dictionary<ThumbLoader.Pix, (PageInfo page, int x, int y)> _where = new(ReferenceEqualityComparer.Instance);
+    /// <summary>What each tile showed last (still on the card): shown while its new picture waits for upload.</summary>
+    private readonly Dictionary<int, ThumbLoader.Pix> _shown = new();
     private long _frame;
     private Inst[] _buf = new Inst[256];
+    private (int page, int prev, int i)[] _order = new (int, int, int)[256];
+    private Inst[] _sorted = new Inst[256];
+    private int _waiting;
+
+    // GPU timing without waiting: timestamps read back a few frames later
+    private readonly ID3D11Query[] _tsDisjoint = new ID3D11Query[4], _tsStart = new ID3D11Query[4], _tsEnd = new ID3D11Query[4];
+    private readonly bool[] _tsPending = new bool[4];
 
     // what F3 shows
-    public int LastUploads; public double LastUploadMs, LastDrawMs; public int Evictions;
-    public long UsedBytes => _pages.Count(p => p.Top > 0) * (long)Page * Page * 4;
-    public long BudgetBytes => (long)Slices * Page * Page * 4;
+    public int LastUploads; public double LastUploadMs, LastDrawMs, GpuMs; public int Evictions; public int LastWaiting;
+    public long UsedBytes => _pages.Count * PageBytes;
+    public long BudgetBytes => MaxPages * PageBytes;
 
-    /// <param name="adapter">An IDXGIAdapter (null with <see cref="DriverType.Warp"/>, the software device used in the tests).</param>
-    public GpuGrid(IntPtr adapter, DriverType type, int slices, string name)
+    /// <param name="adapter">An IDXGIAdapter (zero with <see cref="DriverType.Warp"/>, the software device used in the tests).</param>
+    public GpuGrid(IntPtr adapter, DriverType type, int maxPages, string name)
     {
         AdapterName = name;
+        MaxPages = Math.Max(2, maxPages);
         var levels = new[] { FeatureLevel.Level_11_1, FeatureLevel.Level_11_0 };
         var hr = D3D11.D3D11CreateDevice(adapter, type, DeviceCreationFlags.BgraSupport, levels, out _dev, out _ctx);
         if (hr.Failure || _dev is null) throw new InvalidOperationException($"no Direct3D 11 device (0x{hr.Code:X8})");
-        Slices = slices;
-        _pages = Enumerable.Range(0, slices).Select(_ => new PageInfo()).ToArray();
-        _atlas = _dev.CreateTexture2D(new Texture2DDescription
-        {
-            Width = Page, Height = Page, MipLevels = 1, ArraySize = (uint)slices, Format = Format.B8G8R8A8_UNorm,
-            SampleDescription = new SampleDescription(1, 0), Usage = ResourceUsage.Default, BindFlags = BindFlags.ShaderResource,
-        });
-        _atlasView = _dev.CreateShaderResourceView(_atlas);
+        _adapter3 = VramTier.Adapter3(adapter);
         var vs = Compiler.Compile(Hlsl, "VS", "grid", "vs_5_0");
         var ps = Compiler.Compile(Hlsl, "PS", "grid", "ps_5_0");
         _vs = _dev.CreateVertexShader(vs.Span);
@@ -131,7 +142,12 @@ float4 PS(VO v) : SV_Target
             0, 1, ComparisonFunction.Never, new Color4(0, 0, 0, 0)));
         _raster = _dev.CreateRasterizerState(new RasterizerDescription(CullMode.None, FillMode.Solid));
         _cb = _dev.CreateBuffer(new BufferDescription(16, BindFlags.ConstantBuffer));
-        _done = _dev.CreateQuery(QueryType.Event);
+        for (int k = 0; k < 4; k++)
+        {
+            _tsDisjoint[k] = _dev.CreateQuery(QueryType.TimestampDisjoint);
+            _tsStart[k] = _dev.CreateQuery(QueryType.Timestamp);
+            _tsEnd[k] = _dev.CreateQuery(QueryType.Timestamp);
+        }
     }
 
     private void EnsureTarget(int w, int h)
@@ -156,52 +172,82 @@ float4 PS(VO v) : SV_Target
 
     private static int Bucket(int h) => h <= 16 ? 16 : (h + 15) & ~15;
 
-    /// <summary>Finds room for a w x h picture; null when every page is in use this frame.</summary>
-    private (int page, int x, int y)? Alloc(int w, int h)
+    private bool MayAddPage()
+    {
+        if (_pages.Count >= MaxPages) return false;
+        var (budget, usage) = VramTier.Allowance(_adapter3);
+        return budget <= 0 || usage + PageBytes <= budget * 0.85;
+    }
+
+    private PageInfo NewPage()
+    {
+        var pg = new PageInfo();
+        pg.Tex = _dev.CreateTexture2D(new Texture2DDescription
+        {
+            Width = Page, Height = Page, MipLevels = 1, ArraySize = 1, Format = Format.B8G8R8A8_UNorm,
+            SampleDescription = new SampleDescription(1, 0), Usage = ResourceUsage.Default, BindFlags = BindFlags.ShaderResource,
+        });
+        pg.View = _dev.CreateShaderResourceView(pg.Tex);
+        _pages.Add(pg);
+        return pg;
+    }
+
+    private void Empty(PageInfo o)
+    {
+        foreach (var k in o.Keys) _where.Remove(k);
+        o.Keys.Clear(); o.Shelves.Clear(); o.Top = 0;
+        Evictions++;
+    }
+
+    private void FreePage(PageInfo o)
+    {
+        Empty(o);
+        o.View.Dispose(); o.Tex.Dispose();
+        _pages.Remove(o);
+    }
+
+    /// <summary>Finds room for a w x h picture; null when every page holds something on screen now.</summary>
+    private (PageInfo page, int x, int y)? Alloc(int w, int h)
     {
         int bh = Bucket(h);
         for (int pass = 0; pass < 2; pass++)
         {
-            for (int pi = 0; pi < _pages.Length; pi++)
+            foreach (var pg in _pages)
             {
-                var pg = _pages[pi];
                 foreach (var s in pg.Shelves)
-                    if (s.H == bh && s.X + w <= Page) { var r = (pi, s.X, s.Y); s.X += w; return r; }
+                    if (s.H == bh && s.X + w <= Page) { var r = (pg, s.X, s.Y); s.X += w; return r; }
                 if (pg.Top + bh <= Page)
                 {
                     var s = new Shelf { Y = pg.Top, H = bh, X = w };
                     pg.Shelves.Add(s); pg.Top += bh;
-                    return (pi, 0, s.Y);
+                    return (pg, 0, s.Y);
                 }
             }
             if (pass == 1) break;
-            // full: let go of the page used longest ago (never one used for this frame)
-            int old = -1;
-            for (int pi = 0; pi < _pages.Length; pi++)
-                if (_pages[pi].Used < _frame && (old < 0 || _pages[pi].Used < _pages[old].Used)) old = pi;
-            if (old < 0) return null;
-            var o = _pages[old];
-            foreach (var k in o.Keys) _where.Remove(k);
-            o.Keys.Clear(); o.Shelves.Clear(); o.Top = 0;
-            Evictions++;
+            if (MayAddPage()) { NewPage(); continue; }
+            // full: empty the page used longest ago (never one holding a picture on screen now)
+            PageInfo? old = null;
+            foreach (var pg in _pages) if (pg.Used < _frame && (old is null || pg.Used < old.Used)) old = pg;
+            if (old is null) return null;
+            Empty(old);
         }
         return null;
     }
 
-    /// <summary>Where the picture is in the atlas, uploading it if needed (null: no time or room left this frame).</summary>
-    private (int page, int x, int y)? Place(ThumbLoader.Pix p, ref long budgetEnd)
+    /// <summary>Where the picture is on the card, uploading it if needed (null: no time or room left this frame).</summary>
+    private (PageInfo page, int x, int y)? Place(ThumbLoader.Pix p, long budgetEnd)
     {
-        if (_where.TryGetValue(p, out var at)) { _pages[at.page].Used = _frame; return at; }
+        if (_where.TryGetValue(p, out var at)) { at.page.Used = _frame; return at; }
         if (p.W <= 0 || p.H <= 0 || p.W > Page || p.H > Page || p.Data.Length < p.W * p.H * 4) return null;
         if (Stopwatch.GetTimestamp() > budgetEnd) return null;
         var spot = Alloc(p.W, p.H);
         if (spot is null) return null;
         var (pg, x, y) = spot.Value;
         fixed (byte* d = p.Data)
-            _ctx.UpdateSubresource(_atlas, (uint)pg, new Box(x, y, 0, x + p.W, y + p.H, 1), (IntPtr)d, (uint)(p.W * 4), 0);
+            _ctx.UpdateSubresource(pg.Tex, 0, new Box(x, y, 0, x + p.W, y + p.H, 1), (IntPtr)d, (uint)(p.W * 4), 0);
         _where[p] = spot.Value;
-        _pages[pg].Keys.Add(p);
-        _pages[pg].Used = _frame;
+        pg.Keys.Add(p);
+        pg.Used = _frame;
         LastUploads++;
         return spot;
     }
@@ -212,8 +258,9 @@ float4 PS(VO v) : SV_Target
     }
 
     /// <summary>
-    /// Draws the tiles (page coordinates; <paramref name="offPx"/> is the scroll position) into the w x h target and waits until the
-    /// GPU has finished. False when some pictures could not be uploaded this frame (they show their plain colour; draw again).
+    /// Draws the tiles (page coordinates; <paramref name="offPx"/> is the scroll position) into the w x h target. It does not wait
+    /// for the card: Direct3D keeps the hand-off to WPF in order. False when some pictures could not be uploaded this frame
+    /// (those tiles keep their previous picture; draw again).
     /// </summary>
     public bool Render(IReadOnlyList<GpuTile> tiles, int offPx, int w, int h, uint background, double uploadBudgetMs)
     {
@@ -221,40 +268,71 @@ float4 PS(VO v) : SV_Target
         _frame++;
         LastUploads = 0;
         EnsureTarget(Math.Max(1, w), Math.Max(1, h));
-        long budgetEnd = t0 + (long)(uploadBudgetMs * Stopwatch.Frequency / 1000);
-        if (_buf.Length < tiles.Count) _buf = new Inst[tiles.Count * 2];
-        int n = 0; bool complete = true;
-        // on-screen tiles are uploaded first: the caller lists them nearest the top; tiles off screen are skipped
+        ReadTimings();
+        // many pictures waiting (a size change, a jump): allow more upload time this frame
+        double budgetMs = _waiting > 40 ? Math.Max(uploadBudgetMs, 8) : _waiting > 0 ? Math.Max(uploadBudgetMs, 4) : uploadBudgetMs;
+        long budgetEnd = t0 + (long)(budgetMs * Stopwatch.Frequency / 1000);
+        bool OnScreen(in GpuTile t) => t.W > 0 && t.H > 0 && t.Y + t.H > offPx && t.Y < offPx + h && t.X < w && t.X + t.W > 0;
+
+        // 1. everything on screen that is already on the card is marked in use first, so making room never throws it out
         for (int k = 0; k < tiles.Count; k++)
         {
             var t = tiles[k];
-            if (t.W <= 0 || t.H <= 0 || t.Y + t.H <= offPx || t.Y >= offPx + h || t.X >= w || t.X + t.W <= 0) continue;
+            if (!OnScreen(t)) continue;
+            if (t.Pix is not null && _where.TryGetValue(t.Pix, out var a)) a.page.Used = _frame;
+            if (t.Prev is not null && _where.TryGetValue(t.Prev, out var b)) b.page.Used = _frame;
+            if (_shown.TryGetValue(t.Index, out var s) && _where.TryGetValue(s, out var c)) c.page.Used = _frame;
+        }
+
+        // 2. the instances (uploading what's new, on-screen tiles nearest the top first)
+        if (_buf.Length < tiles.Count) { _buf = new Inst[tiles.Count * 2]; _order = new (int, int, int)[tiles.Count * 2]; _sorted = new Inst[tiles.Count * 2]; }
+        var pageIndex = new Dictionary<PageInfo, int>();
+        int Pi(PageInfo p) { if (!pageIndex.TryGetValue(p, out int i)) { i = _pages.IndexOf(p); pageIndex[p] = i; } return i; }
+        int n = 0, waiting = 0;
+        for (int k = 0; k < tiles.Count; k++)
+        {
+            var t = tiles[k];
+            if (!OnScreen(t)) continue;
             ref var i = ref _buf[n];
             i = default;
             i.DstX = t.X; i.DstY = t.Y - offPx; i.DstW = t.W; i.DstH = t.H;
             Col(ref i, t.Fill);
-            i.Alpha = Math.Clamp(t.A, 0, 1); i.PrevSlice = -1;
-            var at = t.Pix is null ? null : Place(t.Pix, ref budgetEnd);
-            if (at is null)
+            i.Alpha = Math.Clamp(t.A, 0, 1);
+            int page = -1, prevPage = -1;
+            var pix = t.Pix;
+            var at = pix is null ? null : Place(pix, budgetEnd);
+            if (at is null && pix is not null)
             {
-                if (t.Pix is not null) complete = false;
-                i.Mode = 2; i.Alpha = 1;
+                // not on the card yet: keep showing what this tile showed last (stretched to fit), like the strips do
+                waiting++;
+                if (_shown.TryGetValue(t.Index, out var last) && _where.TryGetValue(last, out var la)) { pix = last; at = la; i.Alpha = 1; }
+                else pix = null;
             }
+            if (at is null || pix is null) { i.Mode = 2; i.Alpha = 1; }
             else
             {
                 var (pg, x, y) = at.Value;
-                i.Slice = pg; i.U0 = x; i.V0 = y; i.U1 = x + t.Pix!.W; i.V1 = y + t.Pix.H;
-                i.Mode = t.Pix.W == t.W && t.Pix.H == t.H ? 0 : 1;
-                if (i.Alpha < 1 && t.Prev is { } pv && Place(pv, ref budgetEnd) is { } pa)
+                page = Pi(pg);
+                i.U0 = x; i.V0 = y; i.U1 = x + pix.W; i.V1 = y + pix.H;
+                i.Mode = pix.W == t.W && pix.H == t.H ? 0 : 1;
+                if (ReferenceEquals(pix, t.Pix)) _shown[t.Index] = pix;
+                if (i.Alpha < 1 && t.Prev is { } pv && Place(pv, budgetEnd) is { } pa)
                 {
-                    i.PrevSlice = pa.page; i.PU0 = pa.x; i.PV0 = pa.y; i.PU1 = pa.x + pv.W; i.PV1 = pa.y + pv.H;
+                    prevPage = Pi(pa.page); i.HasPrev = 1;
+                    i.PU0 = pa.x; i.PV0 = pa.y; i.PU1 = pa.x + pv.W; i.PV1 = pa.y + pv.H;
                 }
             }
+            _order[n] = (page, prevPage, n);
             n++;
         }
+        _waiting = waiting; LastWaiting = waiting;
+        if (_shown.Count > 20000) _shown.Clear();
         var t1 = Stopwatch.GetTimestamp();
         LastUploadMs = (t1 - t0) * 1000.0 / Stopwatch.Frequency;
 
+        // 3. one draw per page (and per old page, for the few tiles fading between pages)
+        Array.Sort(_order, 0, n, Comparer<(int page, int prev, int i)>.Create((a, b) => a.page != b.page ? a.page.CompareTo(b.page) : a.prev != b.prev ? a.prev.CompareTo(b.prev) : a.i.CompareTo(b.i)));
+        for (int k = 0; k < n; k++) _sorted[k] = _buf[_order[k].i];
         if (n > _instCap)
         {
             _instView?.Dispose(); _insts?.Dispose();
@@ -266,11 +344,12 @@ float4 PS(VO v) : SV_Target
         if (n > 0)
         {
             var m = _ctx.Map(_insts!, 0, MapMode.WriteDiscard);
-            fixed (Inst* src = _buf) Buffer.MemoryCopy(src, (void*)m.DataPointer, (long)_instCap * sizeof(Inst), (long)n * sizeof(Inst));
+            fixed (Inst* src = _sorted) Buffer.MemoryCopy(src, (void*)m.DataPointer, (long)_instCap * sizeof(Inst), (long)n * sizeof(Inst));
             _ctx.Unmap(_insts!, 0);
         }
-        var screen = stackalloc float[4] { Width, Height, 0, 0 };
-        _ctx.UpdateSubresource(_cb, 0, null, (IntPtr)screen, 16, 0);
+        int slot = (int)(_frame % 4);
+        bool timing = !_tsPending[slot];
+        if (timing) { _ctx.Begin(_tsDisjoint[slot]); _ctx.End(_tsStart[slot]); }
 
         _ctx.ClearRenderTargetView(_rtv!, new Color4(((background >> 16) & 255) / 255f, ((background >> 8) & 255) / 255f, (background & 255) / 255f, 1f));
         if (n > 0)
@@ -282,23 +361,58 @@ float4 PS(VO v) : SV_Target
             _ctx.VSSetShader(_vs); _ctx.PSSetShader(_ps);
             _ctx.VSSetConstantBuffer(0, _cb);
             _ctx.VSSetShaderResource(1, _instView);
-            _ctx.PSSetShaderResource(0, _atlasView);
             _ctx.PSSetShaderResource(1, _instView!);
             _ctx.PSSetSampler(0, _lin);
-            _ctx.DrawInstanced(4, (uint)n, 0, 0);
+            var cb = stackalloc uint[4];
+            ((float*)cb)[0] = Width; ((float*)cb)[1] = Height;
+            int start = 0;
+            while (start < n)
+            {
+                var (pg, pv, _) = _order[start];
+                int end = start + 1;
+                while (end < n && _order[end].page == pg && _order[end].prev == pv) end++;
+                cb[2] = (uint)start;
+                _ctx.UpdateSubresource(_cb, 0, null, (IntPtr)cb, 16, 0);
+                if (pg >= 0) _ctx.PSSetShaderResource(0, _pages[pg].View);
+                if (pv >= 0) _ctx.PSSetShaderResource(2, _pages[pv].View);
+                _ctx.DrawInstanced(4, (uint)(end - start), 0, 0);
+                start = end;
+            }
         }
-        // finish before WPF shows the texture
-        _ctx.End(_done);
+        if (timing) { _ctx.End(_tsEnd[slot]); _ctx.End(_tsDisjoint[slot]); _tsPending[slot] = true; }
         _ctx.Flush();
-        var waitEnd = Stopwatch.GetTimestamp() + Stopwatch.Frequency / 10;
-        while (!_ctx.GetData<int>(_done, AsyncGetDataFlags.None, out _) && Stopwatch.GetTimestamp() < waitEnd) Thread.SpinWait(50);
         var reason = _dev.DeviceRemovedReason;
         if (reason.Failure) throw new InvalidOperationException($"the GPU device was lost (0x{reason.Code:X8})");
+
+        // pages nobody has used for half a minute are given back (old sizes after zooming)
+        long now = Environment.TickCount64;
+        foreach (var pg in _pages) if (pg.Used == _frame) pg.UsedAt = now;
+        if (_frame % 60 == 0)
+        {
+            var (budget, usage) = VramTier.Allowance(_adapter3);
+            bool over = budget > 0 && usage > budget * 0.95;
+            foreach (var pg in _pages.Where(p => p.Used < _frame && (now - p.UsedAt > 30_000 || over)).OrderBy(p => p.Used).Take(over ? 2 : 1).ToList()) FreePage(pg);
+        }
         LastDrawMs = (Stopwatch.GetTimestamp() - t1) * 1000.0 / Stopwatch.Frequency;
-        return complete;
+        return waiting == 0;
     }
 
-    /// <summary>The last frame's pixels (BGRA, Width x Height): for the tests.</summary>
+    [StructLayout(LayoutKind.Sequential)] private struct Disjoint { public ulong Frequency; public int IsDisjoint; public int Pad; }
+
+    /// <summary>GPU time of earlier frames, read without waiting.</summary>
+    private void ReadTimings()
+    {
+        for (int k = 0; k < 4; k++)
+        {
+            if (!_tsPending[k]) continue;
+            if (!_ctx.GetData<Disjoint>(_tsDisjoint[k], AsyncGetDataFlags.DoNotFlush, out var dj)) continue;
+            if (!_ctx.GetData<ulong>(_tsStart[k], AsyncGetDataFlags.DoNotFlush, out var a) || !_ctx.GetData<ulong>(_tsEnd[k], AsyncGetDataFlags.DoNotFlush, out var b)) continue;
+            _tsPending[k] = false;
+            if (dj.IsDisjoint == 0 && dj.Frequency > 0 && b >= a) GpuMs = (b - a) * 1000.0 / dj.Frequency;
+        }
+    }
+
+    /// <summary>The last frame's pixels (BGRA, Width x Height): for the tests. Waits for the card.</summary>
     public byte[] ReadBack()
     {
         using var staging = _dev.CreateTexture2D(new Texture2DDescription
@@ -315,15 +429,20 @@ float4 PS(VO v) : SV_Target
         return px;
     }
 
+    public int PageCount => _pages.Count;
+
     /// <summary>Forgets every uploaded picture (they upload again as needed).</summary>
-    public void ForgetAll() { _where.Clear(); foreach (var p in _pages) { p.Keys.Clear(); p.Shelves.Clear(); p.Top = 0; } }
+    public void ForgetAll() { foreach (var p in _pages.ToList()) FreePage(p); _shown.Clear(); }
 
     public void Dispose()
     {
+        foreach (var p in _pages) { p.View.Dispose(); p.Tex.Dispose(); }
+        _pages.Clear(); _where.Clear(); _shown.Clear();
+        for (int k = 0; k < 4; k++) { _tsDisjoint[k].Dispose(); _tsStart[k].Dispose(); _tsEnd[k].Dispose(); }
         _rtv?.Dispose(); _target?.Dispose(); _instView?.Dispose(); _insts?.Dispose();
-        _done.Dispose(); _cb.Dispose(); _raster.Dispose(); _lin.Dispose(); _ps.Dispose(); _vs.Dispose();
-        _atlasView.Dispose(); _atlas.Dispose();
+        _cb.Dispose(); _raster.Dispose(); _lin.Dispose(); _ps.Dispose(); _vs.Dispose();
         _ctx.ClearState(); _ctx.Flush(); _ctx.Dispose(); _dev.Dispose();
+        VramTier.ReleaseCom(ref _adapter3);
     }
 }
 

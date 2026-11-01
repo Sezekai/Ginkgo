@@ -23,6 +23,8 @@ static int Main(string[] args)
     }
     catch (Exception ex) { Console.WriteLine("::error::GPU check crashed: " + ex); }
     try { GpuParity(); } catch (Exception ex) { Console.WriteLine("::error::GPU grid parity check crashed: " + ex); }
+    try { GpuKeepsOld(); } catch (Exception ex) { Console.WriteLine("::error::GPU grid keep-old check crashed: " + ex); }
+    try { VramCheck(); } catch (Exception ex) { Console.WriteLine("::error::graphics-memory thumbnails check crashed: " + ex); }
     var pt = new Thread(PresenterCheck); pt.SetApartmentState(ApartmentState.STA); pt.Start(); pt.Join();
     var bt = new Thread(BarCheck); bt.SetApartmentState(ApartmentState.STA); bt.Start(); bt.Join();
     var rt = new Thread(RenderCheck); rt.SetApartmentState(ApartmentState.STA); rt.Start(); rt.Join();
@@ -312,5 +314,70 @@ static void PresenterCheck()
         Console.WriteLine($"::notice::GPU hand-off: shared texture opened by Direct3D 9Ex and accepted by D3DImage ({img.PixelWidth}x{img.PixelHeight}, front buffer {(img.IsFrontBufferAvailable ? "available" : "not available")})");
     }
     catch (Exception ex) { Console.WriteLine("::warning::GPU hand-off check failed on the runner: " + ex.Message); }
+}
+
+// a size change: new pictures that can't be uploaded yet must not flash grey; the tiles keep their old pictures until they can
+static void GpuKeepsOld()
+{
+    const int W = 700, H = 500;
+    uint bg = Ginkgo.Core.Imaging.TileBlit.Pack(18, 18, 20), fade = Ginkgo.Core.Imaging.TileBlit.Pack(40, 40, 46);
+    var rnd = new Random(21);
+    ThumbLoader.Pix Pic(int w, int h, byte v)
+    {
+        var d = new byte[w * h * 4];
+        for (int i = 0; i < d.Length; i += 4) { d[i] = v; d[i + 1] = (byte)(255 - v); d[i + 2] = (byte)(v / 2 + 60); d[i + 3] = 255; }
+        return new ThumbLoader.Pix { Data = d, W = w, H = h, SrcW = w };
+    }
+    var a = new List<GpuTile>(); var b = new List<GpuTile>();
+    for (int k = 0; k < 12; k++)
+    {
+        int x = (k % 4) * 170, y = (k / 4) * 160;
+        a.Add(new GpuTile { Index = k, X = x, Y = y, W = 166, H = 156, A = 1, Fill = fade, Pix = Pic(166, 156, (byte)(20 + k * 10)) });
+        b.Add(new GpuTile { Index = k, X = x, Y = y, W = 166, H = 156, A = 1, Fill = fade, Pix = Pic(166, 156, (byte)(200 - k * 10)) });
+    }
+    using var grid = new GpuGrid(IntPtr.Zero, Vortice.Direct3D.DriverType.Warp, 2, "WARP");
+    grid.Render(a, 0, W, H, bg, 1000);
+    var first = grid.ReadBack();
+    bool waited = !grid.Render(b, 0, W, H, bg, 0);          // no upload time: the new pictures wait
+    var kept = grid.ReadBack();
+    bool done = grid.Render(b, 0, W, H, bg, 1000);
+    var after = grid.ReadBack();
+    int same = 0, now = 0, grey = 0;
+    foreach (var t in b)
+    {
+        int i = ((t.Y + t.H / 2) * W + t.X + t.W / 2) * 4;
+        if (kept[i] == first[i] && kept[i + 1] == first[i + 1]) same++;
+        if (kept[i] == 46 && kept[i + 1] == 40 && kept[i + 2] == 40) grey++;
+        if (after[i] == t.Pix!.Data[0] && after[i + 1] == t.Pix.Data[1]) now++;
+    }
+    bool ok = waited && done && same == 12 && grey == 0 && now == 12;
+    Console.WriteLine((ok ? "::notice::" : "::error::") + $"GPU grid keeps old pictures while new ones wait: waited {waited}, kept {same}/12, grey {grey}, then shown {now}/12");
+}
+
+// thumbnails in graphics memory: pieces put on the card come back byte for byte
+static void VramCheck()
+{
+    var (ad, name) = GpuCheck.DefaultAdapter();
+    if (ad == IntPtr.Zero) { Console.WriteLine("::warning::graphics-memory thumbnails: no adapter on the runner"); return; }
+    var tier = new VramTier(ad, name);
+    GpuCheck.Release(ad);
+    var dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "ginkgo-vram-" + Guid.NewGuid().ToString("N"));
+    var st = new ThumbStore(dir, "micro") { Second = tier };
+    var rnd = new Random(5);
+    var items = new List<(byte[] d, (int pack, long off, int len) at)>();
+    for (int i = 0; i < 300; i++) { var d = new byte[rnd.Next(500, 30000)]; rnd.NextBytes(d); items.Add((d, st.Append(d))); }
+    st.Flush();
+    int pk = items[0].at.pack;
+    var sw = Stopwatch.StartNew();
+    bool loaded = st.LoadToSecond(pk, 0, CancellationToken.None);
+    double putMs = sw.Elapsed.TotalMilliseconds;
+    sw.Restart();
+    bool all = items.All(it => st.Read(it.at.pack, it.at.off, it.at.len) is { } g && g.AsSpan().SequenceEqual(it.d));
+    double each = sw.Elapsed.TotalMilliseconds / items.Count;
+    var (budget, usage) = tier.Allowance();
+    bool ok = loaded && all && tier.Reads == items.Count && tier.Bytes > 0;
+    tier.Clear();
+    Console.WriteLine((ok ? "::notice::" : "::error::") + $"graphics-memory thumbnails on {name}: put {putMs:F1} ms, {items.Count} reads match: {all} ({each:F3} ms each), allowance {budget / 1048576} MB, usage {usage / 1048576} MB, after clear {tier.Bytes} bytes");
+    st.Dispose(); tier.Dispose();
 }
 }

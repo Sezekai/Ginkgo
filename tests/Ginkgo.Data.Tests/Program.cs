@@ -413,6 +413,30 @@ Check(again.BackfillTotal == 0, "backfill has nothing left");
     bs.Dispose();
 }
 
+// ---- a second home for pieces (the graphics card's memory in the app; a dictionary here) ----
+{
+    var sdir = Path.Combine(tmp, "mem3");
+    var ss = new ThumbStore(sdir, "micro");
+    var home = new DictHome();
+    ss.Second = home;
+    var rnd3 = new Random(9);
+    var items = new List<(byte[] data, (int pack, long offset, int length) at)>();
+    for (int i = 0; i < 40; i++) { var b = new byte[rnd3.Next(100, 20000)]; rnd3.NextBytes(b); items.Add((b, ss.Append(b))); }
+    ss.Flush();
+    int pk = items[0].at.pack;
+    ss.LoadSegment(pk, 0, CancellationToken.None);
+    Check(ss.MoveToSecond(pk, 0) && !ss.IsInMemory(pk, 0) && ss.InSecond(pk, 0) && ss.MemoryBytes == 0, "a piece moves from memory to the second home");
+    int before = home.Reads;
+    bool all = items.All(it => ss.Read(it.at.pack, it.at.offset, it.at.length) is { } g && g.AsSpan().SequenceEqual(it.data));
+    Check(all && home.Reads - before == items.Count, "reads come from the second home and match");
+    ss.DropSecond(pk, 0);
+    Check(!ss.InSecond(pk, 0) && ss.Read(items[3].at.pack, items[3].at.offset, items[3].at.length) is { } g3 && g3.AsSpan().SequenceEqual(items[3].data), "after leaving the second home, reads come from the drive");
+    Check(ss.LoadToSecond(pk, 0, CancellationToken.None) && ss.InSecond(pk, 0) && !ss.IsInMemory(pk, 0), "a piece loads from the drive straight into the second home");
+    home.Full = true; ss.DropSecond(pk, 0); ss.LoadSegment(pk, 0, CancellationToken.None);
+    Check(!ss.MoveToSecond(pk, 0) && ss.IsInMemory(pk, 0), "no room in the second home: the piece stays in memory");
+    ss.Dispose();
+}
+
 // ---- moving the small thumbnails to a fast drive ----
 {
     var from = Path.Combine(tmp, "mv-old"); var to = Path.Combine(tmp, "mv-fast");
@@ -513,6 +537,26 @@ class ContentIds : IFileIdProvider
         }
         catch { return null; }
     }
+}
+
+/// <summary>A second home for pieces kept in a dictionary (the app uses the graphics card's memory).</summary>
+class DictHome : ISecondHome
+{
+    private readonly Dictionary<(ThumbStore, long), byte[]> _d = new();
+    public int Reads; public bool Full;
+    public bool Has(ThumbStore s, long key) => _d.ContainsKey((s, key));
+    public bool Read(ThumbStore s, long key, int inSeg, Span<byte> dst)
+    {
+        if (!_d.TryGetValue((s, key), out var b) || inSeg + dst.Length > b.Length) return false;
+        b.AsSpan(inSeg, dst.Length).CopyTo(dst); Reads++; return true;
+    }
+    public unsafe bool Put(ThumbStore s, long key, IntPtr data, int length)
+    {
+        if (Full) return false;
+        _d[(s, key)] = new ReadOnlySpan<byte>((void*)data, length).ToArray(); return true;
+    }
+    public void Remove(ThumbStore s, long key) => _d.Remove((s, key));
+    public void RemovePack(ThumbStore s, int pack) { foreach (var k in _d.Keys.Where(k => k.Item1 == s && (int)(k.Item2 >> 20) == pack).ToList()) _d.Remove(k); }
 }
 
 /// <summary>ScanOptions is immutable (init-only); tests tweak it through this.</summary>
