@@ -32,6 +32,7 @@ public partial class MainWindow
         {
             if (RecentlyNavigated()) return;
             if (IsFolderTile(i)) OpenFolder(_page!.Tiles[i].Path);
+            else if (IsVideoTile(i)) ClickVideoTile(i);          // a video plays in its tile
             else if (InBrowse && i >= 0) OpenViewer(i);           // inside a folder one click opens a picture
         };
         View.ItemContextRequested += ShowTileMenu;

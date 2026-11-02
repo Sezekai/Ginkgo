@@ -285,10 +285,11 @@ float4 PS(VO v) : SV_Target
     private HashSet<ThumbLoader.Pix> _evicted = new(ReferenceEqualityComparer.Instance);
     public HashSet<ThumbLoader.Pix> TakeEvicted() { var e = _evicted; _evicted = new(ReferenceEqualityComparer.Instance); return e; }
     public bool IsResident(ThumbLoader.Pix p) => _where.ContainsKey(p);
+    private readonly Dictionary<ThumbLoader.Pix, int> _ver = new(ReferenceEqualityComparer.Instance);
 
     private void Empty(PageInfo o)
     {
-        foreach (var k in o.Keys) { _where.Remove(k); if (k.Data.Length == 0) _evicted.Add(k); }
+        foreach (var k in o.Keys) { _where.Remove(k); _ver.Remove(k); if (k.Data.Length == 0) _evicted.Add(k); }
         o.Keys.Clear(); o.Shelves.Clear(); o.Top = 0;
         Evictions++;
     }
@@ -335,7 +336,18 @@ float4 PS(VO v) : SV_Target
     /// <summary>Where the picture is on the card, uploading it if needed (null: no time or room left this frame).</summary>
     private (PageInfo page, int x, int y)? Place(ThumbLoader.Pix p, long budgetEnd)
     {
-        if (_where.TryGetValue(p, out var at)) { at.page.Used = _frame; return at; }
+        if (_where.TryGetValue(p, out var at))
+        {
+            at.page.Used = _frame;
+            // a video frame: same picture, new pixels (always refreshed, whatever the upload time: it's what the eye is on)
+            if (p.Version != 0 && (!_ver.TryGetValue(p, out int v) || v != p.Version) && p.Data.Length >= p.W * p.H * 4)
+            {
+                fixed (byte* d = p.Data)
+                    _ctx.UpdateSubresource(at.page.Tex, 0, new Box(at.x, at.y, 0, at.x + p.W, at.y + p.H, 1), (IntPtr)d, (uint)(p.W * 4), 0);
+                _ver[p] = p.Version;
+            }
+            return at;
+        }
         if (p.W <= 0 || p.H <= 0 || p.W > Page || p.H > Page || p.Data.Length < p.W * p.H * 4) return null;
         if (Stopwatch.GetTimestamp() > budgetEnd) return null;
         var spot = Alloc(p.W, p.H);
@@ -344,6 +356,7 @@ float4 PS(VO v) : SV_Target
         fixed (byte* d = p.Data)
             _ctx.UpdateSubresource(pg.Tex, 0, new Box(x, y, 0, x + p.W, y + p.H, 1), (IntPtr)d, (uint)(p.W * 4), 0);
         _where[p] = spot.Value;
+        if (p.Version != 0) _ver[p] = p.Version;
         pg.Keys.Add(p);
         pg.Used = _frame;
         LastUploads++;
@@ -562,7 +575,7 @@ float4 PS(VO v) : SV_Target
         foreach (var p in _pages) { p.View.Dispose(); p.Tex.Dispose(); }
         Interlocked.Add(ref GpuMemory.GridBytes, -_pages.Count * PageBytes);
         foreach (var (k, gt) in _gifs.ToList()) FreeGif(k, gt);
-        _pages.Clear(); _where.Clear(); _shown.Clear();
+        _pages.Clear(); _where.Clear(); _ver.Clear(); _shown.Clear();
         for (int k = 0; k < 4; k++) { _tsDisjoint[k].Dispose(); _tsStart[k].Dispose(); _tsEnd[k].Dispose(); }
         _rtv?.Dispose(); _target?.Dispose(); _instView?.Dispose(); _insts?.Dispose();
         _cb.Dispose(); _raster.Dispose(); _lin.Dispose(); _ps.Dispose(); _vs.Dispose();

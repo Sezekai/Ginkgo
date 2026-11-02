@@ -102,6 +102,7 @@ public partial class MainWindow : Window
         View.HoverChanged += i => StatusText.Text = IsFolderTile(i) ? FolderHoverText(i) : i >= 0 && i < _paths.Length ? HoverText(i) : StatusLine();
         View.ItemActivated += i => { if (RecentlyNavigated()) return; if (IsFolderTile(i)) OpenFolder(_page!.Tiles[i].Path); else OpenViewer(i); };
         InitBrowse();
+        InitVideo();
         _gifs = new GifAnimator(i => i >= 0 && i < _paths.Length ? _paths[i] : null, () => Dispatcher.BeginInvoke(View.Refresh));
         View.Gifs = _gifs;
         _gifs.Limit = _settings.GifLimit;
@@ -261,6 +262,7 @@ public partial class MainWindow : Window
         View.Thumbs = _loader;
         View.CoverRadius = _settings.CoverRounded ? _settings.CoverRadius : 0;
         View.SetItems(result.slice.specs, result.page?.Labels, keepPosition, grid && result.page is not null ? _firstFile : 0);
+        VideoItemsChanged();
         if (offset is double o) View.Offset = o;
         _covers.Save();
         EmptyNote.Visibility = _order.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -918,6 +920,8 @@ public partial class MainWindow : Window
         ("Left   Right   (Space)", "Previous / next picture"), ("Home   End", "First / last picture"), ("Mouse wheel", "Zoom in and out"),
         ("Drag", "Move a zoomed picture"), ("0", "Fit to window"), ("1", "Actual size (100%)"), ("I", "More or less information"),
         ("H", "Hide or show the information box"), ("T  or  mouse back", "Close the viewer"), ("F  or  F11", "Full screen"), ("K", "This list"), ("Esc  or  double-click", "Leave full screen, then back to the grid"),
+        ("Space", "Video: play / pause"), (",   .", "Video: back / forward a frame"), ("Shift + Left   Right", "Video: back / forward 5 seconds"),
+        ("M", "Video: sound on / off"), ("Shift + Up   Down", "Video: volume"), ("[   ]", "Video: slower / faster"), ("L", "Video: loop on / off"),
     };
 
     private void OnKeysClick(object s, RoutedEventArgs e) => ShowKeys(false);
@@ -985,6 +989,7 @@ public partial class MainWindow : Window
         ViewerRoot.Visibility = Visibility.Visible;
         ViewerRoot.Focus();
         _viewerOpenedAt = Stopwatch.GetTimestamp();
+        VideoViewerOpening(index);
         ShowIndex(index, remember: false);
     }
 
@@ -998,6 +1003,7 @@ public partial class MainWindow : Window
         Pic.Source = null;
         View.ScrollToIndex(_vIndex);
         View.Focus();
+        VideoViewerClosed();
     }
 
     private bool _infoMore, _infoHidden;
@@ -1089,6 +1095,12 @@ public partial class MainWindow : Window
 
         // 1. below the picture, as a block
         var s = TryMeasure(0, Math.Min(cap + 20, HW - 24));
+        if (_viewerVideo)
+        {
+            // a video has its controls along the bottom: the details go top left
+            InfoBox.HorizontalAlignment = HorizontalAlignment.Left; InfoBox.VerticalAlignment = VerticalAlignment.Top; InfoBox.Margin = new Thickness(12, 12, 0, 0);
+            return;
+        }
         if (bottomFree > 0 && s.Height + 24 <= bottomFree) { Put(12, 12); return; }
         // 2. beside the picture on the left: narrow and tall
         if (leftFree >= 150)
@@ -1163,14 +1175,12 @@ public partial class MainWindow : Window
         string path = m.Path[row];
         if (m.Kind[row] == (byte)MediaKind.Video)
         {
-            // playback comes in the next build: show the video's frame for now
-            var vl = _loader;
-            var poster = vl is null ? null : await Task.Run(() => vl.QuickPicture(index, false));
-            if (token != _vToken) return;
-            Pic.Source = poster; _vFull = false;
-            ViewerNote.Text = poster is null ? "Video" : "";
+            if (full && _viewerVideo) return;                 // zooming a video: nothing to reload
+            LeaveViewerVideo();
+            await LoadVideo(index, token);
             return;
         }
+        LeaveViewerVideo();
         int w = m.W[row], h = m.H[row];
         var (hw, hh) = FitPixels(row);
         int decodeW = 0, decodeH = 0;
@@ -1293,6 +1303,7 @@ public partial class MainWindow : Window
 
     private void ViewerKey(KeyEventArgs e)
     {
+        if (VideoKey(e)) { e.Handled = true; return; }
         switch (e.Key)
         {
             case Key.Escape: if (_fullscreen) ToggleFullscreen(); else CloseViewer(); break;

@@ -215,8 +215,31 @@
                         </TransformGroup>
                     </Image.RenderTransform>
                 </Image>
-                <TextBlock x:Name="ViewerNote" Foreground="#C0C0C0" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="16"/>
+                <TextBlock x:Name="ViewerNote" Foreground="#C0C0C0" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="16" TextWrapping="Wrap" TextAlignment="Center" MaxWidth="560"/>
             </Grid>
+            <!-- video controls: play, frame steps, seek bar, time, speed, loop, volume -->
+            <Border x:Name="VideoBar" VerticalAlignment="Bottom" Margin="24,0,24,18" Padding="12,8" CornerRadius="10" Background="#D91C1C20"
+                    BorderBrush="#3A3A42" BorderThickness="1" Visibility="Collapsed" MaxWidth="1100">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button x:Name="VPlayBtn" Style="{StaticResource IconButton}" Content="&#xE769;" ToolTip="Play / pause (Space)" Click="OnVPlay" Margin="0,0,4,0"/>
+                        <Button Style="{StaticResource IconButton}" Content="&#xE892;" ToolTip="Back a frame (,)" Click="OnVPrevFrame" Margin="0,0,4,0"/>
+                        <Button Style="{StaticResource IconButton}" Content="&#xE893;" ToolTip="Forward a frame (.)" Click="OnVNextFrame" Margin="0,0,8,0"/>
+                    </StackPanel>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock x:Name="VTime" Foreground="#E4E4E8" FontFamily="Consolas" FontSize="12" VerticalAlignment="Center" Margin="8,0,10,0"/>
+                        <ComboBox x:Name="VSpeed" Width="72" Margin="0,0,6,0" ToolTip="Speed ([ and ])" SelectionChanged="OnVSpeed">
+                            <ComboBoxItem Content="0.25x" Tag="0.25"/><ComboBoxItem Content="0.5x" Tag="0.5"/><ComboBoxItem Content="0.75x" Tag="0.75"/>
+                            <ComboBoxItem Content="1x" Tag="1" IsSelected="True"/><ComboBoxItem Content="1.25x" Tag="1.25"/><ComboBoxItem Content="1.5x" Tag="1.5"/><ComboBoxItem Content="2x" Tag="2"/>
+                        </ComboBox>
+                        <ToggleButton x:Name="VLoopBtn" Content="Loop" IsChecked="True" ToolTip="Play again from the start at the end" Click="OnVLoop" Margin="0,0,6,0"/>
+                        <Button x:Name="VMuteBtn" Style="{StaticResource IconButton}" Content="&#xE767;" ToolTip="Sound on / off (M)" Click="OnVMute" Margin="0,0,4,0"/>
+                        <Slider x:Name="VVolume" Width="90" Minimum="0" Maximum="100" VerticalAlignment="Center" ValueChanged="OnVVolume" ToolTip="Volume"/>
+                    </StackPanel>
+                    <Slider x:Name="VSeek" Minimum="0" Maximum="1" VerticalAlignment="Center" IsMoveToPointEnabled="True"
+                            PreviewMouseLeftButtonDown="OnVSeekDown" PreviewMouseLeftButtonUp="OnVSeekUp" ValueChanged="OnVSeekChanged"/>
+                </DockPanel>
+            </Border>
             <Border x:Name="InfoBox" HorizontalAlignment="Left" VerticalAlignment="Top" Padding="10,6" CornerRadius="5"
                     Background="#8C000000" IsHitTestVisible="False">
                 <TextBlock x:Name="InfoText" Foreground="#E8E8EC" FontSize="12" LineHeight="17" TextWrapping="Wrap"/>

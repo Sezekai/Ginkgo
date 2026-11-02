@@ -20,7 +20,8 @@ namespace Ginkgo.App;
 public sealed class ThumbLoader : IDisposable
 {
     /// <summary>A tile's pixels (premultiplied BGRA), already the size of the tile on screen. SrcW is the width of the thumbnail it was made from.</summary>
-    public sealed class Pix { public byte[] Data = Array.Empty<byte>(); public int W, H, SrcW; }
+    public sealed class Pix { public byte[] Data = Array.Empty<byte>(); public int W, H, SrcW; /// <summary>Changes when the pixels change in place (a playing video's frame), so the card copy is refreshed.</summary>
+        public int Version; }
 
     /// <summary>
     /// Re-uses the memory of tile pictures. Making a fresh array for every decoded thumbnail (hundreds a second while scrolling)

@@ -55,6 +55,31 @@ public sealed class MasonryView : FrameworkElement
     public string?[]? BadgeText { get; set; }
     /// <summary>Plays the GIFs on screen.</summary>
     public GifAnimator? Gifs { get; set; }
+
+    // ---- a video playing in its tile (clicked, or a hover preview) ----
+    /// <summary>The one video player; its frames are drawn into tile <see cref="VideoIndex"/>.</summary>
+    public VideoEngine? Video { get; set; }
+    public int VideoIndex { get; private set; } = -1;
+    private bool _videoControls;
+    private ThumbLoader.Pix? _videoPix;
+    private byte[]? _videoBuf;
+    private int _videoSeq = -1;
+    private Rect _muteRect = Rect.Empty, _seekRect = Rect.Empty;
+    /// <summary>The speaker on the playing tile was clicked.</summary>
+    public event Action? VideoMuteClicked;
+    /// <summary>The progress line on the playing tile was clicked (0..1 along it).</summary>
+    public event Action<double>? VideoSeekClicked;
+
+    /// <summary>Shows the playing video in tile <paramref name="index"/> (-1: none). Controls = the speaker (not for a silent preview).</summary>
+    public void SetVideo(int index, bool controls)
+    {
+        if (VideoIndex >= 0) _sigPrev.Remove(VideoIndex);       // the still picture comes back
+        VideoIndex = index; _videoControls = controls;
+        _videoPix = null; _videoSeq = -1;
+        if (index >= 0) _sigPrev.Remove(index);
+        _muteRect = _seekRect = Rect.Empty;
+        InvalidateVisual();
+    }
     private readonly List<(int index, int w, int h, double dist)> _gifWanted = new();
     public int HoverIndex => _hoverIndex;
 
@@ -151,6 +176,7 @@ public sealed class MasonryView : FrameworkElement
         if (Gifs is not null && Gifs.Due()) _needsRender = true;            // a playing GIF moves on to its next frame
         // GPU grid: GIFs on screen move on at the governor's frame rate (and start again 150 ms after a scroll stops)
         if (_gpu is not null && Player is { OnScreen: > 0, Animate: true, Paused: false } p && p.NowMs - _lastGifFrameMs >= 1000 / Math.Max(1, p.Fps) - 2) _needsRender = true;
+        if (VideoIndex >= 0 && Video is { FileId: >= 0 } v && v.FrameSeq != _videoSeq) _needsRender = true;   // the video's next frame
         if (_fadingNow || _needsRender) { _fadingNow = false; _needsRender = false; InvalidateVisual(); }
     }
 
@@ -267,6 +293,10 @@ public sealed class MasonryView : FrameworkElement
         if (e.ChangedButton == MouseButton.Left)
         {
             Focus();
+            var mp = e.GetPosition(this);
+            if (VideoIndex >= 0 && _muteRect.Contains(mp)) { _downIndex = -1; VideoMuteClicked?.Invoke(); e.Handled = true; return; }
+            if (VideoIndex >= 0 && _videoControls && _seekRect.Contains(mp) && _seekRect.Width > 0)
+            { _downIndex = -1; VideoSeekClicked?.Invoke(Math.Clamp((mp.X - _seekRect.Left) / _seekRect.Width, 0, 1)); e.Handled = true; return; }
             if (e.ClickCount == 2 && _hoverIndex >= 0) { _downIndex = -1; ItemActivated?.Invoke(_hoverIndex); e.Handled = true; return; }
             _downIndex = e.ClickCount == 1 ? _hoverIndex : -1;
         }
@@ -418,6 +448,21 @@ public sealed class MasonryView : FrameworkElement
         bool fading = false;
         long tick = Stopwatch.GetTimestamp();
         _tiles.Clear(); _overlay.Clear(); _sigNow.Clear(); _hoverOver = null;
+        _muteRect = _seekRect = Rect.Empty;
+        ThumbLoader.Pix? vpix = null;
+        if (VideoIndex >= 0 && Video is { FileId: >= 0 } vid)
+        {
+            int seq = vid.FrameSeq;
+            if (seq != _videoSeq && vid.CopyFrame(ref _videoBuf, out int fw, out int fh))
+            {
+                _videoSeq = seq;
+                if (_videoPix is null || _videoPix.W != fw || _videoPix.H != fh) _videoPix = new ThumbLoader.Pix { W = fw, H = fh, SrcW = fw };
+                _videoPix.Data = _videoBuf!;
+                _videoPix.Version++;
+                _sigPrev.Remove(VideoIndex);                  // the strips repaint that tile
+            }
+            vpix = _videoPix;
+        }
         for (int vi = _visible.Count - 1; vi >= 0; vi--)   // bottom to top, so the newest-first queue serves the top tiles first
         {
             int i = _visible[vi];
@@ -434,7 +479,8 @@ public sealed class MasonryView : FrameworkElement
             }
             // a playing GIF shows its current frame instead of the still picture
             ThumbLoader.Pix? over = null;
-            if (Gifs is not null && e is not null && Badges is { } gb && i < gb.Length && gb[i] == 1 && y < offPx + ph && y + hPx > offPx
+            if (vpix is not null && i == VideoIndex) over = vpix;
+            else if (Gifs is not null && e is not null && Badges is { } gb && i < gb.Length && gb[i] == 1 && y < offPx + ph && y + hPx > offPx
                 && (Player is null || _gpu is null || i == _hoverIndex))
             {
                 over = Gifs.Frame(i);
@@ -479,7 +525,8 @@ public sealed class MasonryView : FrameworkElement
         {
             if (label >= 0) { if (label < CoverCount) DrawCaptionBelow(dc, r, label, dpi); else DrawCaption(dc, r, label, dpi); }
             if (hovered) dc.DrawRectangle(null, _hover, r);
-            if (gif && r.Width > 70) DrawBadge(dc, r, index);
+            if (index == VideoIndex && Video is { FileId: >= 0 }) DrawVideoBar(dc, r);
+            else if (gif && r.Width > 70) DrawBadge(dc, r, index);
         }
         _fadingNow = fading;
         LastRenderMs = sw.Elapsed.TotalMilliseconds;
@@ -892,6 +939,46 @@ public sealed class MasonryView : FrameworkElement
         var box = new Rect(r.Left + 6, r.Bottom - 22, ft.Width + 10, 16);
         dc.DrawRoundedRectangle(BadgeBack, null, box, 3, 3);
         dc.DrawText(ft, new Point(box.Left + 5, box.Top + (16 - ft.Height) / 2));
+    }
+
+    private static readonly Brush VideoTrack = Freeze(new SolidColorBrush(Color.FromArgb(110, 255, 255, 255)));
+    private static readonly Brush VideoDone = Freeze(new SolidColorBrush(Color.FromRgb(0x5F, 0xAF, 0x6B)));
+    private static readonly Brush SpeakerBack = Freeze(new SolidColorBrush(Color.FromArgb(170, 20, 20, 24)));
+    private static readonly Typeface IconFace = new("Segoe MDL2 Assets");
+
+    /// <summary>The playing tile: a progress line along the bottom, the time, and (unless it's a silent preview) a speaker to turn sound on.</summary>
+    private void DrawVideoBar(DrawingContext dc, Rect r)
+    {
+        var v = Video!;
+        double len = v.LengthSec, pos = v.PositionSec;
+        double frac = len > 0 ? Math.Clamp(pos / len, 0, 1) : 0;
+        double ppd = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        dc.DrawRectangle(VideoTrack, null, new Rect(r.Left, r.Bottom - 3, r.Width, 3));
+        dc.DrawRectangle(VideoDone, null, new Rect(r.Left, r.Bottom - 3, r.Width * frac, 3));
+        if (!_videoControls) return;
+        _seekRect = new Rect(r.Left, r.Bottom - 12, r.Width, 12);
+        if (r.Width > 90)
+        {
+            string text = (v.Paused ? "\u275A\u275A  " : "") + Clock(pos) + (len > 0 ? " / " + Clock(len) : "");
+            var ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 11, Brushes.White, ppd);
+            var box = new Rect(r.Left + 6, r.Bottom - 25, ft.Width + 10, 16);
+            dc.DrawRoundedRectangle(BadgeBack, null, box, 3, 3);
+            dc.DrawText(ft, new Point(box.Left + 5, box.Top + (16 - ft.Height) / 2));
+        }
+        if (r.Width > 60 && r.Height > 50)
+        {
+            var b = new Rect(r.Right - 34, r.Top + 6, 28, 28);
+            dc.DrawEllipse(SpeakerBack, null, new Point(b.Left + 14, b.Top + 14), 14, 14);
+            var ic = new FormattedText(v.Muted ? "\uE74F" : "\uE767", CultureInfo.InvariantCulture, FlowDirection.LeftToRight, IconFace, 14, Brushes.White, ppd);
+            dc.DrawText(ic, new Point(b.Left + (28 - ic.Width) / 2, b.Top + (28 - ic.Height) / 2));
+            _muteRect = b;
+        }
+    }
+
+    private static string Clock(double sec)
+    {
+        var t = TimeSpan.FromSeconds(Math.Max(0, sec));
+        return t.TotalHours >= 1 ? $"{(int)t.TotalHours}:{t.Minutes:00}:{t.Seconds:00}" : $"{t.Minutes}:{t.Seconds:00}";
     }
 
     private static Color HsvToColor(double h, double s, double v)

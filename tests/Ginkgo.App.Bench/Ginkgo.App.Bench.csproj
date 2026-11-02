@@ -18,7 +18,9 @@
     <Compile Include="..\..\src\Ginkgo.App\GpuGrid.cs" Link="GpuGrid.cs" />
     <Compile Include="..\..\src\Ginkgo.App\VramTier.cs" Link="VramTier.cs" />
     <Compile Include="..\..\src\Ginkgo.App\GifPlayer.cs" Link="GifPlayer.cs" />
+    <Compile Include="..\..\src\Ginkgo.App\VideoEngine.cs" Link="VideoEngine.cs" />
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="LibVLCSharp" Version="3.9.1" />
     <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
     <ProjectReference Include="..\..\src\Ginkgo.Core\Ginkgo.Core.csproj" />
     <ProjectReference Include="..\..\src\Ginkgo.Data\Ginkgo.Data.csproj" />
