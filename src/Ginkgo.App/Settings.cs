@@ -22,6 +22,11 @@ public sealed class AppSettings
     /// <summary>The most graphics memory for thumbnails, in GB (0 = automatic: Windows' allowance).</summary>
     public double ThumbVramCapGB { get; set; }
     public bool ThumbVramOnBattery { get; set; }
+    /// <summary>Keep the GIF versions (GPU grid) in memory / on the card too, and the most they may take (GB, 0 = automatic).</summary>
+    public bool GifWarm { get; set; } = true;
+    public double GifWarmCapGB { get; set; }
+    /// <summary>The most the extra-large GIF versions may take on the drive (GB, 0 = no limit). The oldest go first.</summary>
+    public double GifBigCapGB { get; set; }
 
     // GPU grid (see the GPU grid build brief). Off by default; the GIF settings apply only while it is on.
     /// <summary>"Current" (the strip renderer) or "GPU".</summary>

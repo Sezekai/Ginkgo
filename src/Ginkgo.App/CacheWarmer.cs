@@ -17,6 +17,12 @@ public sealed class CacheWarmer
     public volatile int Preferred = 2;
     /// <summary>More pack files to keep in memory (or on the card) after the thumbnails: the GIF versions the GPU grid plays.</summary>
     public volatile ThumbStore[] Extra = Array.Empty<ThumbStore>();
+    /// <summary>Keep the GIF versions in memory / on the card at all (their own switch, separate from the thumbnails).</summary>
+    public volatile bool ExtraEnabled = true;
+    /// <summary>The most the GIF versions may take, memory and card together (bytes, 0 = no limit beyond what's free).</summary>
+    public long ExtraCap;
+    /// <summary>What the GIF versions take now (memory and card).</summary>
+    public long ExtraHeld;
     /// <summary>Keep thumbnails in memory at all. Turning it off gives all of it back at once.</summary>
     public volatile bool Enabled = true;
     /// <summary>The most memory the thumbnails may take, in bytes (0 = no limit beyond what is free).</summary>
@@ -63,8 +69,16 @@ public sealed class CacheWarmer
         {
             while (!ct.IsCancellationRequested)
             {
-                var tiers = baseTiers.Concat(Extra).ToArray();      // the thumbnails, then the GIF versions
+                var extras = Extra;
+                bool extrasOn = ExtraEnabled;
                 var vram = Vram;
+                if (!extrasOn)
+                    foreach (var st in extras) { if (st.MemoryBytes > 0) st.DropAll(); if (vram is not null && vram.BytesOf(st) > 0) vram.RemoveStore(st); }
+                var tiers = baseTiers.Concat(extrasOn ? extras : Array.Empty<ThumbStore>()).ToArray();      // the thumbnails, then the GIF versions
+                bool IsExtra(ThumbStore st) => Array.IndexOf(baseTiers, st) < 0;
+                long extraCap = Interlocked.Read(ref ExtraCap) > 0 ? Interlocked.Read(ref ExtraCap) : long.MaxValue;
+                long ExtraNow() => extras.Sum(st => st.MemoryBytes + (vram?.BytesOf(st) ?? 0));
+                long extraHeld = extrasOn ? ExtraNow() : 0;
                 bool tierOn = Enabled && vram is not null && vram.Alive && VramMode != "Off" && (VramOnBattery || !VramTier.OnBattery());
                 foreach (var st in tiers) st.Second = tierOn ? vram : null;
                 VramActive = tierOn;
@@ -79,8 +93,9 @@ public sealed class CacheWarmer
                     continue;
                 }
                 bool ramOn = !(tierOn && VramMode == "GpuOnly");
-                long capSetting = Interlocked.Read(ref Cap); string modeSetting = VramMode; bool batterySetting = VramOnBattery;
-                bool Same() => Interlocked.Read(ref Cap) == capSetting && VramMode == modeSetting && VramOnBattery == batterySetting && Vram == vram && Enabled;
+                long capSetting = Interlocked.Read(ref Cap), extraCapSetting = Interlocked.Read(ref ExtraCap); string modeSetting = VramMode; bool batterySetting = VramOnBattery;
+                bool Same() => Interlocked.Read(ref Cap) == capSetting && VramMode == modeSetting && VramOnBattery == batterySetting && Vram == vram && Enabled
+                               && ExtraEnabled == extrasOn && Interlocked.Read(ref ExtraCap) == extraCapSetting;
                 long cap = Interlocked.Read(ref Cap) > 0 ? Interlocked.Read(ref Cap) : long.MaxValue;
                 if (!ramOn) cap = 0;
                 int pref = Math.Clamp(Preferred, 0, 2);
@@ -123,6 +138,18 @@ public sealed class CacheWarmer
                 }
                 long limit = Math.Min(ceiling, cap);
 
+                // the GIF versions over their own limit: let go of the least-viewed (back to the drive, not to the card)
+                if (extraHeld > extraCap)
+                {
+                    foreach (var c in all.Where(x => IsExtra(x.st) && (x.loaded || x.onCard)).OrderBy(x => x.score))
+                    {
+                        if (extraHeld <= extraCap) break;
+                        if (c.loaded) { c.st.DropSegment(c.pack, c.seg); held -= c.size; extraHeld -= c.size; }
+                        if (c.onCard) { c.st.DropSecond(c.pack, c.seg); extraHeld -= c.size; }
+                    }
+                    all = all.Select(x => (x.st, x.pack, x.seg, x.size, x.score, loaded: x.st.IsInMemory(x.pack, x.seg), onCard: tierOn && x.st.InSecond(x.pack, x.seg))).ToList();
+                }
+
                 var wanted = all.Where(x => !x.loaded).OrderByDescending(x => x.score).ToList();
                 var heldList = all.Where(x => x.loaded).OrderBy(x => x.score).ToList();      // least wanted first
                 int swaps = 0; bool full = false;
@@ -130,6 +157,7 @@ public sealed class CacheWarmer
                 foreach (var w in wanted)
                 {
                     if (ct.IsCancellationRequested || !Same()) break;
+                    if (IsExtra(w.st) && extraHeld + w.size > extraCap) continue;          // the GIF versions are at their limit
                     if (full || !ramOn) { notPlaced.Add(w); continue; }
                     // already on the card: only bring it back into memory when there's plenty to spare, or pieces would go back
                     // and forth (memory frees up because pieces moved to the card, so they'd be loaded again, and so on)
@@ -148,7 +176,8 @@ public sealed class CacheWarmer
                     Running = true;
                     if (w.st.LoadSegment(w.pack, w.seg, ct))
                     {
-                        held += w.size;           // the card's copy stays: if memory runs short again, nothing has to be read twice
+                        held += w.size;
+                        if (IsExtra(w.st) && !w.onCard) extraHeld += w.size;           // the card's copy stays: if memory runs short again, nothing has to be read twice
                     }
                 }
 
@@ -173,6 +202,7 @@ public sealed class CacheWarmer
                     {
                         if (ct.IsCancellationRequested || !Same()) break;
                         if (w.onCard) continue;
+                        if (IsExtra(w.st) && extraHeld + w.size > extraCap) continue;
                         if (vram.Room() < w.size)
                         {
                             if (onCard.Count > 0 && w.score > onCard[0].score + 1000 && cardSwaps < 6) { var c = onCard[0]; onCard.RemoveAt(0); c.st.DropSecond(c.pack, c.seg); cardSwaps++; }
@@ -180,10 +210,11 @@ public sealed class CacheWarmer
                             if (vram.Room() < w.size) break;
                         }
                         Running = true;
-                        w.st.LoadToSecond(w.pack, w.seg, ct);
+                        if (w.st.LoadToSecond(w.pack, w.seg, ct) && IsExtra(w.st)) extraHeld += w.size;
                     }
                 }
                 Running = false;
+                ExtraHeld = extrasOn ? ExtraNow() : 0;
                 InVram = vram?.Bytes ?? 0;
                 // a piece can be in memory and on the card at once: count it once
                 Done = all.Where(x => x.st.IsInMemory(x.pack, x.seg) || (tierOn && x.st.InSecond(x.pack, x.seg))).Sum(x => (long)x.size);

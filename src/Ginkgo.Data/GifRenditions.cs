@@ -229,6 +229,51 @@ public sealed class GifRenditionMaker
     public event Action<long>? BigMade;
     /// <summary>Make the extra-large version of a GIF (shown big): before anything else.</summary>
     public void WantBig(long id) => _wantBig.Enqueue(id);
+    /// <summary>The most the extra-large versions may take on the drive (0 = no limit): the oldest pack files go first.</summary>
+    public long BigCapBytes;
+    /// <summary>Size of the extra-large versions on the drive.</summary>
+    public long BigBytes => Big.Size;
+
+    /// <summary>Over the limit: the oldest pack files of extra-large versions are deleted (with their index rows). They're made again if needed.</summary>
+    public void EnforceBigCap()
+    {
+        long cap = Interlocked.Read(ref BigCapBytes);
+        if (cap <= 0) return;
+        var packs = Big.Packs();
+        long total = packs.Sum(p => p.size);
+        if (total <= cap) return;
+        int firstKept = packs[^1].pack;
+        if (packs.Count == 1) firstKept = Big.RollToNewPack();      // one big file: start a new one so the old can go
+        else
+        {
+            foreach (var (pack, size) in packs.Take(packs.Count - 1))
+            {
+                if (total <= cap) { firstKept = pack; break; }
+                total -= size;
+                firstKept = pack + 1;
+            }
+        }
+        DropBig(firstKept);
+    }
+
+    /// <summary>Deletes every extra-large version (they're made again when GIFs are shown big).</summary>
+    public void ClearBig() => DropBig(Big.RollToNewPack());
+
+    private void DropBig(int firstKept)
+    {
+        using (var c = _db.Open())
+        {
+            using var cmd = c.CreateCommand();
+            cmd.CommandText = "DELETE FROM gif_renditions WHERE tier=2 AND pack<$p";
+            cmd.Parameters.AddWithValue("$p", firstKept);
+            cmd.ExecuteNonQuery();
+        }
+        Big.DeletePacksBefore(firstKept);
+        BigDropped?.Invoke();
+    }
+
+    /// <summary>Some extra-large versions were deleted (the player forgets them).</summary>
+    public event Action? BigDropped;
     public GifStats Stats { get; } = new();
     private readonly ConcurrentQueue<long> _want = new();
     private readonly PipelineStats _pipe;
@@ -422,6 +467,7 @@ public sealed class GifRenditionMaker
             if (path is null) continue;
             if (Make(id, path, 2, 3, true, ct)) BigMade?.Invoke(id);
         }
+        try { EnforceBigCap(); } catch (Exception ex) { Stats.LastError = "tidying extra-large GIFs: " + ex.Message; }
     }
 
     public void Start(CancellationToken ct)

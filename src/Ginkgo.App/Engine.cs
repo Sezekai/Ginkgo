@@ -66,6 +66,9 @@ public sealed class Engine : IDisposable
             // the GIF versions live on the (slow, USB) hard drive too: keep them in memory or on the card like the thumbnails, so a
             // screenful of GIFs doesn't wait for one drive read each
             Warmer.Extra = new[] { GifMaker.Small, GifMaker.Large, GifMaker.Big };
+            Warmer.ExtraEnabled = Settings.GifWarm;
+            Warmer.ExtraCap = (long)(Settings.GifWarmCapGB * 1073741824.0);
+            GifMaker.BigCapBytes = (long)(Settings.GifBigCapGB * 1073741824.0);
             Opened?.Invoke();
             await Refresh(scan: true, confirmLargeRemoval: false);
             StartWatcher();

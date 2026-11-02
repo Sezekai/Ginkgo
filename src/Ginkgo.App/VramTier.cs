@@ -102,6 +102,23 @@ public sealed unsafe class VramTier : ISecondHome, IDisposable
 
     public bool Has(ThumbStore store, long key) { lock (_lock) return _held.ContainsKey((store, key)); }
 
+    /// <summary>What one store has here (bytes).</summary>
+    public long BytesOf(ThumbStore store) { lock (_lock) return _held.Where(k => k.Key.Item1 == store).Sum(k => (long)k.Value.len); }
+
+    /// <summary>Lets go of everything one store has here.</summary>
+    public void RemoveStore(ThumbStore store)
+    {
+        lock (_lock)
+        {
+            foreach (var k in _held.Keys.Where(k => k.Item1 == store).ToList())
+            {
+                var h = _held[k]; _held.Remove(k);
+                Interlocked.Add(ref _bytes, -h.len); Interlocked.Add(ref GpuMemory.ThumbBytes, -h.len); h.buf.Dispose();
+            }
+            try { _ctx?.Flush(); } catch { }
+        }
+    }
+
     public bool Read(ThumbStore store, long key, int inSeg, Span<byte> dst)
     {
         if (dst.Length > MaxStaging) return false;

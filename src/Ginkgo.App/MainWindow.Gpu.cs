@@ -90,6 +90,7 @@ public partial class MainWindow
                     _player = new GifPlayer(gm);
                     _player.Loaded += () => Dispatcher.BeginInvoke(View.Refresh);
                     gm.BigMade += id => { _player.Made(id, 2); Dispatcher.BeginInvoke(View.Refresh); };
+                    gm.BigDropped += () => _player.ForgetBig();
                 }
                 ApplyGifSettings();
                 View.Player = _player;

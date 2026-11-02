@@ -35,6 +35,10 @@ public sealed class OptimisePanel : Border
     private readonly CheckBox _vramBattery = new() { Content = "Also on battery (keeps the graphics card awake, which uses more power)", Margin = new Thickness(0, 4, 0, 0) };
     private readonly TextBlock _vramStat = new() { TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(0, 8, 0, 0) };
     private readonly WrapPanel _vramCapRow = new();
+    private readonly ToggleButton _gifOn = new() { Content = "On", MinWidth = 64 };
+    private readonly List<(ToggleButton b, double gb)> _gifCaps = new();
+    private readonly TextBlock _gifStat = new() { TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(0, 8, 0, 0) };
+    public static readonly double[] GifCapChoices = { 0, 0.5, 1, 2 };
 
     public OptimisePanel(AppSettings s, CacheWarmer warmer)
     {
@@ -107,6 +111,30 @@ public sealed class OptimisePanel : Border
 
         stack.Children.Add(new Border { Height = 1, Background = Line, Margin = new Thickness(0, 14, 0, 14) });
 
+        // ---- GIF versions (GPU grid) in memory: their own switch and limit ----
+        var gifHead = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(_gifOn, Dock.Right);
+        gifHead.Children.Add(_gifOn);
+        gifHead.Children.Add(Title("GIF versions in memory"));
+        stack.Children.Add(gifHead);
+        stack.Children.Add(Note("The ready-to-play GIF versions the GPU grid uses, kept in memory or on the graphics card (wherever the thumbnails go) so GIFs start without waiting for the hard drive. Thumbnails always come first."));
+        stack.Children.Add(new TextBlock { Text = "Most they may use", Foreground = Dim, Margin = new Thickness(0, 8, 0, 6) });
+        var gifCapRow = new WrapPanel();
+        foreach (var gb in GifCapChoices)
+        {
+            var b = Choice(gb == 0 ? "Automatic" : gb < 1 ? $"{gb:0.#} GB" : $"{gb:0} GB");
+            b.ToolTip = gb == 0 ? "As much as there's room for after the thumbnails" : $"Never more than {gb:0.#} GB (memory and card together)";
+            double g = gb;
+            b.Click += (_, _) => { _s.GifWarmCapGB = g; _warmer.ExtraCap = (long)(g * 1073741824.0); Sync(); Changed?.Invoke(); };
+            _gifCaps.Add((b, gb)); gifCapRow.Children.Add(b);
+        }
+        stack.Children.Add(gifCapRow);
+        _gifStat.Foreground = Dim;
+        stack.Children.Add(_gifStat);
+        _gifOn.Click += (_, _) => { _s.GifWarm = _gifOn.IsChecked == true; _warmer.ExtraEnabled = _s.GifWarm; Sync(); Changed?.Invoke(); };
+
+        stack.Children.Add(new Border { Height = 1, Background = Line, Margin = new Thickness(0, 14, 0, 14) });
+
         // ---- GIFs ----
         stack.Children.Add(Title("GIFs playing at once"));
         stack.Children.Add(Note("The GIFs nearest the middle of the screen play; the rest show their first frame. Fewer is lighter on the processor and memory."));
@@ -140,6 +168,8 @@ public sealed class OptimisePanel : Border
         foreach (var (b, n) in _gifs) b.IsChecked = n == _s.GifLimit;
         foreach (var (b, m) in _vramModes) { b.IsChecked = m == _s.ThumbVramMode; b.IsEnabled = _s.WarmCache; }
         foreach (var (b, gb) in _vramCaps) { b.IsChecked = Math.Abs(gb - _s.ThumbVramCapGB) < 0.01; b.IsEnabled = _s.WarmCache && _s.ThumbVramMode != "Off"; }
+        _gifOn.IsChecked = _s.GifWarm; _gifOn.Content = _s.GifWarm ? "On" : "Off";
+        foreach (var (b, gb) in _gifCaps) { b.IsChecked = Math.Abs(gb - _s.GifWarmCapGB) < 0.01; b.IsEnabled = _s.GifWarm; }
         _vramBattery.IsChecked = _s.ThumbVramOnBattery; _vramBattery.IsEnabled = _s.WarmCache && _s.ThumbVramMode != "Off";
         UpdateStat();
     }
@@ -149,6 +179,10 @@ public sealed class OptimisePanel : Border
         double held = Interlocked.Read(ref _warmer.InMemory) / 1073741824.0, free = CacheWarmer.AvailableBytes() / 1073741824.0;
         long total = Interlocked.Read(ref _warmer.Total);
         UpdateVramStat();
+        long gifTotal = _warmer.Extra.Sum(st => st.Size);
+        _gifStat.Text = !_s.GifWarm ? $"Off: GIF versions are read from the drive ({gifTotal / 1073741824.0:0.0} GB there)."
+                      : _warmer.Extra.Length == 0 ? "Made once the GPU grid is on."
+                      : $"Holding {Interlocked.Read(ref _warmer.ExtraHeld) / 1073741824.0:0.0} GB of {gifTotal / 1073741824.0:0.0} GB of GIF versions";
         if (!_s.WarmCache) { _memStat.Text = $"Off: thumbnails are read from the drive as needed.  Free memory {free:0.0} GB"; return; }
         string pct = total > 0 ? $" ({Interlocked.Read(ref _warmer.Done) * 100 / total}% of all thumbnails)" : "";
         string note = _warmer.Note.Length > 0 ? "  ·  " + _warmer.Note : "";

@@ -530,6 +530,9 @@ Check(again.BackfillTotal == 0, "backfill has nothing left");
     Check(made0 is { Frames: 5, Fps: 10 } && made1 is { Frames: 8, Fps: 15 }, "after scrolling stops, both versions are made (10 fps small, 15 fps large) and can be read back");
     gcts.Cancel(); mt.Join(3000);
     Check(maker.Stats.Pending == 0 && maker.Stats.Failed == 0, "nothing left to make, nothing failed");
+    Check(maker.Make(77, gpath, 2, 3, true, CancellationToken.None) && maker.Load(77, 2) is { Fps: 15 } && maker.BigBytes > 0, "an extra-large version is made on demand");
+    maker.ClearBig();
+    Check(maker.Where(77, 2) is null && maker.BigBytes == 0 && maker.Where(77, 0) is not null, "deleting the extra-large versions leaves the others");
 }
 
 // ---- moving the small thumbnails to a fast drive ----

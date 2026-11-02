@@ -223,6 +223,17 @@ public sealed class GifPlayer
     private readonly Dictionary<(long, int), long> _wantNow = new();
     private readonly HashSet<long> _askedBig = new();
     /// <summary>A big version was just made: refresh the list of what exists.</summary>
+    /// <summary>Extra-large versions were deleted: forget the ones not on the card, and ask again when needed.</summary>
+    public void ForgetBig()
+    {
+        lock (_lock)
+        {
+            foreach (var k in _clips.Keys.Where(k => k.Item2 == 2).ToList()) if (!_clips[k].OnCard) { var c = _clips[k]; if (c.R.Blocks.Length > 0) { _ramBytes -= c.R.Blocks.Length; _lru.Remove(k); } _clips.Remove(k); }
+            _askedBig.Clear();
+            _have = _have.Where(p => p.Key.Item2 != 2).ToDictionary(p => p.Key, p => p.Value);
+        }
+    }
+
     public void Made(long id, int tier) { lock (_lock) { var h = new Dictionary<(long, int), bool>(_have) { [(id, tier)] = true }; _have = h; } }
     private readonly List<(long, int)> _ahead = new();
     private readonly AutoResetEvent _wake = new(false);

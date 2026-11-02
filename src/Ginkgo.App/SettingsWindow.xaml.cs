@@ -183,6 +183,33 @@ public partial class SettingsWindow : Window
         _gifPanel.Children.Add(Row("GIF frame rate (Automatic lowers it when many GIFs are on screen)", fps));
         _gifStat.Foreground = Brush("#9AA0A6"); _gifStat.TextWrapping = TextWrapping.Wrap; _gifStat.Margin = new Thickness(0, 4, 0, 0);
         _gifPanel.Children.Add(_gifStat);
+
+        // extra-large versions on the drive: their size, a limit, and a way to clear them
+        var bigCap = new ComboBox { MinWidth = 120 };
+        foreach (var (label, gb) in new[] { ("No limit", 0.0), ("1 GB", 1.0), ("2 GB", 2.0), ("5 GB", 5.0), ("10 GB", 10.0), ("20 GB", 20.0), ("50 GB", 50.0) })
+        {
+            var it = new ComboBoxItem { Content = label, Tag = gb };
+            bigCap.Items.Add(it);
+            if (Math.Abs(gb - _s.GifBigCapGB) < 0.01) bigCap.SelectedItem = it;
+        }
+        if (bigCap.SelectedItem is null) bigCap.SelectedIndex = 0;
+        bigCap.SelectionChanged += (_, _) =>
+        {
+            if (_init) return;
+            _s.GifBigCapGB = (double)((ComboBoxItem)bigCap.SelectedItem).Tag;
+            if (_engine.GifMaker is { } gm) { gm.BigCapBytes = (long)(_s.GifBigCapGB * 1073741824.0); Task.Run(() => { try { gm.EnforceBigCap(); } catch { } }); }
+            _main.ApplySettings();
+        };
+        _gifPanel.Children.Add(Row("Extra-large GIF versions on the drive (for big tiles): most they may take", bigCap));
+        var clearBig = new Button { Content = "Delete the extra-large versions", HorizontalAlignment = HorizontalAlignment.Left };
+        clearBig.Click += (_, _) =>
+        {
+            if (_engine.GifMaker is not { } gm) return;
+            Task.Run(() => { try { gm.ClearBig(); } catch { } }).ContinueWith(_ => Dispatcher.BeginInvoke(GifStat));
+        };
+        _gifPanel.Children.Add(clearBig);
+        _bigStat.Foreground = Brush("#9AA0A6"); _bigStat.TextWrapping = TextWrapping.Wrap; _bigStat.Margin = new Thickness(0, 4, 0, 0);
+        _gifPanel.Children.Add(_bigStat);
         GpuPanel.Children.Add(_gifPanel);
         var tick = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         tick.Tick += (_, _) => GifStat();
@@ -193,10 +220,14 @@ public partial class SettingsWindow : Window
     }
 
     private readonly TextBlock _gifStat = new();
+    private readonly TextBlock _bigStat = new();
 
     private void GifStat()
     {
         var gm = _engine.GifMaker;
+        if (gm is not null)
+            _bigStat.Text = $"Extra-large versions: {gm.Stats.Big:N0} GIFs, {gm.BigBytes / 1073741824.0:0.00} GB on {_s.CacheDir}"
+                          + (_s.GifBigCapGB > 0 ? $" (limit {_s.GifBigCapGB:0} GB: the oldest are deleted first, a few hundred MB at a time, and made again if needed)" : " (no limit: it keeps growing)") + ".";
         if (gm is null || !gm.Stats.Running) { _gifStat.Text = "GIF versions for the GPU grid are made once the GPU grid is drawing."; return; }
         var st = gm.Stats;
         long animated = Math.Max(0, st.Animated - st.Stills);
