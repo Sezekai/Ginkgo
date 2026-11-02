@@ -53,7 +53,7 @@ public sealed class VideoEngine : IDisposable
         if (_mp is not null) return true;
         try
         {
-            Core.Initialize();
+            LibVLCSharp.Shared.Core.Initialize();
             _vlc = new LibVLC("--quiet", "--no-osd", "--no-video-title-show", "--no-snapshot-preview", "--avcodec-hw=any");
             _mp = new MediaPlayer(_vlc);
             _mp.SetVideoFormatCallbacks(_format, _cleanup);
@@ -217,9 +217,9 @@ public sealed class VideoPositions
     {
         try
         {
-            if (File.Exists(_path))
+            if (System.IO.File.Exists(_path))
             {
-                var d = System.Text.Json.JsonSerializer.Deserialize<Saved>(File.ReadAllText(_path));
+                var d = System.Text.Json.JsonSerializer.Deserialize<Saved>(System.IO.File.ReadAllText(_path));
                 if (d is not null) { _pos = d.Positions ?? new(); Volume = d.Volume; }
             }
         }
@@ -246,7 +246,7 @@ public sealed class VideoPositions
         try
         {
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_path)!);
-            File.WriteAllText(_path, System.Text.Json.JsonSerializer.Serialize(new Saved { Positions = _pos, Volume = Volume }));
+            System.IO.File.WriteAllText(_path, System.Text.Json.JsonSerializer.Serialize(new Saved { Positions = _pos, Volume = Volume }));
             _dirty = false;
         }
         catch { }
