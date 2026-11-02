@@ -29,8 +29,8 @@ public sealed class AppSettings
     public double GifBigCapGB { get; set; }
 
     // GPU grid (see the GPU grid build brief). Off by default; the GIF settings apply only while it is on.
-    /// <summary>"Current" (the strip renderer) or "GPU".</summary>
-    public string Renderer { get; set; } = "Current";
+    /// <summary>"GPU" (the default since the GPU grid passed its tests) or "Current" (the strip renderer, kept as a fallback).</summary>
+    public string Renderer { get; set; } = "GPU";        // the GPU grid (falls back to Current, with the reason, when the check fails)
     /// <summary>Times in a row Ginkgo did not close cleanly while the GPU grid was on; at 2 it starts with Current.</summary>
     public int GpuUncleanExits { get; set; }
     public bool GifAnimate { get; set; } = true;
