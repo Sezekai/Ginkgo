@@ -246,11 +246,43 @@ public sealed class GifRenditionMaker
     /// <summary>Extra-large versions (made on demand).</summary>
     public ThumbStore Big { get; }
     private ThumbStore StoreFor(int tier) => tier == 0 ? Small : tier == 1 ? Large : Big;
-    private readonly ConcurrentQueue<long> _wantBig = new();
+    // extra-large versions asked for: file id -> (class, when last asked). Class 0 = the GIF under the mouse, 1 = on screen,
+    // 2 = a screen away, 3 = asked for a while ago (scrolled past). Lowest class first, most recently asked first within a class.
+    private readonly Dictionary<long, (int cls, long at)> _bigWant = new();
+    private readonly HashSet<long> _bigDone = new();
+    private readonly Stopwatch _bigClock = Stopwatch.StartNew();
+    private bool BigWaiting { get { lock (_bigWant) return _bigWant.Count > 0; } }
     /// <summary>A big version was made (file id): the player can use it now.</summary>
     public event Action<long>? BigMade;
     /// <summary>Make the extra-large version of a GIF (shown big): before anything else.</summary>
-    public void WantBig(long id) => _wantBig.Enqueue(id);
+    public void WantBig(long id) => WantBig(id, 1);
+
+    /// <summary>Asks for a GIF's extra-large version, saying how urgent: 0 under the mouse, 1 on screen, 2 a screen away.</summary>
+    public void WantBig(long id, int cls)
+    {
+        lock (_bigWant)
+        {
+            if (_bigDone.Contains(id)) return;
+            _bigWant[id] = (cls, _bigClock.ElapsedMilliseconds);
+        }
+    }
+
+    /// <summary>The most urgent one: under the mouse, then on screen, then a screen away, then the rest (newest first).</summary>
+    private long? NextBig()
+    {
+        lock (_bigWant)
+        {
+            long now = _bigClock.ElapsedMilliseconds, best = -1; int bestCls = int.MaxValue; long bestAt = long.MinValue;
+            foreach (var (id, (cls, at)) in _bigWant)
+            {
+                int c = now - at > 1500 ? 3 : cls;              // not asked for lately: it scrolled away
+                if (c < bestCls || (c == bestCls && at > bestAt)) { best = id; bestCls = c; bestAt = at; }
+            }
+            if (best < 0) return null;
+            _bigWant.Remove(best);
+            return best;
+        }
+    }
     /// <summary>The most the extra-large versions may take on the drive (0 = no limit): the oldest pack files go first.</summary>
     public long BigCapBytes;
     /// <summary>Size of the extra-large versions on the drive.</summary>
@@ -291,6 +323,7 @@ public sealed class GifRenditionMaker
             cmd.ExecuteNonQuery();
         }
         Big.DeletePacksBefore(firstKept);
+        lock (_bigWant) _bigDone.Clear();
         BigDropped?.Invoke();
     }
 
@@ -446,12 +479,12 @@ public sealed class GifRenditionMaker
                 Count();
                 var todo = Todo().Where(t => !failed.Contains(t.id)).ToList();
                 Stats.Pending = todo.Count;
-                if (todo.Count == 0) { for (int i = 0; i < 100 && !ct.IsCancellationRequested && _want.IsEmpty && _wantBig.IsEmpty; i++) Thread.Sleep(100); continue; }
+                if (todo.Count == 0) { for (int i = 0; i < 100 && !ct.IsCancellationRequested && _want.IsEmpty && !BigWaiting; i++) Thread.Sleep(100); continue; }
                 var byId = todo.ToDictionary(t => t.id, t => t.path);
                 int madeThisRound = 0;
                 while (!ct.IsCancellationRequested && byId.Count > 0 && madeThisRound < 200)
                 {
-                    if (!_wantBig.IsEmpty) MakeBigOnes(ct);
+                    if (BigWaiting) MakeBigOnes(ct);
                     WaitForQuiet(ct);
                     // on-screen GIFs first
                     long id = -1;
@@ -469,6 +502,16 @@ public sealed class GifRenditionMaker
         finally { Stats.Running = false; }
     }
 
+    /// <summary>A rendition row exists (made, or found to be a still GIF).</summary>
+    private bool HasRow(long id, int tier)
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM gif_renditions WHERE id=$id AND tier=$t";
+        cmd.Parameters.AddWithValue("$id", id); cmd.Parameters.AddWithValue("$t", tier);
+        return Convert.ToInt64(cmd.ExecuteScalar()) > 0;
+    }
+
     private string? PathOf(long id)
     {
         using var c = _db.Open();
@@ -481,11 +524,12 @@ public sealed class GifRenditionMaker
     /// <summary>The extra-large versions asked for (GIFs shown big right now): made straight away, with every core.</summary>
     private void MakeBigOnes(CancellationToken ct)
     {
-        var seen = new HashSet<long>();
-        while (!ct.IsCancellationRequested && _wantBig.TryDequeue(out var id))
+        while (!ct.IsCancellationRequested)
         {
-            if (!seen.Add(id) || Where(id, 2) is not null) continue;
             WaitForQuiet(ct);
+            if (NextBig() is not { } id) break;                 // chosen after the pause, so it's whatever is most wanted now
+            lock (_bigWant) _bigDone.Add(id);
+            if (HasRow(id, 2)) continue;
             var path = PathOf(id);
             if (path is null) continue;
             Stats.MakingBig = true;

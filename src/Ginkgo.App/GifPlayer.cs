@@ -131,11 +131,15 @@ public sealed class GifPlayer
         long t = active ? now : _pausedAt;
         if (active) _pausedAt = now;
         gifs.Sort((p, q) => p.dist.CompareTo(q.dist));
+        // the GIF under the mouse: its big version is asked for first, even when more GIFs are on screen than play at once
+        foreach (var hg in gifs)
+            if (hg.id == HoverId && TierForTile(tierRule, hg.w, hg.h, row) == 2) { _wantClass = 0; Clip(hg.id, 2); break; }
         int n = 0;
         foreach (var g in gifs)
         {
             if (Limit > 0 && n >= Limit) break;
             int tier = TierForTile(tierRule, g.w, g.h, row);
+            _wantClass = g.id == HoverId ? 0 : 1;
             var clip = Best(g.id, tier);
             if (clip is null) continue;
             n++;
@@ -158,6 +162,7 @@ public sealed class GifPlayer
         }
         Playing = n;
         // the next screen down and the one above: start them now (their clock runs, and the grid puts them on the card)
+        _wantClass = 2;
         foreach (var g in near)
         {
             if (Limit > 0 && n >= Limit * 2) break;
@@ -166,6 +171,7 @@ public sealed class GifPlayer
             if (clip.Start == 0) clip.Start = Math.Max(1, t);
             _liveNext.Add(clip); Ahead.Add(clip); n++;
         }
+        _wantClass = 1;
         // GIFs that are neither on screen nor near stop: they start from the beginning when they come back
         foreach (var c in _live) if (!_liveNext.Contains(c)) c.Start = 0;
         _live.Clear(); foreach (var c in _liveNext) _live.Add(c); _liveNext.Clear();
@@ -191,7 +197,7 @@ public sealed class GifPlayer
             if (!_have.ContainsKey(key))
             {
                 if (tier == 0) _maker.Want(new[] { id });
-                else if (tier == 2 && _askedBig.Add(id)) _maker.WantBig(id);
+                else if (tier == 2) _maker.WantBig(id, _wantClass);     // asked again every frame, so the order follows what's on screen
                 return null;
             }
             _wantNow[key] = NowMs;          // on screen now: read before anything else
@@ -222,6 +228,10 @@ public sealed class GifPlayer
 
     private readonly Dictionary<(long, int), long> _wantNow = new();
     private readonly HashSet<long> _askedBig = new();
+    /// <summary>How urgent a big version asked for right now is: 0 under the mouse, 1 on screen, 2 a screen away.</summary>
+    private int _wantClass = 1;
+    /// <summary>The GIF under the mouse (its big version is made first).</summary>
+    public long HoverId = -1;
     /// <summary>A big version was just made: refresh the list of what exists.</summary>
     /// <summary>Extra-large versions were deleted: forget the ones not on the card, and ask again when needed.</summary>
     public void ForgetBig()

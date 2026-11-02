@@ -591,6 +591,7 @@ public sealed class MasonryView : FrameworkElement
                 _nearGifs.Sort((a, b) => a.dist.CompareTo(b.dist));
             }
             bool active = Window.GetWindow(this)?.IsActive ?? true;
+            player.HoverId = _hoverIndex >= 0 && _hoverIndex < badges.Length && badges[_hoverIndex] == 1 ? idOf(_hoverIndex) : -1;
             // no pause while scrolling: GIFs keep playing (they're on the card, so it costs little)
             var frames = player.Frame(_gpuGifs, _nearGifs.Select(g => (g.id, g.w, g.h)).ToList(), false, active);
             _gpu.PreloadGifs = player.Ahead;
