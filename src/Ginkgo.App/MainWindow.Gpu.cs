@@ -224,7 +224,7 @@ public partial class MainWindow
         string play = View.UsingGpu && _player is { } pl
             ? $" | gifs {pl.Playing}/{pl.OnScreen} playing at {pl.Fps} fps, {pl.TierNote}{(pl.Paused ? ", paused (Ginkgo not in front)" : "")}, {(View.Gpu?.GifTextures ?? 0)} on card ({(View.Gpu?.GifBytes ?? 0) / 1048576} MB), {pl.RamBytes / 1048576} MB in memory, {pl.Waiting} waiting to be read, {View.Gpu?.LastGifsWaiting ?? 0} waiting for the card" : "";
         string gifr = _engine.GifMaker is { } gm && gm.Stats.Running
-            ? $" | gif renditions {gm.Stats.Made:N0}/{gm.Stats.Animated - gm.Stats.Stills:N0} made, {gm.Stats.Pending:N0} to do, {gm.Stats.Bytes / 1048576:N0} MB{(gm.Stats.Paused ? ", paused while scrolling" : "")}{(gm.Stats.Failed > 0 ? $", {gm.Stats.Failed} failed" : "")}" : "";
+            ? $" | gif renditions {gm.Stats.Made:N0}/{gm.Stats.Animated - gm.Stats.Stills:N0} made, {gm.Stats.Pending:N0} to do, {gm.Stats.Bytes / 1048576:N0} MB{(gm.Stats.Paused ? ", paused while scrolling" : "")}{(gm.Stats.MakingBig ? ", making an extra-large one" : "")}{(gm.Stats.Failed > 0 ? $", {gm.Stats.Failed} failed" : "")}" : "";
         return vram + play + gifr + $" | renderer {renderer} | gpu {gpu} | gifs {_gifs.Playing} playing (limit {(_gifs.Limit == 0 ? "all" : _gifs.Limit.ToString())}) | device resets {GpuDeviceResets}";
     }
 }

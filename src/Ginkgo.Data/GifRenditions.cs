@@ -135,19 +135,41 @@ public static class GifRenditions
     public static byte[] Encode(List<byte[]> frames, int w, int h, bool alpha, int fps, bool cut, int lengthMs, int sourceMs, bool parallel = false)
     {
         int pw = (w + 3) & ~3, ph = (h + 3) & ~3;
-        var enc = new BcEncoder(alpha ? CompressionFormat.Bc7 : CompressionFormat.Bc1);
-        enc.OutputOptions.GenerateMipMaps = false;
-        enc.OutputOptions.Quality = alpha ? CompressionQuality.Fast : CompressionQuality.Balanced;
-        enc.Options.IsParallel = parallel;                // background work: one core (a big version someone is waiting for: all of them)
-        var padded = new byte[pw * ph * 4];
-        byte[]? all = null; int frameBytes = 0;
+        // the frame clock repeats a GIF frame whenever it is shown for longer than one tick: each picture is encoded once
+        var distinct = new List<byte[]>(); var slotOf = new int[frames.Count];
+        var seen = new Dictionary<byte[], int>(ReferenceEqualityComparer.Instance);
         for (int i = 0; i < frames.Count; i++)
         {
-            Pad(frames[i], w, h, padded, pw, ph);
-            var blocks = enc.EncodeToRawBytes(padded, pw, ph, PixelFormat.Bgra32, 0, out _, out _);
-            if (all is null) { frameBytes = blocks.Length; all = new byte[frameBytes * frames.Count]; }
-            Buffer.BlockCopy(blocks, 0, all, i * frameBytes, frameBytes);
+            if (!seen.TryGetValue(frames[i], out int d)) { d = distinct.Count; distinct.Add(frames[i]); seen[frames[i]] = d; }
+            slotOf[i] = d;
         }
+        var encoded = new byte[distinct.Count][];
+        void EncodeRange(int start, int step)
+        {
+            var enc = new BcEncoder(alpha ? CompressionFormat.Bc7 : CompressionFormat.Bc1);
+            enc.OutputOptions.GenerateMipMaps = false;
+            enc.OutputOptions.Quality = alpha ? CompressionQuality.Fast : CompressionQuality.Balanced;
+            enc.Options.IsParallel = false;
+            var padded = new byte[pw * ph * 4];
+            for (int k = start; k < distinct.Count; k += step)
+            {
+                Pad(distinct[k], w, h, padded, pw, ph);
+                encoded[k] = enc.EncodeToRawBytes(padded, pw, ph, PixelFormat.Bgra32, 0, out _, out _);
+            }
+        }
+        // a big version someone is waiting for gets a few threads, all at the lowest priority so they never take time from
+        // the grid (the encoder's own parallel mode used every core at normal priority: up to 90% CPU)
+        int threads = parallel ? Math.Clamp(Environment.ProcessorCount / 4, 1, 3) : 1;
+        if (threads == 1) EncodeRange(0, 1);
+        else
+        {
+            var ts = Enumerable.Range(0, threads).Select(t => new Thread(() => EncodeRange(t, threads)) { IsBackground = true, Priority = ThreadPriority.Lowest, Name = "gif-encode" }).ToList();
+            foreach (var t in ts) t.Start();
+            foreach (var t in ts) t.Join();
+        }
+        int frameBytes = encoded.Length > 0 ? encoded[0].Length : 0;
+        byte[]? all = frames.Count > 0 ? new byte[frameBytes * frames.Count] : null;
+        for (int i = 0; i < frames.Count; i++) Buffer.BlockCopy(encoded[slotOf[i]], 0, all!, i * frameBytes, frameBytes);
         var packed = LZ4Pickler.Pickle(all ?? Array.Empty<byte>());
         var outp = new byte[40 + packed.Length];
         var s = outp.AsSpan();
@@ -207,7 +229,7 @@ public static class GifRenditions
 public sealed class GifStats
 {
     public long Animated, Made, Failed, Stills, Pending, Bytes, Big;
-    public volatile bool Running, Paused;
+    public volatile bool Running, Paused, MakingBig;
     public volatile string LastError = "";
 }
 
@@ -463,9 +485,12 @@ public sealed class GifRenditionMaker
         while (!ct.IsCancellationRequested && _wantBig.TryDequeue(out var id))
         {
             if (!seen.Add(id) || Where(id, 2) is not null) continue;
+            WaitForQuiet(ct);
             var path = PathOf(id);
             if (path is null) continue;
-            if (Make(id, path, 2, 3, true, ct)) BigMade?.Invoke(id);
+            Stats.MakingBig = true;
+            try { if (Make(id, path, 2, 3, true, ct)) BigMade?.Invoke(id); }
+            finally { Stats.MakingBig = false; }
         }
         try { EnforceBigCap(); } catch (Exception ex) { Stats.LastError = "tidying extra-large GIFs: " + ex.Message; }
     }
