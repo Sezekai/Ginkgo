@@ -15,6 +15,8 @@ public sealed class CacheWarmer
     public long InMemory;
     /// <summary>The size the grid is showing now (0 micro, 1 small, 2 full): loaded first.</summary>
     public volatile int Preferred = 2;
+    /// <summary>More pack files to keep in memory (or on the card) after the thumbnails: the GIF versions the GPU grid plays.</summary>
+    public volatile ThumbStore[] Extra = Array.Empty<ThumbStore>();
     /// <summary>Keep thumbnails in memory at all. Turning it off gives all of it back at once.</summary>
     public volatile bool Enabled = true;
     /// <summary>The most memory the thumbnails may take, in bytes (0 = no limit beyond what is free).</summary>
@@ -52,7 +54,7 @@ public sealed class CacheWarmer
 
     private void Run(ThumbStores stores, CancellationToken ct)
     {
-        var tiers = new[] { stores.Micro, stores.Small, stores.Full };
+        var baseTiers = new[] { stores.Micro, stores.Small, stores.Full };
         // How much may be held. When other programs need room, the ceiling comes down to what is held after giving some back,
         // so loading does not race straight back up and get thrown out again. It only rises again once there is clear room to spare.
         long ceiling = long.MaxValue;
@@ -61,6 +63,7 @@ public sealed class CacheWarmer
         {
             while (!ct.IsCancellationRequested)
             {
+                var tiers = baseTiers.Concat(Extra).ToArray();      // the thumbnails, then the GIF versions
                 var vram = Vram;
                 bool tierOn = Enabled && vram is not null && vram.Alive && VramMode != "Off" && (VramOnBattery || !VramTier.OnBattery());
                 foreach (var st in tiers) st.Second = tierOn ? vram : null;
@@ -82,10 +85,10 @@ public sealed class CacheWarmer
                 if (!ramOn) cap = 0;
                 int pref = Math.Clamp(Preferred, 0, 2);
                 var all = new List<(ThumbStore st, int pack, int seg, int size, double score, bool loaded, bool onCard)>();
-                for (int t = 0; t < 3; t++)
+                for (int t = 0; t < tiers.Length; t++)
                 {
                     var st = tiers[t];
-                    int order = t == pref ? 0 : 1 + Math.Abs(t - pref);
+                    int order = t >= 3 ? 3 + (t - 3) : t == pref ? 0 : 1 + Math.Abs(t - pref);
                     var segs = st.Segments();
                     for (int k = 0; k < segs.Count; k++)
                     {

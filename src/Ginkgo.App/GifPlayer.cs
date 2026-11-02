@@ -48,7 +48,8 @@ public sealed class GifPlayer
     }
 
     /// <summary>Which size the GIFs on screen would use at this tile size (for reading ahead).</summary>
-    public int TierFor(double tilePx) { var (_, rule) = Table(Math.Max(RowFor(OnScreen), _row)); return rule >= 0 ? rule : tilePx <= 200 ? 0 : 1; }
+    public int TierFor(double tilePx) { var (_, rule) = Table(_lastRow); return TierForTile(rule, (int)tilePx, (int)tilePx, _lastRow); }
+    private int _lastRow;
 
     /// <summary>The governor's table: how many GIFs on screen → frame rate and size.</summary>
     private static (int fps, int tier) Table(int row) => row switch { 0 => (15, 1), 1 => (12, -1), 2 => (10, 0), _ => (8, 0) };
@@ -83,16 +84,48 @@ public sealed class GifPlayer
     /// file id, tile width, distance from the middle). Returns, per tile index, the clip and frames to draw (missing: show the cover).
     /// </summary>
     public Dictionary<int, (GifClip clip, int a, int b, float w)> Frame(List<(int index, long id, int w, int h, double dist)> gifs, bool scrolling, bool active)
+        => Frame(gifs, new List<(long id, int w, int h)>(), scrolling, active);
+
+    /// <summary>GIFs a screen above and below: read, put on the card and started, so they're already playing when they scroll in.</summary>
+    public List<GifClip> Ahead { get; } = new();
+    private readonly HashSet<GifClip> _live = new(), _liveNext = new();
+
+    /// <summary>The size to play a GIF at in a tile this big: the extra-large version for big tiles (few on screen), else by the governor.</summary>
+    private int TierForTile(int tierRule, int w, int h, int row)
     {
+        int edge = Math.Max(w, h);
+        if (row <= 1 && edge > 360) return 2;                         // big tiles: the 960 px version (made when first needed)
+        return tierRule >= 0 ? tierRule : edge <= 200 ? 0 : 1;
+    }
+
+    private GifClip? Best(long id, int tier)
+    {
+        // the size wanted; while it isn't ready, whichever other size is
+        if (Clip(id, tier) is { } c) return c;
+        for (int t = tier - 1; t >= 0; t--) if (Peek(id, t) is { } d) return d;
+        for (int t = tier + 1; t < 3; t++) if (Peek(id, t) is { } e) return e;
+        return tier > 0 ? Clip(id, tier - 1) : null;
+    }
+
+    /// <summary>The clip if it can be drawn now, without asking for anything.</summary>
+    private GifClip? Peek(long id, int tier)
+    {
+        lock (_lock) return _clips.TryGetValue((id, tier), out var c) && (c.OnCard || c.R.Blocks.Length > 0) ? c : null;
+    }
+
+    public Dictionary<int, (GifClip clip, int a, int b, float w)> Frame(List<(int index, long id, int w, int h, double dist)> gifs, List<(long id, int w, int h)> near, bool scrolling, bool active)
+    {
+        Ahead.Clear();
         var result = new Dictionary<int, (GifClip, int, int, float)>();
         OnScreen = gifs.Count;
         Paused = !active;
         int row = Math.Max(RowFor(gifs.Count), _row);
+        _lastRow = row;
         var (fps, tierRule) = Table(row);
         if (FixedFps > 0) fps = FixedFps;
         Fps = fps;
         TierNote = tierRule == 1 ? "large" : tierRule == 0 ? "small" : "by tile size";
-        if (!Animate || scrolling || gifs.Count == 0) { Playing = 0; return result; }
+        if (!Animate || scrolling || gifs.Count == 0 && near.Count == 0) { Playing = 0; return result; }
         long now = NowMs;
         // while inactive the clock stands still: the GIFs show the frame they were on
         long t = active ? now : _pausedAt;
@@ -102,10 +135,11 @@ public sealed class GifPlayer
         foreach (var g in gifs)
         {
             if (Limit > 0 && n >= Limit) break;
-            int tier = tierRule >= 0 ? tierRule : Math.Max(g.w, g.h) <= 200 ? 0 : 1;
-            var clip = Clip(g.id, tier) ?? Clip(g.id, 1 - tier);         // the other size will do while this one loads
+            int tier = TierForTile(tierRule, g.w, g.h, row);
+            var clip = Best(g.id, tier);
             if (clip is null) continue;
             n++;
+            _liveNext.Add(clip);
             var r = clip.R;
             if (clip.Start == 0) clip.Start = Math.Max(1, t);
             long len = Math.Max(1, r.LengthMs);
@@ -123,6 +157,18 @@ public sealed class GifPlayer
             result[g.index] = (clip, a, b, w);
         }
         Playing = n;
+        // the next screen down and the one above: start them now (their clock runs, and the grid puts them on the card)
+        foreach (var g in near)
+        {
+            if (Limit > 0 && n >= Limit * 2) break;
+            var clip = Best(g.id, TierForTile(tierRule, g.w, g.h, row));
+            if (clip is null) continue;
+            if (clip.Start == 0) clip.Start = Math.Max(1, t);
+            _liveNext.Add(clip); Ahead.Add(clip); n++;
+        }
+        // GIFs that are neither on screen nor near stop: they start from the beginning when they come back
+        foreach (var c in _live) if (!_liveNext.Contains(c)) c.Start = 0;
+        _live.Clear(); foreach (var c in _liveNext) _live.Add(c); _liveNext.Clear();
         DropUploaded();
         return result;
     }
@@ -142,7 +188,12 @@ public sealed class GifPlayer
                 if (c.R.Blocks.Length > 0) { _lru.Remove(key); _lru.AddFirst(key); }
                 return c;
             }
-            if (!_have.ContainsKey(key)) { if (tier == 0) _maker.Want(new[] { id }); return null; }
+            if (!_have.ContainsKey(key))
+            {
+                if (tier == 0) _maker.Want(new[] { id });
+                else if (tier == 2 && _askedBig.Add(id)) _maker.WantBig(id);
+                return null;
+            }
             _wantNow[key] = NowMs;          // on screen now: read before anything else
         }
         _wake.Set();
@@ -170,6 +221,9 @@ public sealed class GifPlayer
     }
 
     private readonly Dictionary<(long, int), long> _wantNow = new();
+    private readonly HashSet<long> _askedBig = new();
+    /// <summary>A big version was just made: refresh the list of what exists.</summary>
+    public void Made(long id, int tier) { lock (_lock) { var h = new Dictionary<(long, int), bool>(_have) { [(id, tier)] = true }; _have = h; } }
     private readonly List<(long, int)> _ahead = new();
     private readonly AutoResetEvent _wake = new(false);
     /// <summary>Called when a rendition has been read from the drive (redraw).</summary>

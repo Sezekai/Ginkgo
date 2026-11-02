@@ -32,6 +32,8 @@ public sealed unsafe class VramTier : ISecondHome, IDisposable
     private ID3D11DeviceContext? _ctx;
     private ID3D11Buffer? _staging;
     private const int StagingSize = 1 << 20;
+    private const int MaxStaging = 64 << 20;
+    private int _stagingSize = StagingSize;
     private IntPtr _adapter3;          // IDXGIAdapter3, for Windows' memory allowance
     private readonly Dictionary<(ThumbStore, long), (ID3D11Buffer buf, int len)> _held = new();
     private long _bytes;
@@ -102,11 +104,18 @@ public sealed unsafe class VramTier : ISecondHome, IDisposable
 
     public bool Read(ThumbStore store, long key, int inSeg, Span<byte> dst)
     {
-        if (dst.Length > StagingSize) return false;
+        if (dst.Length > MaxStaging) return false;
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         lock (_lock)
         {
             if (_ctx is null || _staging is null || !_held.TryGetValue((store, key), out var h) || inSeg + dst.Length > h.len) return false;
+            if (dst.Length > _stagingSize)
+            {
+                // a GIF version can be several MB: a bigger copy-back buffer
+                _staging.Dispose();
+                _stagingSize = (int)Math.Min(MaxStaging, System.Numerics.BitOperations.RoundUpToPowerOf2((uint)dst.Length));
+                _staging = _dev!.CreateBuffer(new BufferDescription((uint)_stagingSize, BindFlags.None, ResourceUsage.Staging, CpuAccessFlags.Read));
+            }
             try
             {
                 _ctx.CopySubresourceRegion(_staging, 0, 0, 0, 0, h.buf, 0, new Box(inSeg, 0, 0, inSeg + dst.Length, 1, 1));
@@ -130,6 +139,7 @@ public sealed unsafe class VramTier : ISecondHome, IDisposable
         var hr = D3D11.D3D11CreateDevice(_adapter, DriverType.Unknown, DeviceCreationFlags.None, levels, out _dev, out _ctx);
         if (hr.Failure || _dev is null) { _dev = null; _ctx = null; Problem = $"no Direct3D 11 device (0x{hr.Code:X8})"; return false; }
         _staging = _dev.CreateBuffer(new BufferDescription(StagingSize, BindFlags.None, ResourceUsage.Staging, CpuAccessFlags.Read));
+        _stagingSize = StagingSize;
         return true;
     }
 

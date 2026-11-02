@@ -506,6 +506,8 @@ public sealed class MasonryView : FrameworkElement
     private int _lastOffPx = int.MinValue;
     private ThumbLoader.Pix? _hoverOver;
     private readonly List<(int index, long id, int w, int h, double dist)> _gpuGifs = new();
+    private readonly List<(long id, int w, int h, double dist)> _nearGifs = new();
+    private readonly List<int> _nearIdx = new();
 
     /// <summary>The first and last tile on screen (approximately: the drawn strips).</summary>
     public (int first, int last) VisibleRange() => _visible.Count == 0 ? (0, -1) : (_visible.Min(), _visible.Max());
@@ -572,8 +574,26 @@ public sealed class MasonryView : FrameworkElement
                 double cy = g.Y + g.H / 2.0 - offPx - ph / 2.0;
                 _gpuGifs.Add((k, idOf(g.Index), g.W, g.H, Math.Abs(cy)));
             }
+            // the screen above and the screen below: their GIFs are read, put on the card and started ahead of time
+            _nearGifs.Clear();
+            if (_layout is not null)
+            {
+                _nearIdx.Clear();
+                _layout.GetVisible((float)((offPx - ph) / dpi), (float)((offPx + 2.0 * ph) / dpi), _nearIdx);
+                foreach (int i in _nearIdx)
+                {
+                    if (i >= badges.Length || badges[i] != 1) continue;
+                    double y0 = _layout.Y[i] * dpi, y1 = (_layout.Y[i] + _layout.H[i]) * dpi;
+                    if (y1 > offPx && y0 < offPx + ph) continue;                       // on screen: already in the list
+                    double dist = y1 <= offPx ? offPx - y1 : y0 - (offPx + ph);
+                    _nearGifs.Add((idOf(i), (int)(_layout.W[i] * dpi), (int)(_layout.H[i] * dpi), dist));
+                }
+                _nearGifs.Sort((a, b) => a.dist.CompareTo(b.dist));
+            }
             bool active = Window.GetWindow(this)?.IsActive ?? true;
-            var frames = player.Frame(_gpuGifs, nowMs - _lastMoveMs < 150, active);
+            // no pause while scrolling: GIFs keep playing (they're on the card, so it costs little)
+            var frames = player.Frame(_gpuGifs, _nearGifs.Select(g => (g.id, g.w, g.h)).ToList(), false, active);
+            _gpu.PreloadGifs = player.Ahead;
             foreach (var (k, f) in frames)
             {
                 var g = _gpuTiles[k];

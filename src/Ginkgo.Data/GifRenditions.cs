@@ -27,8 +27,13 @@ public sealed class GifRendition
 
 public static class GifRenditions
 {
-    /// <summary>The two tiers: small (micro and small tile sizes) and large (full size and up).</summary>
-    public static readonly (int edge, int fps)[] Tiers = { (192, 10), (320, 15) };
+    /// <summary>
+    /// The tiers: small (micro and small tile sizes), large (full size and up), and extra large (960 px, for big tiles when there are
+    /// only a few columns; made only for the GIFs shown that big).
+    /// </summary>
+    public static readonly (int edge, int fps)[] Tiers = { (192, 10), (320, 15), (960, 15) };
+    /// <summary>Tiers made for every GIF in the background (the others on demand).</summary>
+    public const int BackfillTiers = 2;
     private const uint Magic = 0x314E5247;   // "GRN1"
 
     /// <summary>Like browsers: a delay of 0-10 ms plays as 100 ms.</summary>
@@ -127,13 +132,13 @@ public static class GifRenditions
     }
 
     /// <summary>Makes the rendition file contents: a small header, then the frames' blocks, LZ4-compressed.</summary>
-    public static byte[] Encode(List<byte[]> frames, int w, int h, bool alpha, int fps, bool cut, int lengthMs, int sourceMs)
+    public static byte[] Encode(List<byte[]> frames, int w, int h, bool alpha, int fps, bool cut, int lengthMs, int sourceMs, bool parallel = false)
     {
         int pw = (w + 3) & ~3, ph = (h + 3) & ~3;
         var enc = new BcEncoder(alpha ? CompressionFormat.Bc7 : CompressionFormat.Bc1);
         enc.OutputOptions.GenerateMipMaps = false;
         enc.OutputOptions.Quality = alpha ? CompressionQuality.Fast : CompressionQuality.Balanced;
-        enc.Options.IsParallel = false;                   // background work: one core
+        enc.Options.IsParallel = parallel;                // background work: one core (a big version someone is waiting for: all of them)
         var padded = new byte[pw * ph * 4];
         byte[]? all = null; int frameBytes = 0;
         for (int i = 0; i < frames.Count; i++)
@@ -201,7 +206,7 @@ public static class GifRenditions
 
 public sealed class GifStats
 {
-    public long Animated, Made, Failed, Stills, Pending, Bytes;
+    public long Animated, Made, Failed, Stills, Pending, Bytes, Big;
     public volatile bool Running, Paused;
     public volatile string LastError = "";
 }
@@ -216,6 +221,14 @@ public sealed class GifRenditionMaker
     private readonly IndexDb _db;
     public ThumbStore Small { get; }
     public ThumbStore Large { get; }
+    /// <summary>Extra-large versions (made on demand).</summary>
+    public ThumbStore Big { get; }
+    private ThumbStore StoreFor(int tier) => tier == 0 ? Small : tier == 1 ? Large : Big;
+    private readonly ConcurrentQueue<long> _wantBig = new();
+    /// <summary>A big version was made (file id): the player can use it now.</summary>
+    public event Action<long>? BigMade;
+    /// <summary>Make the extra-large version of a GIF (shown big): before anything else.</summary>
+    public void WantBig(long id) => _wantBig.Enqueue(id);
     public GifStats Stats { get; } = new();
     private readonly ConcurrentQueue<long> _want = new();
     private readonly PipelineStats _pipe;
@@ -228,6 +241,7 @@ public sealed class GifRenditionMaker
         _db = db; _pipe = pipe;
         Small = new ThumbStore(cacheDir, "gifsmall");
         Large = new ThumbStore(cacheDir, "giflarge");
+        Big = new ThumbStore(cacheDir, "gifbig");
         using var c = db.Open();
         IndexDb.Exec(c, """
             CREATE TABLE IF NOT EXISTS gif_renditions (
@@ -268,7 +282,7 @@ public sealed class GifRenditionMaker
     {
         var at = Where(id, tier);
         if (at is null) return null;
-        var blob = (tier == 0 ? Small : Large).Read(at.Value.pack, at.Value.off, at.Value.len);
+        var blob = StoreFor(tier).Read(at.Value.pack, at.Value.off, at.Value.len);
         return blob is null ? null : GifRenditions.Read(blob);
     }
 
@@ -281,7 +295,7 @@ public sealed class GifRenditionMaker
         cmd.CommandText = """
             SELECT f.id, f.path FROM files f
             WHERE f.kind=1 AND f.missing_since=0 AND (
-              (SELECT COUNT(*) FROM gif_renditions g WHERE g.id=f.id AND (g.cap_ms=$cap OR g.len=0)) < 2)
+              (SELECT COUNT(*) FROM gif_renditions g WHERE g.id=f.id AND g.tier<2 AND (g.cap_ms=$cap OR g.len=0)) < 2)
             ORDER BY f.first_seen DESC
             """;
         cmd.Parameters.AddWithValue("$cap", CapMs);
@@ -295,7 +309,8 @@ public sealed class GifRenditionMaker
         using var c = _db.Open();
         Stats.Animated = IndexDb.Scalar(c, "SELECT COUNT(*) FROM files WHERE kind=1 AND missing_since=0");
         Stats.Stills = IndexDb.Scalar(c, "SELECT COUNT(DISTINCT id) FROM gif_renditions WHERE len=0");
-        Stats.Made = IndexDb.Scalar(c, $"SELECT COUNT(DISTINCT id) FROM gif_renditions WHERE len>0 AND cap_ms={CapMs}");
+        Stats.Made = IndexDb.Scalar(c, $"SELECT COUNT(DISTINCT id) FROM gif_renditions WHERE len>0 AND tier<2 AND cap_ms={CapMs}");
+        Stats.Big = IndexDb.Scalar(c, "SELECT COUNT(*) FROM gif_renditions WHERE len>0 AND tier=2");
         Stats.Bytes = IndexDb.Scalar(c, "SELECT COALESCE(SUM(len),0) FROM gif_renditions");
     }
 
@@ -311,23 +326,26 @@ public sealed class GifRenditionMaker
     }
 
     /// <summary>Makes one GIF's renditions (both tiers) and records them. True if made (or found to be a still).</summary>
-    public bool MakeOne(long id, string path, CancellationToken ct)
+    public bool MakeOne(long id, string path, CancellationToken ct) => Make(id, path, 0, GifRenditions.BackfillTiers, false, ct);
+
+    /// <summary>Makes the renditions for tiers [from, to) and records them.</summary>
+    public bool Make(long id, string path, int from, int to, bool parallel, CancellationToken ct)
     {
         try
         {
             var rows = new List<(int tier, (int pack, long off, int length) at, GifRendition? meta, bool still)>();
-            for (int t = 0; t < GifRenditions.Tiers.Length; t++)
+            for (int t = from; t < to; t++)
             {
                 var (edge, fps) = GifRenditions.Tiers[t];
                 using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16);
                 var fr = GifRenditions.Frames(fs, edge, fps, CapMs, ct);
                 if (fr is null) { rows.Add((t, (0, 0, 0), null, true)); continue; }
                 var (frames, w, h, alpha, cut, lengthMs, sourceMs) = fr.Value;
-                var blob = GifRenditions.Encode(frames, w, h, alpha, fps, cut, lengthMs, sourceMs);
-                var at = (t == 0 ? Small : Large).Append(blob);
+                var blob = GifRenditions.Encode(frames, w, h, alpha, fps, cut, lengthMs, sourceMs, parallel);
+                var at = StoreFor(t).Append(blob);
                 rows.Add((t, at, new GifRendition { W = w, H = h, Fps = fps, Frames = frames.Count, Cut = cut }, false));
             }
-            Small.Flush(); Large.Flush();      // the files first, then the index
+            Small.Flush(); Large.Flush(); Big.Flush();      // the files first, then the index
             using var c = _db.Open();
             using var tx = c.BeginTransaction();
             foreach (var (tier, at, meta, still) in rows)
@@ -357,14 +375,16 @@ public sealed class GifRenditionMaker
         {
             while (!ct.IsCancellationRequested)
             {
+                MakeBigOnes(ct);
                 Count();
                 var todo = Todo().Where(t => !failed.Contains(t.id)).ToList();
                 Stats.Pending = todo.Count;
-                if (todo.Count == 0) { for (int i = 0; i < 100 && !ct.IsCancellationRequested && _want.IsEmpty; i++) Thread.Sleep(100); continue; }
+                if (todo.Count == 0) { for (int i = 0; i < 100 && !ct.IsCancellationRequested && _want.IsEmpty && _wantBig.IsEmpty; i++) Thread.Sleep(100); continue; }
                 var byId = todo.ToDictionary(t => t.id, t => t.path);
                 int madeThisRound = 0;
                 while (!ct.IsCancellationRequested && byId.Count > 0 && madeThisRound < 200)
                 {
+                    if (!_wantBig.IsEmpty) MakeBigOnes(ct);
                     WaitForQuiet(ct);
                     // on-screen GIFs first
                     long id = -1;
@@ -380,6 +400,28 @@ public sealed class GifRenditionMaker
         }
         catch (OperationCanceledException) { }
         finally { Stats.Running = false; }
+    }
+
+    private string? PathOf(long id)
+    {
+        using var c = _db.Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT path FROM files WHERE id=$id";
+        cmd.Parameters.AddWithValue("$id", id);
+        return cmd.ExecuteScalar() as string;
+    }
+
+    /// <summary>The extra-large versions asked for (GIFs shown big right now): made straight away, with every core.</summary>
+    private void MakeBigOnes(CancellationToken ct)
+    {
+        var seen = new HashSet<long>();
+        while (!ct.IsCancellationRequested && _wantBig.TryDequeue(out var id))
+        {
+            if (!seen.Add(id) || Where(id, 2) is not null) continue;
+            var path = PathOf(id);
+            if (path is null) continue;
+            if (Make(id, path, 2, 3, true, ct)) BigMade?.Invoke(id);
+        }
     }
 
     public void Start(CancellationToken ct)

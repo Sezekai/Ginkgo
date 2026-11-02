@@ -63,6 +63,9 @@ public sealed class Engine : IDisposable
             Warmer.VramOnBattery = Settings.ThumbVramOnBattery;
             Warmer.Start(Stores, _cts.Token);
             GifMaker = new GifRenditionMaker(Db, Settings.CacheDir, Pipe) { CapMs = (int)(Settings.GifLengthSec * 1000) };
+            // the GIF versions live on the (slow, USB) hard drive too: keep them in memory or on the card like the thumbnails, so a
+            // screenful of GIFs doesn't wait for one drive read each
+            Warmer.Extra = new[] { GifMaker.Small, GifMaker.Large, GifMaker.Big };
             Opened?.Invoke();
             await Refresh(scan: true, confirmLargeRemoval: false);
             StartWatcher();

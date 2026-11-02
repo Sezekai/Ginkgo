@@ -85,8 +85,12 @@ public partial class MainWindow
             _engine.StartGifRenditions();      // the GIF versions it will play (made in the background, paused while scrolling)
             if (_engine.GifMaker is { } gm)
             {
-                _player ??= new GifPlayer(gm);
-                _player.Loaded += () => Dispatcher.BeginInvoke(View.Refresh);
+                if (_player is null)
+                {
+                    _player = new GifPlayer(gm);
+                    _player.Loaded += () => Dispatcher.BeginInvoke(View.Refresh);
+                    gm.BigMade += id => { _player.Made(id, 2); Dispatcher.BeginInvoke(View.Refresh); };
+                }
                 ApplyGifSettings();
                 View.Player = _player;
                 _gifs.BudgetPerGif = 384L << 20; _gifs.MaxFrames = 3000;     // only the hovered GIF plays the original: full quality, full length

@@ -145,6 +145,8 @@ float4 PS(VO v) : SV_Target
     public long GifBytes => _gifBytes;
     public int GifTextures => _gifs.Count;
     public int LastGifsDrawn, LastGifsWaiting;
+    /// <summary>GIFs a screen away: put on the card with any upload time left, so they play the moment they scroll in.</summary>
+    public List<GifClip>? PreloadGifs;
 
     private void FreeGif(GifClip c, GifTex g)
     {
@@ -433,6 +435,8 @@ float4 PS(VO v) : SV_Target
             _order[n] = (page, prevPage, n);
             n++;
         }
+        if (PreloadGifs is { } pre)
+            foreach (var c in pre) PlaceGif(c, gifBudgetEnd);       // marked as used, so making room never throws them out either
         _waiting = waiting; LastWaiting = waiting; LastGifsDrawn = gifsDrawn; LastGifsWaiting = gifWaiting;
         if (_shown.Count > 20000) _shown.Clear();
         var t1 = Stopwatch.GetTimestamp();

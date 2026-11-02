@@ -37,8 +37,8 @@ public partial class MainWindow
         View.ItemContextRequested += ShowTileMenu;
         PreviewMouseDown += (_, e) =>
         {
-            if (e.ChangedButton == MouseButton.XButton1) { GoBack(); e.Handled = true; }
-            else if (e.ChangedButton == MouseButton.XButton2) { GoForward(); e.Handled = true; }
+            if (e.ChangedButton == MouseButton.XButton1) { NavBack(); e.Handled = true; }
+            else if (e.ChangedButton == MouseButton.XButton2) { NavForward(); e.Handled = true; }
         };
         ApplyFolderPrefs();
         UpdateNavUi();

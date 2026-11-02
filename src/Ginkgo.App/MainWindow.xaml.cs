@@ -491,7 +491,7 @@ public partial class MainWindow : Window
         {
             var (mr, _) = View.TakeWorst();
             DiagText.Text = $"{_fps:F0} fps | worst gap {_worstGap:F0} ms | slow {_slowFrames} (gc {_slowGc}, ours {_slowOurs}, other {_slowOther}) | gc pause {(GC.GetTotalPauseDuration() - _gcAtTick).TotalMilliseconds:F0} ms | draw {mr:F1} (prep {Perf.PrepMax:F1}, paint {Perf.PaintMax:F1}/{Perf.PaintedBands}) drain {Perf.DrainMax:F1} | {View.LastVisibleCount} tiles, cached {_loader?.CachedCount ?? 0}, pending {_loader?.PendingCount ?? 0} | GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)} | read {_loader?.AvgReadMs ?? 0:F1} ms, decode {_loader?.AvgDecodeMs ?? 0:F1} ms{(_engine.FastCacheNote.Length > 0 ? " | " + _engine.FastCacheNote : "")} | thumbs in memory {_engine.Warmer.InMemory / 1073741824.0:F1} GB ({(_engine.Warmer.Total > 0 ? _engine.Warmer.Done * 100 / _engine.Warmer.Total : 0)}%{(_engine.Warmer.Running ? ", loading" : "")}) {_engine.Warmer.Note} | free RAM {CacheWarmer.AvailableBytes() / 1073741824.0:F1} GB" + GpuDiag();
-            if (DiagFull.Visibility == Visibility.Visible) DiagFullText.Text = DiagText.Text.Replace(" | ", "\n");
+            if (DiagFull.Visibility == Visibility.Visible) FillFullStatus();
             _slowAtLastTick = 0;
             _worstGap = 0; _slowFrames = _slowGc = _slowOurs = _slowOther = 0; _gcAtTick = GC.GetTotalPauseDuration(); Perf.Reset();
         }
@@ -589,9 +589,9 @@ public partial class MainWindow : Window
         {
             var k0 = e.Key == Key.System ? e.SystemKey : e.Key;
             bool alt0 = (Keyboard.Modifiers & ModifierKeys.Alt) != 0;
-            if (alt0 && k0 == Key.Left) { GoBack(); e.Handled = true; return; }
-            if (alt0 && k0 == Key.Right) { GoForward(); e.Handled = true; return; }
-            if (ViewerRoot.Visibility == Visibility.Visible && e.Key == Key.Back) { GoBack(); e.Handled = true; return; }
+            if (alt0 && k0 == Key.Left) { NavBack(); e.Handled = true; return; }
+            if (alt0 && k0 == Key.Right) { NavForward(); e.Handled = true; return; }
+            if (ViewerRoot.Visibility == Visibility.Visible && e.Key == Key.Back) { NavBack(); e.Handled = true; return; }
             if ((Keyboard.Modifiers & ModifierKeys.Control) != 0 && e.Key == Key.W) { Close(); e.Handled = true; return; }
         }
         if (ViewerRoot.Visibility == Visibility.Visible) { ViewerKey(e); return; }
@@ -631,9 +631,10 @@ public partial class MainWindow : Window
             case Key.OemQuestion: RevealBar(); SearchBox.Focus(); e.Handled = true; break;
             case Key.K: ShowKeys(false); e.Handled = true; break;
             case Key.S: OpenSettings(); e.Handled = true; break;
+            case Key.T: OpenHoveredOrFirst(); e.Handled = true; break;
             case Key.O: RevealBar(); OnOptimise(this, e); e.Handled = true; break;
             case Key.F: case Key.F11: ToggleFullscreen(); e.Handled = true; break;
-            case Key.F3: _diag = !_diag; DiagText.Visibility = DiagMoreBtn.Visibility = _diag ? Visibility.Visible : Visibility.Collapsed; if (!_diag) DiagFull.Visibility = Visibility.Collapsed; e.Handled = true; break;
+            case Key.F3: StepDiag(); e.Handled = true; break;
             case Key.M: SetSidebar(!_sideOpen); e.Handled = true; break;
             case Key.H: OnHideBar(this, e); e.Handled = true; break;
             case Key.G: GeneralBtn.IsChecked = GeneralBtn.IsChecked != true; OnFilterChanged(this, e); e.Handled = true; break;
@@ -806,7 +807,41 @@ public partial class MainWindow : Window
     {
         bool open = DiagFull.Visibility != Visibility.Visible;
         DiagFull.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
-        if (open) DiagFullText.Text = DiagText.Text.Replace(" | ", "\n");
+        if (open) FillFullStatus();
+    }
+
+    /// <summary>F3: once for the status line, twice for the full status, a third time to close both.</summary>
+    private void StepDiag()
+    {
+        if (!_diag) { _diag = true; DiagFull.Visibility = Visibility.Collapsed; }
+        else if (DiagFull.Visibility != Visibility.Visible) { DiagFull.Visibility = Visibility.Visible; FillFullStatus(); }
+        else { _diag = false; DiagFull.Visibility = Visibility.Collapsed; }
+        DiagText.Visibility = DiagMoreBtn.Visibility = _diag ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private static readonly (string[] words, Brush colour)[] DiagColours =
+    {
+        (new[] { "fps", "worst gap", "slow", "gc pause", "draw", "GC " }, Frozen("#E0B060")),                    // frames and timing
+        (new[] { "tiles", "read", "pending" }, Frozen("#7FC8F8")),                                                // loading
+        (new[] { "thumbs", "free RAM", "moved", "gave" }, Frozen("#8FE6A8")),                                     // memory
+        (new[] { "gifs", "gif renditions" }, Frozen("#FF9EC7")),                                                  // GIFs
+        (new[] { "renderer", "vram", "uploads", "gpu", "device" }, Frozen("#C9A8FF")),                            // the graphics card
+    };
+    private static Brush Frozen(string hex) { var b = (SolidColorBrush)new BrushConverter().ConvertFromString(hex)!; b.Freeze(); return b; }
+    private static readonly Brush DiagSep = Frozen("#5A5A66"), DiagOther = Frozen("#C8C8D0");
+
+    /// <summary>The full status as flowing text: items one after another with a separator, coloured by kind.</summary>
+    private void FillFullStatus()
+    {
+        DiagFullText.Inlines.Clear();
+        var items = DiagText.Text.Split(" | ", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        for (int k = 0; k < items.Length; k++)
+        {
+            if (k > 0) DiagFullText.Inlines.Add(new System.Windows.Documents.Run("  ·  ") { Foreground = DiagSep });
+            var it = items[k];
+            var colour = DiagColours.FirstOrDefault(c => c.words.Any(w => it.StartsWith(w, StringComparison.OrdinalIgnoreCase) || it.Contains(" " + w + " "))).colour ?? DiagOther;
+            DiagFullText.Inlines.Add(new System.Windows.Documents.Run(it) { Foreground = colour });
+        }
     }
 
     private void OnDiagCopy(object s, RoutedEventArgs e) { try { Clipboard.SetText(DiagText.Text); StatusText.Text = "Status copied."; } catch { } }
@@ -872,7 +907,7 @@ public partial class MainWindow : Window
 
     private static readonly (string keys, string what)[] GridKeys =
     {
-        ("Ctrl+B  or  M", "Open or close the menu"), ("S  or  Ctrl+S", "Settings"), ("O", "Optimisations (memory, GIFs)"), ("F  or  F11", "Full screen (Esc to leave)"), ("Ctrl+W", "Close Ginkgo"), ("H", "Hide or show the top bar"), ("/  or  Ctrl+F", "Search"),
+        ("Ctrl+B  or  M", "Open or close the menu"), ("S  or  Ctrl+S", "Settings"), ("T", "Open the picture under the mouse (or the first one)"), ("O", "Optimisations (memory, GIFs)"), ("F  or  F11", "Full screen (Esc to leave)"), ("Ctrl+W", "Close Ginkgo"), ("H", "Hide or show the top bar"), ("/  or  Ctrl+F", "Search"),
         ("G   N   V", "Show General / NSFW / Very files"), ("L", "Equal columns  or  equal rows"), ("+   -   or  Ctrl + wheel", "Picture size"),
         ("R", "Reshuffle (when sorted randomly)"), ("Home   End", "Top / bottom"), ("Page Up   Page Down", "Scroll one screen"),
         ("Enter  or  double-click", "Open the picture under the mouse"), ("Middle button", "Scroll by moving the mouse"),
@@ -882,7 +917,7 @@ public partial class MainWindow : Window
     {
         ("Left   Right   (Space)", "Previous / next picture"), ("Home   End", "First / last picture"), ("Mouse wheel", "Zoom in and out"),
         ("Drag", "Move a zoomed picture"), ("0", "Fit to window"), ("1", "Actual size (100%)"), ("I", "More or less information"),
-        ("H", "Hide or show the information box"), ("F  or  F11", "Full screen"), ("K", "This list"), ("Esc  or  double-click", "Leave full screen, then back to the grid"),
+        ("H", "Hide or show the information box"), ("T  or  mouse back", "Close the viewer"), ("F  or  F11", "Full screen"), ("K", "This list"), ("Esc  or  double-click", "Leave full screen, then back to the grid"),
     };
 
     private void OnKeysClick(object s, RoutedEventArgs e) => ShowKeys(false);
@@ -929,6 +964,19 @@ public partial class MainWindow : Window
     private long _viewerOpenedAt;
 
     private void OpenViewer(int index) => OpenViewer(index, remember: true);
+
+    /// <summary>T: the picture under the mouse in the viewer, or the first one when the mouse isn't over a picture.</summary>
+    private void OpenHoveredOrFirst()
+    {
+        int i = View.HoverIndex;
+        if (i < _firstFile || i >= _paths.Length || IsFolderTile(i)) i = _firstFile;
+        if (i >= _firstFile && i < _paths.Length) OpenViewer(i);
+    }
+
+    /// <summary>Mouse back (and Alt+Left): in the viewer it closes it and returns to where you were, however many pictures you went through.</summary>
+    private void NavBack() { if (ViewerOpen) { CloseViewer(); UpdateNavButtons(); return; } GoBack(); }
+    /// <summary>Mouse forward (and Alt+Right): does nothing in the viewer, and never reopens a closed viewer.</summary>
+    private void NavForward() { if (ViewerOpen) return; GoForward(); }
 
     private void OpenViewer(int index, bool remember)
     {
@@ -1068,7 +1116,7 @@ public partial class MainWindow : Window
     private void ShowIndex(int index, bool remember)
     {
         index = Math.Clamp(index, _firstFile, _paths.Length - 1);
-        if (remember && ViewerOpen && index != _vIndex) Remember();      // Back steps to the previous picture
+        // (pictures you step through aren't remembered: Back closes the viewer)
         _vIndex = index;
         ResetZoom();
         int row = _order[_vIndex];
@@ -1256,6 +1304,7 @@ public partial class MainWindow : Window
             case Key.K: case Key.OemQuestion: ShowKeys(true); break;
             case Key.H: _infoHidden = !_infoHidden; UpdateInfo(_order[_vIndex]); break;
             case Key.I: _infoMore = !_infoMore; _infoHidden = false; UpdateInfo(_order[_vIndex]); break;
+            case Key.T: CloseViewer(); break;
             case Key.D0: case Key.NumPad0: ResetZoom(); break;
             case Key.D1: case Key.NumPad1:
                 {
