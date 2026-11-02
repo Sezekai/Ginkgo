@@ -493,6 +493,9 @@ public sealed class MasonryView : FrameworkElement
     private GpuPresenter? _presenter;
     private D3DImage? _d3d;
     private readonly List<GpuTile> _gpuTiles = new();
+    private int _releaseTick;
+    /// <summary>GPU grid: keep decoded pictures only on the card (memory holds just what's waiting to be uploaded).</summary>
+    public bool CardOnly { get; set; } = true;
     /// <summary>The GPU grid failed while drawing (device lost and the like). Raised on the UI thread; drawing is back on the strips.</summary>
     public event Action<Exception>? GpuFailed;
     /// <summary>The front buffer went away and came back (sleep, a driver update, a monitor change): the GPU objects need making again.</summary>
@@ -525,6 +528,7 @@ public sealed class MasonryView : FrameworkElement
     public void UseGpu(GpuGrid? grid, GpuPresenter? presenter)
     {
         if (_d3d is not null) _d3d.IsFrontBufferAvailableChanged -= OnFrontBuffer;
+        if (grid is null && _gpu is not null) _thumbs?.ForgetCardOnly();     // back to the strips: they need the pixels in memory
         _gpu = grid; _presenter = presenter;
         _d3d = grid is null ? null : new D3DImage();
         if (_d3d is not null) _d3d.IsFrontBufferAvailableChanged += OnFrontBuffer;
@@ -549,7 +553,7 @@ public sealed class MasonryView : FrameworkElement
             var g = new GpuTile { Index = t.Index, X = t.X, Y = t.Y, W = t.W, H = t.H, A = 1 };
             if (t.Over is { } o) { g.Pix = o; g.Fill = BgPixel; }
             else if (t.E is null) g.Fill = Palette()[(t.Index * 7) % Palette().Length];
-            else if (t.E.Pix.Data.Length < t.E.Pix.W * t.E.Pix.H * 4) g.Fill = FadePixel;
+            else if (t.E.Pix.Data.Length < t.E.Pix.W * t.E.Pix.H * 4 && !_gpu.IsResident(t.E.Pix)) g.Fill = FadePixel;
             else
             {
                 g.Pix = t.E.Pix; g.Fill = FadePixel;
@@ -557,7 +561,7 @@ public sealed class MasonryView : FrameworkElement
                 {
                     g.A = (float)t.A;
                     var prev = t.E.Prev;
-                    if (prev is not null && prev.Data.Length >= prev.W * prev.H * 4) g.Prev = prev;
+                    if (prev is not null && (prev.Data.Length >= prev.W * prev.H * 4 || _gpu.IsResident(prev))) g.Prev = prev;
                 }
             }
             _gpuTiles.Add(g);
@@ -614,6 +618,13 @@ public sealed class MasonryView : FrameworkElement
             _d3d.AddDirtyRect(new Int32Rect(0, 0, _gpu.Width, _gpu.Height));
             _d3d.Unlock(); locked = false;
             if (!complete) _needsRender = true;            // some pictures wait for the next frame's upload time
+            // the decoded pictures live on the card: memory keeps only what is waiting to go up (phase 5 of the GPU plan)
+            if (_thumbs is not null)
+            {
+                var gone = _gpu.TakeEvicted();
+                if (gone.Count > 0) { _thumbs.Forget(gone); _needsRender = true; }
+                if (CardOnly && ++_releaseTick % 15 == 0) Perf.FreedToCard += _thumbs.ReleaseToCard(_gpu.IsResident);
+            }
             dc.DrawImage(_d3d, new Rect(0, 0, pw / dpi, ph / dpi));
             Perf.GpuDrawMax = Math.Max(Perf.GpuDrawMax, _gpu.LastDrawMs);
             Perf.GpuTimeMax = Math.Max(Perf.GpuTimeMax, _gpu.GpuMs);

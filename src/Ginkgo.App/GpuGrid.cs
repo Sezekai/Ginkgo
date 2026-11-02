@@ -281,9 +281,14 @@ float4 PS(VO v) : SV_Target
         return pg;
     }
 
+    /// <summary>Pictures the card let go of since last asked (the loader drops the ones it only had on the card).</summary>
+    private HashSet<ThumbLoader.Pix> _evicted = new(ReferenceEqualityComparer.Instance);
+    public HashSet<ThumbLoader.Pix> TakeEvicted() { var e = _evicted; _evicted = new(ReferenceEqualityComparer.Instance); return e; }
+    public bool IsResident(ThumbLoader.Pix p) => _where.ContainsKey(p);
+
     private void Empty(PageInfo o)
     {
-        foreach (var k in o.Keys) _where.Remove(k);
+        foreach (var k in o.Keys) { _where.Remove(k); if (k.Data.Length == 0) _evicted.Add(k); }
         o.Keys.Clear(); o.Shelves.Clear(); o.Top = 0;
         Evictions++;
     }

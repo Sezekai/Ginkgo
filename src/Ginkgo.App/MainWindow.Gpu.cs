@@ -112,12 +112,15 @@ public partial class MainWindow
     /// <summary>The GIF settings (Settings → GPU grid, and GIFs playing at once in Optimisations).</summary>
     public void ApplyGifSettings()
     {
+        View.CardOnly = _settings.GpuCardOnly;
+        if (!_settings.GpuCardOnly && View.UsingGpu) _loader?.ForgetCardOnly();      // memory copies wanted again: reload them
         if (_player is null) return;
         _player.Animate = _settings.GifAnimate;
         _player.CrossFade = _settings.GifCrossFade;
         _player.CrossFadeSec = _settings.GifCrossFadeSec;
         _player.FixedFps = _settings.GifFps;
         _player.Limit = _settings.GifLimit;
+        View.CardOnly = _settings.GpuCardOnly;
         if (_engine.GifMaker is { } gm) gm.CapMs = (int)(_settings.GifLengthSec * 1000);
         View.Refresh();
     }
@@ -216,6 +219,8 @@ public partial class MainWindow
         string renderer = View.UsingGpu ? "GPU" : _settings.Renderer == "GPU"
             ? (_gpuChecking ? "GPU chosen (checking...)" : "Current (" + (_gpuFallback.Length > 0 ? _gpuFallback : "GPU grid not started") + ")")
             : "Current";
+        if (View.Gpu is { } g0 && _loader is { } ld)
+            renderer += $" | decoded in memory {ld.CachedBytes / 1048576} MB, {ld.CardOnlyCount:N0} only on the card{(View.CardOnly ? "" : " (keeping copies in memory)")}";
         if (View.Gpu is { } gg)
             renderer += $" | vram {gg.UsedBytes / 1048576} / {gg.BudgetBytes / 1048576} MB ({gg.PageCount} pages, {gg.Evictions} emptied) | uploads {Perf.GpuUploads}/s, max {Perf.GpuUploadMax:F1} ms, waiting {Perf.GpuWaiting} | gpu draw {Perf.GpuDrawMax:F1} ms (card {Perf.GpuTimeMax:F2} ms)";
         string gpu = _gpu is null ? "not checked" : _gpu.Ok ? _gpu.Short : $"{(_gpu.Name.Length > 0 ? _gpu.Name + ", " : "")}{_gpu.FailedStep}: {_gpu.Status}";

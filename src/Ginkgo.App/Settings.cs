@@ -34,6 +34,8 @@ public sealed class AppSettings
     /// <summary>Times in a row Ginkgo did not close cleanly while the GPU grid was on; at 2 it starts with Current.</summary>
     public int GpuUncleanExits { get; set; }
     public bool GifAnimate { get; set; } = true;
+    /// <summary>GPU grid: decoded pictures are kept only on the card (memory holds just what's waiting to be uploaded).</summary>
+    public bool GpuCardOnly { get; set; } = true;
     public double GifLengthSec { get; set; } = 5;
     public bool GifCrossFade { get; set; } = true;
     public double GifCrossFadeSec { get; set; } = 0.3;

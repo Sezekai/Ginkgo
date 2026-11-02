@@ -676,6 +676,52 @@ public sealed class ThumbLoader : IDisposable
         if (!_done.IsEmpty && Interlocked.Exchange(ref _drainQueued, 1) == 0) _ui.BeginInvoke(DispatcherPriority.Input, Drain);
     }
 
+    // ---- the GPU grid keeps the decoded pictures on the card: memory holds only what is waiting to be uploaded ----
+
+    /// <summary>Pictures whose pixels have been handed back because they're on the graphics card (the entry stays, so nothing is decoded again).</summary>
+    public int CardOnlyCount { get; private set; }
+
+    /// <summary>
+    /// UI thread. Hands back the memory of every picture the card already has (not ones in the middle of a fade). The entries stay
+    /// in the cache, so the grid keeps drawing them from the card. Returns the bytes freed.
+    /// </summary>
+    public long ReleaseToCard(Func<Pix, bool> onCard)
+    {
+        long freed = 0; int cardOnly = 0;
+        foreach (var e in _lru)
+        {
+            if (e.Pix.Data.Length == 0) { cardOnly++; continue; }
+            if (e.FadeSecs > 0 || e.Prev is not null || !onCard(e.Pix)) continue;
+            freed += e.Bytes; _bytes -= e.Bytes; e.Bytes = 0;
+            PixPool.Return(e.Pix);
+            cardOnly++;
+        }
+        CardOnlyCount = cardOnly;
+        // entries cost almost nothing now, but don't let their number run away
+        while (_cache.Count > 40000 && _lru.Last is { } last && last.Value.Pix.Data.Length == 0 && Environment.TickCount64 - last.Value.Touched > 400)
+        { _lru.RemoveLast(); _cache.Remove(last.Value.Index); }
+        return freed;
+    }
+
+    /// <summary>UI thread. The card let go of these pictures: entries that only had them there are dropped, so they're loaded again.</summary>
+    public void Forget(HashSet<Pix> gone)
+    {
+        if (gone.Count == 0) return;
+        var drop = new List<LinkedListNode<Entry>>();
+        for (var n = _lru.First; n is not null; n = n.Next)
+            if (n.Value.Pix.Data.Length == 0 && gone.Contains(n.Value.Pix)) drop.Add(n);
+        foreach (var n in drop) { _lru.Remove(n); _cache.Remove(n.Value.Index); }
+    }
+
+    /// <summary>UI thread. The GPU grid stopped: every picture that was only on the card is loaded again.</summary>
+    public void ForgetCardOnly()
+    {
+        var drop = new List<LinkedListNode<Entry>>();
+        for (var n = _lru.First; n is not null; n = n.Next) if (n.Value.Pix.Data.Length == 0) drop.Add(n);
+        foreach (var n in drop) { _lru.Remove(n); _cache.Remove(n.Value.Index); }
+        CardOnlyCount = 0;
+    }
+
     /// <summary>UI thread. A fade has finished: the picture faded from is no longer needed.</summary>
     public void EndFade(Entry e) { e.FadeSecs = 0; var p = e.Prev; e.Prev = null; PixPool.Return(p); }
 

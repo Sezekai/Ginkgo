@@ -13,6 +13,7 @@ public static class Perf
     public static int PaintedBands;
     public static double GpuDrawMax, GpuUploadMax, GpuTimeMax;
     public static int GpuWaiting;
+    public static long FreedToCard;
     public static int GpuUploads;
     public static void Add(long ticks) => BusyTicks += ticks;
     public static double Ms(long ticks) => ticks * 1000.0 / Stopwatch.Frequency;

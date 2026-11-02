@@ -134,6 +134,9 @@ public partial class SettingsWindow : Window
             Text = "The GPU grid draws the thumbnails and plays the GIFs on the NVIDIA graphics card instead of the processor. Press F3 in the grid to compare it with Current."
         });
         GpuPanel.Children.Add(_gpuStatus);
+        var cardOnly = new CheckBox { Content = "Keep decoded pictures only on the graphics card (frees the memory they took; F3 shows how much)", Foreground = Brush("#E4E4E8"), IsChecked = _s.GpuCardOnly, Margin = new Thickness(0, 0, 0, 6) };
+        cardOnly.Click += (_, _) => { _s.GpuCardOnly = cardOnly.IsChecked == true; _main.ApplySettings(); };
+        GpuPanel.Children.Add(cardOnly);
         var buttons = new WrapPanel();
         var again = new Button { Content = "Check again" };
         again.Click += (_, _) => RunGpuCheck();

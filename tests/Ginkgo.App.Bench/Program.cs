@@ -351,6 +351,15 @@ static void GpuKeepsOld()
         if (kept[i] == 46 && kept[i + 1] == 40 && kept[i + 2] == 40) grey++;
         if (after[i] == t.Pix!.Data[0] && after[i + 1] == t.Pix.Data[1]) now++;
     }
+    // phase 5: the pixels in memory are handed back once the card has them; the grid keeps drawing them, and says when the card lets go
+    foreach (var t in b) t.Pix!.Data = Array.Empty<byte>();
+    bool resident = b.All(t => grid.IsResident(t.Pix!));
+    grid.Render(b, 0, W, H, bg, 1000);
+    var cardOnly = grid.ReadBack();
+    int stillShown = b.Count(t => { int i = ((t.Y + t.H / 2) * W + t.X + t.W / 2) * 4; return cardOnly[i] == after[i] && cardOnly[i + 1] == after[i + 1]; });
+    grid.ForgetAll();
+    int told = grid.TakeEvicted().Count(p => b.Any(t => ReferenceEquals(t.Pix, p)));
+    Console.WriteLine((resident && stillShown == 12 && told == 12 ? "::notice::" : "::error::") + $"GPU grid draws pictures kept only on the card: resident {resident}, shown {stillShown}/12, reported when let go {told}/12");
     bool ok = waited && done && same == 12 && grey == 0 && now == 12;
     Console.WriteLine((ok ? "::notice::" : "::error::") + $"GPU grid keeps old pictures while new ones wait: waited {waited}, kept {same}/12, grey {grey}, then shown {now}/12");
 }
