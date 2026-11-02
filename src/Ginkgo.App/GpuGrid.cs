@@ -323,6 +323,9 @@ float4 PS(VO v) : SV_Target
             // full: empty the page used longest ago (never one holding a picture on screen now)
             PageInfo? old = null;
             foreach (var pg in _pages) if (pg.Used < _frame && (old is null || pg.Used < old.Used)) old = pg;
+            // every page holds something on screen (a size change: old and new pictures at once): the screen comes first, so
+            // add a page anyway (up to the most allowed); the thumbnails on the card give room back within a few seconds
+            if (old is null && _pages.Count < MaxPages) { NewPage(); continue; }
             if (old is null) return null;
             Empty(old);
         }

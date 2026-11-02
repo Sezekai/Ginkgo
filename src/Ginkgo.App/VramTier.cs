@@ -16,7 +16,7 @@ public static class GpuMemory
     /// <summary>Kept free on the card for WPF and Windows.</summary>
     public const long Spare = 256L << 20;
     /// <summary>The GPU grid can always have this much, whatever the thumbnails hold.</summary>
-    public const long GridFloor = 256L << 20;
+    public const long GridFloor = 512L << 20;      // the screen's pictures always get this, before thumbnails and GIF versions
 }
 
 /// <summary>
