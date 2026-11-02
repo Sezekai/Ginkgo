@@ -89,6 +89,7 @@ public partial class MainWindow
                 _player.Loaded += () => Dispatcher.BeginInvoke(View.Refresh);
                 ApplyGifSettings();
                 View.Player = _player;
+                _gifs.BudgetPerGif = 384L << 20; _gifs.MaxFrames = 3000;     // only the hovered GIF plays the original: full quality, full length
                 View.IdOf = i => _model is not null && i >= 0 && i < _order.Length && _order[i] >= 0 && _order[i] < _model.Id.Length ? _model.Id[_order[i]] : -1;
             }
         }
@@ -119,6 +120,7 @@ public partial class MainWindow
     private void StopGrid()
     {
         View.Player = null;
+        _gifs.BudgetPerGif = 24L << 20; _gifs.MaxFrames = 300;
         View.UseGpu(null, null);
         try { _grid?.Dispose(); } catch { }
         try { _presenter?.Dispose(); } catch { }
@@ -215,7 +217,7 @@ public partial class MainWindow
         var vw = _engine.Warmer;
         string vram = vw.Vram is { } vt && vw.VramActive ? $" | thumbs on card {vt.Bytes / 1073741824.0:F1} GB, {Interlocked.Read(ref vt.Reads)} lookups, refused {vt.Refused}, remade {vw.VramRemade}" : "";
         string play = View.UsingGpu && _player is { } pl
-            ? $" | gifs {pl.Playing}/{pl.OnScreen} playing at {pl.Fps} fps, {pl.TierNote}{(pl.Paused ? ", paused (Ginkgo not in front)" : "")}, {(View.Gpu?.GifTextures ?? 0)} on card ({(View.Gpu?.GifBytes ?? 0) / 1048576} MB), {pl.RamBytes / 1048576} MB in memory" : "";
+            ? $" | gifs {pl.Playing}/{pl.OnScreen} playing at {pl.Fps} fps, {pl.TierNote}{(pl.Paused ? ", paused (Ginkgo not in front)" : "")}, {(View.Gpu?.GifTextures ?? 0)} on card ({(View.Gpu?.GifBytes ?? 0) / 1048576} MB), {pl.RamBytes / 1048576} MB in memory, {pl.Waiting} waiting to be read, {View.Gpu?.LastGifsWaiting ?? 0} waiting for the card" : "";
         string gifr = _engine.GifMaker is { } gm && gm.Stats.Running
             ? $" | gif renditions {gm.Stats.Made:N0}/{gm.Stats.Animated - gm.Stats.Stills:N0} made, {gm.Stats.Pending:N0} to do, {gm.Stats.Bytes / 1048576:N0} MB{(gm.Stats.Paused ? ", paused while scrolling" : "")}{(gm.Stats.Failed > 0 ? $", {gm.Stats.Failed} failed" : "")}" : "";
         return vram + play + gifr + $" | renderer {renderer} | gpu {gpu} | gifs {_gifs.Playing} playing (limit {(_gifs.Limit == 0 ? "all" : _gifs.Limit.ToString())}) | device resets {GpuDeviceResets}";

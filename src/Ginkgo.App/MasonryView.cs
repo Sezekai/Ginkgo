@@ -507,6 +507,9 @@ public sealed class MasonryView : FrameworkElement
     private ThumbLoader.Pix? _hoverOver;
     private readonly List<(int index, long id, int w, int h, double dist)> _gpuGifs = new();
 
+    /// <summary>The first and last tile on screen (approximately: the drawn strips).</summary>
+    public (int first, int last) VisibleRange() => _visible.Count == 0 ? (0, -1) : (_visible.Min(), _visible.Max());
+
     /// <summary>The GIF tiles on screen now (for making their GPU versions first).</summary>
     public List<int> VisibleGifs()
     {

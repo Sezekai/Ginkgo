@@ -34,7 +34,8 @@ public sealed class GifClip
     public Ginkgo.Data.GifRendition R = null!;
     /// <summary>When it started playing (ms), so each GIF starts at its first frame.</summary>
     public long Start;
-    public long Bytes => R.Blocks.Length;
+    /// <summary>Its frames are on the card (set by the grid).</summary>
+    public volatile bool OnCard;
 }
 
 /// <summary>
@@ -140,15 +141,16 @@ float4 PS(VO v) : SV_Target
     private readonly List<GifTex> _gifSlots = new();
     private long _gifBytes;
     /// <summary>The most graphics memory the playing GIFs may take.</summary>
-    public long MaxGifBytes { get; set; } = 512L << 20;
+    public long MaxGifBytes { get; set; } = 1024L << 20;
     public long GifBytes => _gifBytes;
     public int GifTextures => _gifs.Count;
-    public int LastGifsDrawn;
+    public int LastGifsDrawn, LastGifsWaiting;
 
     private void FreeGif(GifClip c, GifTex g)
     {
         g.View.Dispose(); g.Tex.Dispose();
         _gifs.Remove(c);
+        c.OnCard = false;
         _gifBytes -= g.Bytes;
         Interlocked.Add(ref GpuMemory.GridBytes, -g.Bytes);
     }
@@ -161,7 +163,10 @@ float4 PS(VO v) : SV_Target
         if (r.Frames <= 0 || r.Blocks.Length < (long)r.FrameBytes * r.Frames || Stopwatch.GetTimestamp() > budgetEnd) return null;
         long bytes = r.Blocks.Length;
         // room: let go of GIFs not on screen, oldest first
-        while (_gifBytes + bytes > MaxGifBytes)
+        var (budget, _) = VramTier.Allowance(_adapter3);
+        bool Over() => _gifBytes + bytes > MaxGifBytes ||
+            (budget > 0 && Interlocked.Read(ref GpuMemory.GridBytes) + Interlocked.Read(ref GpuMemory.ThumbBytes) + bytes + GpuMemory.Spare > budget * 0.9);
+        while (Over())
         {
             GifClip? old = null; GifTex? og = null;
             foreach (var (k, v) in _gifs) if (v.Used < _frame && (og is null || v.Used < og.Used)) { old = k; og = v; }
@@ -183,6 +188,7 @@ float4 PS(VO v) : SV_Target
             g = new GifTex { Tex = tex, View = _dev.CreateShaderResourceView(tex), Bytes = bytes, Used = _frame, UsedAt = Environment.TickCount64 };
         }
         _gifs[c] = g;
+        c.OnCard = true;
         _gifBytes += bytes;
         Interlocked.Add(ref GpuMemory.GridBytes, bytes);
         LastUploads++;
@@ -368,7 +374,8 @@ float4 PS(VO v) : SV_Target
         }
         _gifSlots.Clear();
         var gifSlot = new Dictionary<GifTex, int>();
-        int gifsDrawn = 0;
+        int gifsDrawn = 0, gifWaiting = 0;
+        long gifBudgetEnd = Stopwatch.GetTimestamp() + (long)(6.0 * Stopwatch.Frequency / 1000);   // GIFs get their own upload time
 
         // 2. the instances (uploading what's new, on-screen tiles nearest the top first)
         if (_buf.Length < tiles.Count) { _buf = new Inst[tiles.Count * 2]; _order = new (int, int, int)[tiles.Count * 2]; _sorted = new Inst[tiles.Count * 2]; }
@@ -385,8 +392,11 @@ float4 PS(VO v) : SV_Target
             Col(ref i, t.Fill);
             i.Alpha = Math.Clamp(t.A, 0, 1);
             int page = -1, prevPage = -1;
-            if (t.Gif is { } clip && PlaceGif(clip, budgetEnd) is { } gtex)
+            GifTex? gtex = t.Gif is { } gc ? PlaceGif(gc, gifBudgetEnd) : null;
+            if (t.Gif is { } gw && gtex is null && gw.R.Blocks.Length > 0) gifWaiting++;     // in memory, waiting for upload time
+            if (gtex is not null)
             {
+                var clip = t.Gif!;
                 if (!gifSlot.TryGetValue(gtex, out int sl)) { sl = _gifSlots.Count; _gifSlots.Add(gtex); gifSlot[gtex] = sl; }
                 var r = clip.R;
                 i.Mode = 3; i.Alpha = 1;
@@ -423,7 +433,7 @@ float4 PS(VO v) : SV_Target
             _order[n] = (page, prevPage, n);
             n++;
         }
-        _waiting = waiting; LastWaiting = waiting; LastGifsDrawn = gifsDrawn;
+        _waiting = waiting; LastWaiting = waiting; LastGifsDrawn = gifsDrawn; LastGifsWaiting = gifWaiting;
         if (_shown.Count > 20000) _shown.Clear();
         var t1 = Stopwatch.GetTimestamp();
         LastUploadMs = (t1 - t0) * 1000.0 / Stopwatch.Frequency;
@@ -495,7 +505,7 @@ float4 PS(VO v) : SV_Target
             foreach (var pg in _pages.Where(p => p.Used < _frame && (now - p.UsedAt > 10_000 || over)).OrderBy(p => p.Used).Take(over ? 2 : 1).ToList()) FreePage(pg);
         }
         LastDrawMs = (Stopwatch.GetTimestamp() - t1) * 1000.0 / Stopwatch.Frequency;
-        return waiting == 0;
+        return waiting == 0 && LastGifsWaiting == 0;
     }
 
     [StructLayout(LayoutKind.Sequential)] private struct Disjoint { public ulong Frequency; public int IsDisjoint; public int Pad; }

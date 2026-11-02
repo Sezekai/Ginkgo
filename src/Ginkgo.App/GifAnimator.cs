@@ -12,8 +12,9 @@ public sealed class GifAnimator
 {
     /// <summary>How many GIFs play at once (0 = every one on screen).</summary>
     public int Limit { get; set; } = 20;
-    private const long BudgetPerGif = 24L << 20;     // decoded frames of one GIF; bigger ones are kept at a lower resolution
-    private const int MaxFrames = 300;
+    /// <summary>Decoded frames of one GIF; bigger ones are kept at a lower resolution. Raised for the hovered GIF in the GPU grid (full quality).</summary>
+    public long BudgetPerGif { get; set; } = 24L << 20;
+    public int MaxFrames { get; set; } = 300;
 
     private sealed class Anim
     {
@@ -115,21 +116,34 @@ public sealed class GifAnimator
                 var frames = new ThumbLoader.Pix[count];
                 var ends = new int[count];
                 int t = 0;
+                // frames that later frames draw on top of (other than the one just before) are kept, so "restore to previous" is right
+                var keep = new Dictionary<int, int>();
+                for (int f = 0; f < count; f++) { int rq = infos[f].RequiredFrame; if (rq >= 0 && rq != f - 1) keep[rq] = f; }
+                var saved = new Dictionary<int, byte[]>();
+                int bytes = info.Width * info.Height * 4, have = -1;
                 for (int f = 0; f < count; f++)
                 {
                     ct.ThrowIfCancellationRequested();
                     int req = infos[f].RequiredFrame;
                     if (req < 0) canvas.Erase(SKColors.Transparent);
+                    else if (req != have)
+                    {
+                        if (saved.TryGetValue(req, out var st)) System.Runtime.InteropServices.Marshal.Copy(st, 0, canvas.GetPixels(), bytes);
+                        else canvas.Erase(SKColors.Transparent);
+                    }
                     var opts = new SKCodecOptions(f, req);
                     var res = codec.GetPixels(info, canvas.GetPixels(), opts);
                     if (res != SKCodecResult.Success && res != SKCodecResult.IncompleteInput) { count = f; break; }
+                    have = f;
+                    if (keep.ContainsKey(f)) { var cp = new byte[bytes]; System.Runtime.InteropServices.Marshal.Copy(canvas.GetPixels(), cp, 0, bytes); saved[f] = cp; }
+                    foreach (var done in keep.Where(p => p.Value == f).Select(p => p.Key).ToList()) { saved.Remove(done); keep.Remove(done); }
                     using var small = canvas.Resize(new SKImageInfo(ow, oh, SKColorType.Bgra8888, SKAlphaType.Premul), SKFilterQuality.Medium);
                     if (small is null) { count = f; break; }
                     var data = new byte[ow * oh * 4];
                     System.Runtime.InteropServices.Marshal.Copy(small.GetPixels(), data, 0, data.Length);
                     frames[f] = new ThumbLoader.Pix { Data = data, W = ow, H = oh, SrcW = ow };
                     int d = infos[f].Duration;
-                    t += d < 20 ? 100 : d;                                          // like browsers: very short delays play at 10 per second
+                    t += d <= 10 ? 100 : d;                                          // like browsers: very short delays play at 10 per second
                     ends[f] = t;
                 }
                 if (count <= 1) return;

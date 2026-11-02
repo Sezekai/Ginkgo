@@ -13,8 +13,6 @@ public sealed class GifPlayer
 {
     private readonly GifRenditionMaker _maker;
     private readonly Dictionary<(long id, int tier), GifClip> _clips = new();
-    private readonly ConcurrentQueue<(long id, int tier)> _load = new();
-    private readonly HashSet<(long id, int tier)> _loading = new();
     private readonly object _lock = new();
     private readonly LinkedList<(long id, int tier)> _lru = new();
     private long _ramBytes;
@@ -49,15 +47,22 @@ public sealed class GifPlayer
         t.Start();
     }
 
+    /// <summary>Which size the GIFs on screen would use at this tile size (for reading ahead).</summary>
+    public int TierFor(double tilePx) { var (_, rule) = Table(Math.Max(RowFor(OnScreen), _row)); return rule >= 0 ? rule : tilePx <= 200 ? 0 : 1; }
+
     /// <summary>The governor's table: how many GIFs on screen → frame rate and size.</summary>
     private static (int fps, int tier) Table(int row) => row switch { 0 => (15, 1), 1 => (12, -1), 2 => (10, 0), _ => (8, 0) };
     private static int RowFor(int count) => count <= 20 ? 0 : count <= 100 ? 1 : count <= 300 ? 2 : 3;
 
-    /// <summary>Once a second: how many frames came late in the last second (the governor steps down, and back up after 3 calm seconds).</summary>
-    public void Tick(int slowFrames)
+    /// <summary>
+    /// Once a second: frames that came late because of Ginkgo's own work in the last second, and the card's drawing time. The
+    /// governor steps down when either is high, and back up after 3 calm seconds. (Late frames from elsewhere, like Windows copying
+    /// each frame to the other graphics chip, happen with or without GIFs, so they don't count.)
+    /// </summary>
+    public void Tick(int ourSlowFrames, double gpuMs)
     {
         long now = NowMs;
-        if (slowFrames > 3) { _row = Math.Min(3, _row + 1); _calmSince = now; }
+        if (Playing > 0 && (ourSlowFrames > 2 || gpuMs > 8)) { _row = Math.Min(3, _row + 1); _calmSince = now; }
         else if (now - _calmSince > 3000 && _row > 0) { _row--; _calmSince = now; }
         if (now - _lastHaveRefresh > 5000) { _lastHaveRefresh = now; ThreadPool.QueueUserWorkItem(_ => RefreshHave()); }
     }
@@ -118,53 +123,101 @@ public sealed class GifPlayer
             result[g.index] = (clip, a, b, w);
         }
         Playing = n;
+        DropUploaded();
         return result;
     }
     private long _pausedAt;
 
-    /// <summary>The rendition if it's in memory; otherwise asks for it (from the drive, or to be made) and returns null.</summary>
+    /// <summary>
+    /// The rendition if it can be drawn now (its frames are on the card, or in memory ready to upload). Otherwise asks for it (read from
+    /// the drive, or made first) and returns null.
+    /// </summary>
     private GifClip? Clip(long id, int tier)
     {
         var key = (id, tier);
         lock (_lock)
         {
-            if (_clips.TryGetValue(key, out var c))
+            if (_clips.TryGetValue(key, out var c) && (c.OnCard || c.R.Blocks.Length > 0))
             {
-                _lru.Remove(key); _lru.AddFirst(key);
+                if (c.R.Blocks.Length > 0) { _lru.Remove(key); _lru.AddFirst(key); }
                 return c;
             }
-            if (_loading.Contains(key)) return null;
             if (!_have.ContainsKey(key)) { if (tier == 0) _maker.Want(new[] { id }); return null; }
-            _loading.Add(key);
+            _wantNow[key] = NowMs;          // on screen now: read before anything else
         }
-        _load.Enqueue(key);
-        _signal.Release();
+        _wake.Set();
         return null;
     }
 
-    private readonly SemaphoreSlim _signal = new(0);
+    /// <summary>GIFs just off screen (above and below): read ahead into memory so they play as soon as they scroll in.</summary>
+    public void Prefetch(List<(long id, int tier)> ahead)
+    {
+        lock (_lock) { _ahead.Clear(); foreach (var k in ahead) if (_have.ContainsKey(k)) _ahead.Add(k); }
+        _wake.Set();
+    }
+
+    /// <summary>Once the grid has a GIF's frames on the card, the copy in memory isn't needed (it's read again if the card lets go of it).</summary>
+    public void DropUploaded()
+    {
+        lock (_lock)
+        {
+            foreach (var key in _lru.ToList())
+                if (_clips.TryGetValue(key, out var c) && c.OnCard && c.R.Blocks.Length > 0)
+                {
+                    _ramBytes -= c.R.Blocks.Length; c.R.Blocks = Array.Empty<byte>(); _lru.Remove(key);
+                }
+        }
+    }
+
+    private readonly Dictionary<(long, int), long> _wantNow = new();
+    private readonly List<(long, int)> _ahead = new();
+    private readonly AutoResetEvent _wake = new(false);
     /// <summary>Called when a rendition has been read from the drive (redraw).</summary>
     public event Action? Loaded;
+    public int Reads, Waiting;
+
+    private (long, int)? Next()
+    {
+        lock (_lock)
+        {
+            long now = NowMs;
+            // on screen: the most recently wanted first; ones scrolled past a while ago are dropped
+            (long, int)? best = null; long bestAt = long.MinValue;
+            foreach (var (k, at) in _wantNow.ToList())
+            {
+                if (now - at > 1500 || (_clips.TryGetValue(k, out var c0) && (c0.OnCard || c0.R.Blocks.Length > 0))) { _wantNow.Remove(k); continue; }
+                if (at > bestAt) { best = k; bestAt = at; }
+            }
+            Waiting = _wantNow.Count;
+            if (best is { } b) { _wantNow.Remove(b); return b; }
+            // then the ones just off screen, while there's room in memory
+            if (_ramBytes < MaxRamBytes * 0.8)
+                foreach (var k in _ahead)
+                    if (!_clips.TryGetValue(k, out var c1) || (!c1.OnCard && c1.R.Blocks.Length == 0)) { _ahead.Remove(k); return k; }
+            return null;
+        }
+    }
 
     private void LoadLoop()
     {
         while (true)
         {
-            _signal.Wait();
-            if (!_load.TryDequeue(out var key)) continue;
+            var next = Next();
+            if (next is not { } key) { _wake.WaitOne(500); continue; }
             GifRendition? r = null;
-            try { r = _maker.Load(key.id, key.tier); } catch { }
+            try { r = _maker.Load(key.Item1, key.Item2); Reads++; } catch { }
+            if (r is null) continue;
             lock (_lock)
             {
-                _loading.Remove(key);
-                if (r is null) continue;
-                _clips[key] = new GifClip { Id = key.id, Tier = key.tier, R = r };
-                _lru.AddFirst(key);
+                if (_clips.TryGetValue(key, out var old)) { if (old.R.Blocks.Length > 0) _ramBytes -= old.R.Blocks.Length; old.R = r; }
+                else _clips[key] = new GifClip { Id = key.Item1, Tier = key.Item2, R = r };
+                _lru.Remove(key); _lru.AddFirst(key);
                 _ramBytes += r.Blocks.Length;
+                // over the memory limit: let go of the frames read longest ago (only frames still waiting for the card are here)
                 while (_ramBytes > MaxRamBytes && _lru.Count > 1)
                 {
-                    var old = _lru.Last!.Value; _lru.RemoveLast();
-                    if (_clips.Remove(old, out var oc)) _ramBytes -= oc.R.Blocks.Length;
+                    var o = _lru.Last!.Value; _lru.RemoveLast();
+                    if (_clips.TryGetValue(o, out var oc) && oc.R.Blocks.Length > 0) { _ramBytes -= oc.R.Blocks.Length; oc.R.Blocks = Array.Empty<byte>(); }
                 }
             }
             Loaded?.Invoke();
@@ -172,4 +225,5 @@ public sealed class GifPlayer
     }
 
     public long RamBytes { get { lock (_lock) return _ramBytes; } }
+    public int Known { get { lock (_lock) return _clips.Count; } }
 }

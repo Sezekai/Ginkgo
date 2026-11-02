@@ -464,13 +464,25 @@ public partial class MainWindow : Window
         _fps = _frames / ((now - _lastTick) / (double)Stopwatch.Frequency); _frames = 0; _lastTick = now;
         if (_syncPending) SyncBar();
         if (_engine.Warmer.Vram is { Alive: false }) ApplyVramTier();
-        _player?.Tick(_slowFrames - _slowAtLastTick);
-        _slowAtLastTick = _diag ? 0 : _slowFrames;
+        // the governor goes by frames that came late because of Ginkgo's own work (not Windows' copy to the other chip), and the card's time
+        _player?.Tick(_slowOurs - _slowAtLastTick, View.Gpu?.GpuMs ?? 0);
+        _slowAtLastTick = _diag ? 0 : _slowOurs;
         if (_engine.GifMaker is { } gm && gm.Stats.Running && _model is not null)
         {
             gm.CapMs = (int)(_settings.GifLengthSec * 1000);
             var gifIds = View.VisibleGifs().Where(i => i < _order.Length && _order[i] >= 0 && _order[i] < _model.Id.Length).Select(i => _model.Id[_order[i]]).ToList();
             if (gifIds.Count > 0) gm.Want(gifIds);
+            // read the GIFs just off screen into memory, so they play as soon as they scroll in
+            if (_player is { } pl && View.UsingGpu && View.Badges is { } bd && bd.Length > 0)
+            {
+                var vis = View.VisibleRange();
+                int tier = pl.TierFor(View.TileTarget * VisualTreeHelper.GetDpi(View).PixelsPerDip);
+                var ahead = new List<(long, int)>();
+                void Add(int i) { if (i >= 0 && i < bd.Length && bd[i] == 1 && i < _order.Length && _order[i] >= 0 && _order[i] < _model.Id.Length) ahead.Add((_model.Id[_order[i]], tier)); }
+                for (int i = vis.last + 1; i < Math.Min(bd.Length, vis.last + 400) && ahead.Count < 150; i++) Add(i);
+                for (int i = vis.first - 1; i >= Math.Max(0, vis.first - 150) && ahead.Count < 200; i--) Add(i);
+                pl.Prefetch(ahead);
+            }
         }
         double tilePx = View.TileTarget * VisualTreeHelper.GetDpi(View).PixelsPerDip;
         _engine.Warmer.Preferred = tilePx <= 120 ? 0 : tilePx <= 200 ? 1 : 2;
