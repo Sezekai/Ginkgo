@@ -159,6 +159,34 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <!-- the viewer's video bar: square buttons the full height of the bar, side by side -->
+        <Style x:Key="VBtn" TargetType="ButtonBase">
+            <Setter Property="Foreground" Value="#F0F0F4"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="Width" Value="48"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ButtonBase">
+                        <Border x:Name="B" Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#26FFFFFF"/></Trigger>
+                            <Trigger Property="IsPressed" Value="True"><Setter TargetName="B" Property="Background" Value="#40FFFFFF"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="VToggle" TargetType="ToggleButton" BasedOn="{StaticResource VBtn}">
+            <Style.Triggers>
+                <Trigger Property="IsChecked" Value="True"><Setter Property="Foreground" Value="#7EC98A"/></Trigger>
+                <Trigger Property="IsChecked" Value="False"><Setter Property="Foreground" Value="#8A8A94"/></Trigger>
+            </Style.Triggers>
+        </Style>
         <Style x:Key="CloseButton" TargetType="Button" BasedOn="{StaticResource IconButton}">
             <Setter Property="Template">
                 <Setter.Value>

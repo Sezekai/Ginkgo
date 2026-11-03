@@ -100,7 +100,7 @@ public partial class MainWindow : Window
         View.ScrollChanged += BarScroll;
         View.ScrollChanged += () => Interlocked.Exchange(ref _engine.Pipe.LastUiActivity, Stopwatch.GetTimestamp());
         View.HoverChanged += i => StatusText.Text = IsFolderTile(i) ? FolderHoverText(i) : i >= 0 && i < _paths.Length ? HoverText(i) : StatusLine();
-        View.ItemActivated += i => { if (RecentlyNavigated()) return; if (IsFolderTile(i)) OpenFolder(_page!.Tiles[i].Path); else OpenViewer(i); };
+        View.ItemActivated += i => { if (RecentlyNavigated() || (Stopwatch.GetTimestamp() - _viewerClosedAt) * 1000 < 500 * Stopwatch.Frequency) return; if (IsFolderTile(i)) OpenFolder(_page!.Tiles[i].Path); else OpenViewer(i); };
         InitBrowse();
         InitVideo();
         _gifs = new GifAnimator(i => i >= 0 && i < _paths.Length ? _paths[i] : null, () => Dispatcher.BeginInvoke(View.Refresh));
@@ -387,6 +387,38 @@ public partial class MainWindow : Window
         _optPopup.IsOpen = true;
         ApplyBar();
     }
+    private System.Windows.Controls.Primitives.Popup? _quickPopup;
+    private QuickPanel? _quick;
+    private long _quickClosedAt;
+
+    /// <summary>The Quick toggles pop-out: how videos behave in the grid, and the outlines round paused and watched ones.</summary>
+    private void OnQuick(object s, RoutedEventArgs e)
+    {
+        if (_quick is null)
+        {
+            _quick = new QuickPanel(_settings);
+            _quick.Changed += () => { ApplyVideoLook(); SaveSettings(); };
+            _quickPopup = new System.Windows.Controls.Primitives.Popup
+            {
+                PlacementTarget = QuickBtn, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom, StaysOpen = false,
+                AllowsTransparency = true, PopupAnimation = System.Windows.Controls.Primitives.PopupAnimation.Fade, VerticalOffset = 2,
+                Child = new Border { Margin = new Thickness(6, 0, 20, 20), Child = _quick }
+            };
+            _quickPopup.Closed += (_, _) => { _quickClosedAt = Stopwatch.GetTimestamp(); ApplyBar(); };
+        }
+        if (_quickPopup!.IsOpen) { _quickPopup.IsOpen = false; return; }
+        if ((Stopwatch.GetTimestamp() - _quickClosedAt) / (double)Stopwatch.Frequency < 0.25) return;
+        _quick.Sync();
+        _quick.Width = Math.Min(420, Math.Max(280, ActualWidth - 48));
+        _quick.MaxHeight = Math.Max(300, ActualHeight - 120);
+        var btn = QuickBtn.IsVisible ? QuickBtn : (FrameworkElement)MoreBtn;
+        _quickPopup.PlacementTarget = btn;
+        double x0 = btn.TranslatePoint(new Point(0, 0), this).X;
+        _quickPopup.HorizontalOffset = Math.Min(0, ActualWidth - 10 - (_quick.Width + 26) - x0);
+        _quickPopup.IsOpen = true;
+        ApplyBar();
+    }
+
     private void OpenSettings() => new SettingsWindow(this, _settings, _engine) { Owner = this }.ShowDialog();
 
     private void OnUpdateView(object s, RoutedEventArgs e) => _ = ReloadModel(true);
@@ -635,6 +667,7 @@ public partial class MainWindow : Window
             case Key.S: OpenSettings(); e.Handled = true; break;
             case Key.T: OpenHoveredOrFirst(); e.Handled = true; break;
             case Key.O: RevealBar(); OnOptimise(this, e); e.Handled = true; break;
+            case Key.Q: RevealBar(); OnQuick(this, e); e.Handled = true; break;
             case Key.F: case Key.F11: ToggleFullscreen(); e.Handled = true; break;
             case Key.F3: StepDiag(); e.Handled = true; break;
             case Key.M: SetSidebar(!_sideOpen); e.Handled = true; break;
@@ -721,6 +754,25 @@ public partial class MainWindow : Window
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern int GetSystemMetricsForDpi(int index, uint dpi);
     [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr hwnd);
 
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hwnd, out RectI rect);
+    private bool _edgeRecheck;
+
+    /// <summary>How far a maximised window reaches past the monitor's work area on each side (in WPF units), or null if unknown.</summary>
+    private Thickness? MaxOverhang(IntPtr hwnd)
+    {
+        if (!GetWindowRect(hwnd, out var wr)) return null;
+        var mi = new MonitorInfo { Size = System.Runtime.InteropServices.Marshal.SizeOf<MonitorInfo>() };
+        if (!GetMonitorInfo(MonitorFromWindow(hwnd, 2), ref mi)) return null;
+        var src = PresentationSource.FromVisual(this)?.CompositionTarget;
+        if (src is null) return null;
+        var m = src.TransformFromDevice;
+        double sx = m.M11, sy = m.M22;
+        var w = mi.Work;
+        double l = Math.Max(0, w.L - wr.L) * sx, t = Math.Max(0, w.T - wr.T) * sy, r = Math.Max(0, wr.R - w.R) * sx, b = Math.Max(0, wr.B - w.B) * sy;
+        if (l > 40 || t > 40 || r > 40 || b > 40) return null;          // not what a maximised window looks like
+        return new Thickness(l, t, r, b);
+    }
+
     private void UpdateEdges()
     {
         var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
@@ -730,6 +782,14 @@ public partial class MainWindow : Window
         bool snapped = !max && WindowState == WindowState.Normal && !rb.IsEmpty &&
                        (Math.Abs(rb.Width - ActualWidth) > 2 || Math.Abs(rb.Height - ActualHeight) > 2);
         Thickness pad = new(0);
+        if (max && hwnd != IntPtr.Zero && !_fullscreen && MaxOverhang(hwnd) is { } over)
+        {
+            // maximised: keep the content exactly inside the screen's work area, measured from where the window really is
+            // (the border sizes from the system don't match on every monitor and scale: that left a gap under the bottom bar)
+            WindowEdge.Margin = over;
+            if (!_edgeRecheck) { _edgeRecheck = true; Dispatcher.BeginInvoke(() => { _edgeRecheck = false; if (WindowState == WindowState.Maximized && MaxOverhang(hwnd) is { } o2) WindowEdge.Margin = o2; }, DispatcherPriority.Background); }
+            return;
+        }
         if ((max || snapped) && hwnd != IntPtr.Zero && !_fullscreen)
         {
             uint dpi = GetDpiForWindow(hwnd);
@@ -745,7 +805,7 @@ public partial class MainWindow : Window
     // ---- top bar: slides away on scroll down, back on scroll up; H hides it for good until shown again ----
 
     private bool BarPinned =>
-        _folderPopup.IsOpen || (_optPopup?.IsOpen ?? false) || _sideOpen || BarRow.Expanded || Banner.Visibility == Visibility.Visible || SearchBox.IsKeyboardFocused ||
+        _folderPopup.IsOpen || (_optPopup?.IsOpen ?? false) || (_quickPopup?.IsOpen ?? false) || _sideOpen || BarRow.Expanded || Banner.Visibility == Visibility.Visible || SearchBox.IsKeyboardFocused ||
         (TopBar.IsMouseOver && Stopwatch.GetTimestamp() > _ignoreOverUntil) || HoverStrip.IsMouseOver;
 
     private void ApplyBar()
@@ -864,7 +924,8 @@ public partial class MainWindow : Window
         {
             // the card drops down just under the menu button
             var btn = BarRow.Children.OfType<Button>().FirstOrDefault();
-            double top = btn is not null && btn.IsVisible ? btn.TranslatePoint(new Point(0, btn.ActualHeight), Root).Y + 6 : 8;
+            // measured within the bar, not where it is now: a hidden bar slides back in as the menu opens, and the menu goes under it
+            double top = btn is not null && btn.IsVisible ? btn.TranslatePoint(new Point(0, btn.ActualHeight), BarHost).Y + BarHost.TranslatePoint(new Point(0, 0), Root).Y - BarShift.Y + 6 : 8;
             double left = btn is not null && btn.IsVisible ? Math.Max(8, btn.TranslatePoint(new Point(0, 0), Root).X - 4) : 10;
             Side.Margin = new Thickness(left, Math.Max(8, top), 0, 0);
             Side.MaxHeight = Math.Max(200, Root.ActualHeight - Side.Margin.Top - 12);
@@ -909,7 +970,7 @@ public partial class MainWindow : Window
 
     private static readonly (string keys, string what)[] GridKeys =
     {
-        ("Ctrl+B  or  M", "Open or close the menu"), ("S  or  Ctrl+S", "Settings"), ("T", "Open the picture under the mouse (or the first one)"), ("O", "Optimisations (memory, GIFs)"), ("F  or  F11", "Full screen (Esc to leave)"), ("Ctrl+W", "Close Ginkgo"), ("H", "Hide or show the top bar"), ("/  or  Ctrl+F", "Search"),
+        ("Ctrl+B  or  M", "Open or close the menu"), ("S  or  Ctrl+S", "Settings"), ("T", "Open the picture under the mouse (or the first one)"), ("O", "Optimisations (memory, GIFs)"), ("Q", "Quick toggles (videos)"), ("F  or  F11", "Full screen (Esc to leave)"), ("Ctrl+W", "Close Ginkgo"), ("H", "Hide or show the top bar"), ("/  or  Ctrl+F", "Search"),
         ("G   N   V", "Show General / NSFW / Very files"), ("L", "Equal columns  or  equal rows"), ("+   -   or  Ctrl + wheel", "Picture size"),
         ("R", "Reshuffle (when sorted randomly)"), ("Home   End", "Top / bottom"), ("Page Up   Page Down", "Scroll one screen"),
         ("Enter  or  double-click", "Open the picture under the mouse"), ("Middle button", "Scroll by moving the mouse"),
@@ -917,11 +978,12 @@ public partial class MainWindow : Window
     };
     private static readonly (string keys, string what)[] ViewerKeys =
     {
-        ("Left   Right   (Space)", "Previous / next picture"), ("Home   End", "First / last picture"), ("Mouse wheel", "Zoom in and out"),
-        ("Drag", "Move a zoomed picture"), ("0", "Fit to window"), ("1", "Actual size (100%)"), ("I", "More or less information"),
-        ("H", "Hide or show the information box"), ("T  or  mouse back", "Close the viewer"), ("F  or  F11", "Full screen"), ("K", "This list"), ("Esc  or  double-click", "Leave full screen, then back to the grid"),
-        ("Space", "Video: play / pause"), (",   .", "Video: back / forward a frame"), ("Shift + Left   Right", "Video: back / forward 5 seconds"),
-        ("M", "Video: sound on / off"), ("Shift + Up   Down", "Video: volume"), ("[   ]", "Video: slower / faster"), ("L", "Video: loop on / off"),
+        ("Left   Right   (Space)", "Previous / next picture"), ("Home   End", "First / last picture"), ("Mouse wheel   Up   Down", "Zoom in and out (Up and Down: volume on a video)"),
+        ("Drag", "Move a zoomed picture"), ("1", "Fit to window"), ("2", "Actual size (100%)"), ("I", "More or less information"),
+        ("Click off the picture", "Close the viewer"), ("H", "Show or hide the information box (stays until you press it again)"), ("T  or  mouse back", "Close the viewer"), ("F  or  F11", "Full screen"), ("K", "This list"), ("Esc  or  double-click", "Leave full screen, then back to the grid"),
+        ("Space  or  click the video", "Video: play / pause"), ("9   0", "Video: back / forward 3 seconds"), ("Shift + Left   Right", "Video: back / forward 5 seconds"),
+        (",   .", "Video: back / forward a frame"), ("Up   Down", "Video: volume (3% a press, hold to keep going)"), ("M", "Video: sound on / off"),
+        ("[   ]", "Video: slower / faster"), ("L", "Video: loop on / off"),
     };
 
     private void OnKeysClick(object s, RoutedEventArgs e) => ShowKeys(false);
@@ -965,7 +1027,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, BitmapSource> _vCache = new();
     private readonly Queue<string> _vCacheOrder = new();
 
-    private long _viewerOpenedAt;
+    private long _viewerOpenedAt, _viewerClosedAt;
 
     private void OpenViewer(int index) => OpenViewer(index, remember: true);
 
@@ -998,6 +1060,7 @@ public partial class MainWindow : Window
     private void CloseViewer(bool fromUser)
     {
         if (fromUser) ForgetViewerSteps();
+        _viewerClosedAt = Stopwatch.GetTimestamp();
         _vToken++;
         ViewerRoot.Visibility = Visibility.Collapsed;
         Pic.Source = null;
@@ -1063,8 +1126,9 @@ public partial class MainWindow : Window
     /// </summary>
     private void PlaceInfo()
     {
-        InfoBox.Visibility = _infoHidden ? Visibility.Collapsed : Visibility.Visible;
-        if (_infoHidden || _model is null || _vIndex >= _order.Length) return;
+        bool hidden = _infoHidden && !_viewerVideo;          // a video's box comes and goes by itself (see the video bar)
+        InfoBox.Visibility = hidden ? Visibility.Collapsed : Visibility.Visible;
+        if (hidden || _model is null || _vIndex >= _order.Length) return;
         double HW = PicHost.ActualWidth, HH = PicHost.ActualHeight;
         if (HW < 50 || HH < 50) { HW = ActualWidth; HH = ActualHeight; }
         if (_charW60 == 0)
@@ -1097,8 +1161,16 @@ public partial class MainWindow : Window
         var s = TryMeasure(0, Math.Min(cap + 20, HW - 24));
         if (_viewerVideo)
         {
-            // a video has its controls along the bottom: the details go top left
-            InfoBox.HorizontalAlignment = HorizontalAlignment.Left; InfoBox.VerticalAlignment = VerticalAlignment.Top; InfoBox.Margin = new Thickness(12, 12, 0, 0);
+            // bottom left as always, beside the video bar: narrower and taller when there's little room; above the bar when there's none
+            double barLeft = VideoBar.IsVisible && VideoBar.ActualWidth > 0 ? VideoBar.TranslatePoint(new Point(0, 0), ViewerRoot).X : HW;
+            double room = barLeft - 12 - 10;
+            if (room >= 110)
+            {
+                s = TryMeasure(0, Math.Min(cap + 20, room));
+                if (s.Width > room || s.Height > HH - 30) s = TryMeasure(2, room);
+                Put(12, 18);
+            }
+            else { TryMeasure(0, Math.Min(cap + 20, HW - 24)); Put(12, 18 + Math.Max(48, VideoBar.ActualHeight) + 8); }
             return;
         }
         if (bottomFree > 0 && s.Height + 24 <= bottomFree) { Put(12, 12); return; }
@@ -1129,6 +1201,7 @@ public partial class MainWindow : Window
     {
         index = Math.Clamp(index, _firstFile, _paths.Length - 1);
         // (pictures you step through aren't remembered: Back closes the viewer)
+        if (index != _viewerFirstIndex) _viewerLeftFirst = true;      // other videos start from the beginning from now on
         _vIndex = index;
         ResetZoom();
         int row = _order[_vIndex];
@@ -1284,9 +1357,11 @@ public partial class MainWindow : Window
         if (e.ClickCount == 2)
         {
             // the second click of the double-click that opened the viewer must not close it again
+            _vDownValid = false;
             if ((Stopwatch.GetTimestamp() - _viewerOpenedAt) * 1000 > 600 * Stopwatch.Frequency) CloseViewer();
             e.Handled = true; return;
         }
+        ViewerClickDown(e);
         _dragging = true; _dragStart = e.GetPosition(PicHost); _dragPanX = _panX; _dragPanY = _panY;
         PicHost.CaptureMouse();
     }
@@ -1299,7 +1374,7 @@ public partial class MainWindow : Window
         ApplyTransform();
     }
 
-    private void OnViewerUp(object s, MouseButtonEventArgs e) { _dragging = false; PicHost.ReleaseMouseCapture(); }
+    private void OnViewerUp(object s, MouseButtonEventArgs e) { _dragging = false; PicHost.ReleaseMouseCapture(); ViewerClickUp(e); }
 
     private void ViewerKey(KeyEventArgs e)
     {
@@ -1307,17 +1382,22 @@ public partial class MainWindow : Window
         switch (e.Key)
         {
             case Key.Escape: if (_fullscreen) ToggleFullscreen(); else CloseViewer(); break;
-            case Key.Right: case Key.Down: case Key.PageDown: case Key.Space: if (_vIndex + 1 < _paths.Length) ShowIndex(_vIndex + 1); break;
-            case Key.Left: case Key.Up: case Key.PageUp: if (_vIndex > _firstFile) ShowIndex(_vIndex - 1); break;
+            case Key.Right: case Key.PageDown: case Key.Space: if (_vIndex + 1 < _paths.Length) ShowIndex(_vIndex + 1); break;
+            case Key.Left: case Key.PageUp: if (_vIndex > _firstFile) ShowIndex(_vIndex - 1); break;
+            case Key.Up: ZoomAt(new Point(PicHost.ActualWidth / 2, PicHost.ActualHeight / 2), _zoom * 1.18); break;
+            case Key.Down: ZoomAt(new Point(PicHost.ActualWidth / 2, PicHost.ActualHeight / 2), _zoom / 1.18); break;
             case Key.Home: ShowIndex(_firstFile); break;
             case Key.End: ShowIndex(_paths.Length - 1); break;
             case Key.F: case Key.F11: ToggleFullscreen(); break;
             case Key.K: case Key.OemQuestion: ShowKeys(true); break;
-            case Key.H: _infoHidden = !_infoHidden; UpdateInfo(_order[_vIndex]); break;
-            case Key.I: _infoMore = !_infoMore; _infoHidden = false; UpdateInfo(_order[_vIndex]); break;
+            case Key.H:
+                if (_viewerVideo) { _infoPinnedVideo = !_infoPinnedVideo; if (!_infoPinnedVideo) _infoFlashUntil = 0; else InfoBox.Opacity = 1; }
+                else { _infoHidden = !_infoHidden; UpdateInfo(_order[_vIndex]); }
+                break;
+            case Key.I: _infoMore = !_infoMore; if (_viewerVideo) { _infoPinnedVideo = true; InfoBox.Opacity = 1; } else _infoHidden = false; UpdateInfo(_order[_vIndex]); break;
             case Key.T: CloseViewer(); break;
-            case Key.D0: case Key.NumPad0: ResetZoom(); break;
-            case Key.D1: case Key.NumPad1:
+            case Key.D1: case Key.NumPad1: ResetZoom(); break;
+            case Key.D2: case Key.NumPad2:
                 {
                     int row = _order[_vIndex];
                     double f = Math.Min(PicHost.ActualWidth / Math.Max(1, _model!.W[row]), PicHost.ActualHeight / Math.Max(1, _model.H[row]));

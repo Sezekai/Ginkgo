@@ -63,6 +63,20 @@ public sealed class AppSettings
     public bool BarHidden { get; set; }
     /// <summary>The bottom bar is hidden too (second press of H).</summary>
     public bool StatusHidden { get; set; }
+
+    // ---- videos (Quick Toggles) ----
+    /// <summary>Hover previews play with sound (at the saved volume).</summary>
+    public bool PreviewSound { get; set; }
+    /// <summary>How many videos may play in the grid at once (1 to 5); starting one more pauses the one started longest ago.</summary>
+    public int VideosAtOnce { get; set; } = 1;
+    /// <summary>Videos clicked in the grid start without sound (the speaker on the tile turns it on).</summary>
+    public bool GridStartMuted { get; set; }
+    /// <summary>Outline round a paused video in the grid.</summary>
+    public OutlineStyle PausedOutline { get; set; } = new() { On = true, Colour = "#FFB000", Width = 2, Opacity = 0.9, Glow = 8, GlowStrength = 0.45 };
+    /// <summary>Outline round a watched video in the grid.</summary>
+    public OutlineStyle WatchedOutline { get; set; } = new() { On = true, Colour = "#5FAF6B", Width = 2, Opacity = 0.75, Glow = 0, GlowStrength = 0.3 };
+    /// <summary>What counts as watched: "End" (played to 90% or more) or "Started" (any of it played).</summary>
+    public string WatchedRule { get; set; } = "End";
     /// <summary>How the buttons look (shape, colours, outline, glow).</summary>
     public ButtonLook Look { get; set; } = new();
 
