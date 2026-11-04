@@ -7,8 +7,7 @@ using System.Windows.Media;
 namespace Ginkgo.App;
 
 /// <summary>
-/// The Quick toggles pop-out (in the menu bar, like Optimisations): how videos behave in the grid, and the outlines round paused
-/// and watched videos, with everything about them adjustable. Every change takes effect straight away.
+/// The Quick toggles pop-out (in the menu bar, like Optimisations): how videos behave in the grid. Every change takes effect straight away.
 /// </summary>
 public sealed class QuickPanel : Border
 {
@@ -57,35 +56,7 @@ public sealed class QuickPanel : Border
         stack.Children.Add(row);
         Sep(stack);
 
-        // ---- outlines ----
-        OutlineSection(stack, "Paused outline", "Round a video you've paused in the grid.", () => _s.PausedOutline, v => _s.PausedOutline = v,
-            new OutlineStyle { On = true, Colour = "#FFB000", Width = 2, Opacity = 0.9, Glow = 8, GlowStrength = 0.45 });
-        Sep(stack);
-        OutlineSection(stack, "Watched outline", "Round videos you've watched.", () => _s.WatchedOutline, v => _s.WatchedOutline = v,
-            new OutlineStyle { On = true, Colour = "#5FAF6B", Width = 2, Opacity = 0.75, Glow = 0, GlowStrength = 0.3 });
-        stack.Children.Add(new TextBlock { Text = "Counts as watched", Foreground = Dim, Margin = new Thickness(0, 10, 0, 6) });
-        var rule = new WrapPanel();
-        var rules = new List<(ToggleButton b, string r)>();
-        foreach (var (label, r, tip) in new[] { ("Played to the end", "End", "Played to 90% or more"), ("Started", "Started", "Any of it played") })
-        {
-            var b = Choice(label); b.ToolTip = tip; string rr = r;
-            b.Click += (_, _) => { _s.WatchedRule = rr; Sync(); Changed?.Invoke(); };
-            rules.Add((b, r)); rule.Children.Add(b);
-        }
-        _syncs.Add(() => { foreach (var (b, r) in rules) b.IsChecked = r == _s.WatchedRule; });
-        stack.Children.Add(rule);
-        Sep(stack);
-
-        var copy = new Button { Content = "Copy my outline settings", Padding = new Thickness(10, 3, 10, 3), HorizontalAlignment = HorizontalAlignment.Left };
-        var copied = new TextBlock { Foreground = Dim, Margin = new Thickness(10, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-        copy.Click += (_, _) =>
-        {
-            try { Clipboard.SetText(Describe()); copied.Text = "Copied: paste it to Claude."; } catch { copied.Text = "Couldn't copy."; }
-        };
-        var cp = new StackPanel { Orientation = Orientation.Horizontal };
-        cp.Children.Add(copy); cp.Children.Add(copied);
-        stack.Children.Add(cp);
-
+        stack.Children.Add(Note("The outlines round paused and watched videos are in Settings, under Video outlines."));
         Sync();
     }
 

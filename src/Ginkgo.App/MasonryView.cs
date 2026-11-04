@@ -64,15 +64,22 @@ public sealed class MasonryView : FrameworkElement
         public ThumbLoader.Pix? Pix;
         public byte[]? Buf;
         public int Seq = -1;
-        public Rect Mute = Rect.Empty, Bar = Rect.Empty;
+        public Rect Mute = Rect.Empty, Bar = Rect.Empty, Vol = Rect.Empty, Tile = Rect.Empty;
+        public bool IconShown;
     }
     private readonly Dictionary<int, VideoTile> _videos = new();
     /// <summary>The speaker on a playing tile was clicked.</summary>
     public event Action<int>? VideoMuteClicked;
     /// <summary>A seek on a tile's progress line: tile, where (0..1), and whether the drag has finished.</summary>
     public event Action<int, double, bool>? VideoSeek;
-    /// <summary>1 when tile i's video counts as watched (for its outline).</summary>
-    public Func<int, int>? VideoMark { get; set; }
+    /// <summary>A tile's own volume, set on the slider under its speaker (0..100).</summary>
+    public event Action<int, int>? VideoVolume;
+    /// <summary>Tile i's video: watched (for its outline), and where it was paused (-1: not paused) for the Paused label.</summary>
+    public Func<int, (bool watched, double pausedAt)>? VideoInfo { get; set; }
+    private int _volDragIndex = -1;
+    private Point _mouse = new(-1, -1);
+    private long _mouseMovedAt;
+    private bool _iconsUp;
     public OutlineStyle? PausedOutline { get; set; }
     public OutlineStyle? WatchedOutline { get; set; }
     private int _scrubIndex = -1, _dragIndex = -1;
@@ -84,13 +91,22 @@ public sealed class MasonryView : FrameworkElement
     {
         if (index < 0) return;
         _sigPrev.Remove(index);
-        if (e is null) { _videos.Remove(index); if (_dragIndex == index) EndScrubDrag(); }
+        if (e is null) { _videos.Remove(index); if (_dragIndex == index) EndScrubDrag(); if (_volDragIndex == index) EndVolDrag(); }
         else if (_videos.TryGetValue(index, out var vt) && ReferenceEquals(vt.E, e)) vt.Controls = controls;
         else _videos[index] = new VideoTile { E = e, Controls = controls };
         InvalidateVisual();
     }
     public void ClearVideos() { foreach (var k in _videos.Keys) _sigPrev.Remove(k); _videos.Clear(); EndScrubDrag(); InvalidateVisual(); }
     public bool ShowsVideo(int index) => _videos.ContainsKey(index);
+    private void EndVolDrag() { if (_volDragIndex >= 0) { _volDragIndex = -1; if (IsMouseCaptured && !_autoScroll && _dragIndex < 0) ReleaseMouseCapture(); } }
+    private void VolFromY(VideoTile vt, int index, double y)
+    {
+        var tr = VolTrack(vt.Vol);
+        int v = (int)Math.Round(Math.Clamp((tr.Bottom - y) / Math.Max(1, tr.Height), 0, 1) * 100);
+        VideoVolume?.Invoke(index, v);
+        InvalidateVisual();
+    }
+    private static Rect VolTrack(Rect panel) => new(panel.Left + panel.Width / 2 - 2, panel.Top + 8, 4, Math.Max(10, panel.Height - 30));
     private void EndScrubDrag() { if (_dragIndex >= 0) { _dragIndex = -1; if (IsMouseCaptured && !_autoScroll) ReleaseMouseCapture(); } }
 
     private readonly List<(int index, int w, int h, double dist)> _gifWanted = new();
@@ -194,7 +210,7 @@ public sealed class MasonryView : FrameworkElement
             // a video's next frame; a playing one also moves its progress line smoothly at the screen's rate
             if (vt.E.FrameSeq != vt.Seq || (vt.Controls && vt.E.Playing)) { _needsRender = true; break; }
         }
-        if (_pulseOn) _needsRender = true;
+        if (_pulseOn || _iconsUp) _needsRender = true;
         if (_fadingNow || _needsRender) { _fadingNow = false; _needsRender = false; InvalidateVisual(); }
     }
 
@@ -315,7 +331,13 @@ public sealed class MasonryView : FrameworkElement
             foreach (var (vi, vt) in _videos)
             {
                 if (!vt.Controls) continue;
-                if (vt.Mute.Contains(mp)) { _downIndex = -1; VideoMuteClicked?.Invoke(vi); e.Handled = true; return; }
+                if (vt.IconShown && vt.Mute.Contains(mp)) { _downIndex = -1; VideoMuteClicked?.Invoke(vi); e.Handled = true; return; }
+                if (!vt.Vol.IsEmpty && vt.Vol.Contains(mp))
+                {
+                    _downIndex = -1; _volDragIndex = vi; CaptureMouse();
+                    VolFromY(vt, vi, mp.Y);
+                    e.Handled = true; return;
+                }
                 if (vt.Bar.Contains(mp) && vt.Bar.Width > 0)
                 {
                     _downIndex = -1;
@@ -344,6 +366,7 @@ public sealed class MasonryView : FrameworkElement
     protected override void OnMouseUp(MouseButtonEventArgs e)
     {
         base.OnMouseUp(e);
+        if (e.ChangedButton == MouseButton.Left && _volDragIndex >= 0) { EndVolDrag(); InvalidateVisual(); e.Handled = true; return; }
         if (e.ChangedButton == MouseButton.Left && _dragIndex >= 0)
         {
             int di = _dragIndex;
@@ -375,12 +398,23 @@ public sealed class MasonryView : FrameworkElement
         StopAnimating();
     }
 
+    protected override void OnMouseLeave(MouseEventArgs e)
+    {
+        base.OnMouseLeave(e);
+        _mouse = new Point(-1, -1);
+        if (_scrubIndex >= 0) { _scrubIndex = -1; _scrubFrac = double.NaN; Cursor = Cursors.Arrow; }
+        if (_videos.Count > 0) InvalidateVisual();
+    }
+
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
         if (_layout is null) return;
         var p = e.GetPosition(this);
         if (_autoScroll) { _autoMouseY = p.Y; return; }
+        if (Math.Abs(p.X - _mouse.X) + Math.Abs(p.Y - _mouse.Y) > 1) { _mouseMovedAt = Stopwatch.GetTimestamp(); if (_videos.Count > 0) InvalidateVisual(); }
+        _mouse = p;
+        if (_volDragIndex >= 0 && _videos.TryGetValue(_volDragIndex, out var vv)) { VolFromY(vv, _volDragIndex, p.Y); return; }
         if (_dragIndex >= 0 && _videos.TryGetValue(_dragIndex, out var dv) && dv.Bar.Width > 0)
         {
             _dragFrac = Math.Clamp((p.X - dv.Bar.Left) / dv.Bar.Width, 0, 1);
@@ -395,6 +429,10 @@ public sealed class MasonryView : FrameworkElement
             if (vt.Controls && vt.Bar.Contains(p) && vt.Bar.Width > 0) { si = vi; sf = Math.Clamp((p.X - vt.Bar.Left) / vt.Bar.Width, 0, 1); break; }
         if (si != _scrubIndex || (si >= 0 && Math.Abs(sf - _scrubFrac) > 0.0005)) { _scrubIndex = si; _scrubFrac = sf; Cursor = si >= 0 ? Cursors.Hand : Cursors.Arrow; InvalidateVisual(); }
         int found = -1;
+        // just below a playing video's progress line still counts as on that video (the line reaches a little past its edge)
+        foreach (var (vi, vt) in _videos)
+            if (vt.Controls && !vt.Bar.IsEmpty && vt.Bar.Contains(p)) { found = vi; break; }
+        if (found < 0)
         foreach (var i in _visible)
             if (p.X >= _layout.X[i] && p.X <= _layout.X[i] + _layout.W[i] &&
                 p.Y + Math.Round(_offset) >= _layout.Y[i] && p.Y + Math.Round(_offset) <= _layout.Y[i] + _layout.H[i]) { found = i; break; }
@@ -501,7 +539,7 @@ public sealed class MasonryView : FrameworkElement
         _tiles.Clear(); _overlay.Clear(); _sigNow.Clear(); _hoverOver = null;
         foreach (var (vi, vt) in _videos)
         {
-            vt.Mute = vt.Bar = Rect.Empty;
+            vt.Mute = vt.Bar = vt.Vol = vt.Tile = Rect.Empty; vt.IconShown = false;
             int seq = vt.E.FrameSeq;
             if (seq != vt.Seq && vt.E.FileId >= 0 && vt.E.CopyFrame(ref vt.Buf, out int fw, out int fh))
             {
@@ -512,7 +550,7 @@ public sealed class MasonryView : FrameworkElement
                 _sigPrev.Remove(vi);                          // the strips repaint that tile
             }
         }
-        _pulseOn = false;
+        _pulseOn = false; _iconsUp = false;
         for (int vi = _visible.Count - 1; vi >= 0; vi--)   // bottom to top, so the newest-first queue serves the top tiles first
         {
             int i = _visible[vi];
@@ -576,8 +614,11 @@ public sealed class MasonryView : FrameworkElement
             if (label >= 0) { if (label < CoverCount) DrawCaptionBelow(dc, r, label, dpi); else DrawCaption(dc, r, label, dpi); }
             if (hovered) dc.DrawRectangle(null, _hover, r);
             bool playingHere = _videos.TryGetValue(index, out var vt) && vt.E.FileId >= 0;
-            if (gif && Badges is { } vb && index < vb.Length && vb[index] == 2) DrawVideoOutline(dc, r, index, playingHere ? vt : null);
+            bool isVideo = gif && Badges is { } vb && index < vb.Length && vb[index] == 2;
+            var info = isVideo && VideoInfo is { } vinf ? vinf(index) : (false, -1.0);
+            if (isVideo) DrawVideoOutline(dc, r, playingHere ? vt : null, info.Item1, info.Item2);
             if (playingHere) DrawVideoBar(dc, r, index, vt!);
+            else if (isVideo && info.Item2 >= 0) DrawPausedLabel(dc, r, index, info.Item2);
             else if (gif && r.Width > 70) DrawBadge(dc, r, index);
         }
         _fadingNow = fading;
@@ -998,7 +1039,38 @@ public sealed class MasonryView : FrameworkElement
     private static readonly Brush PausedText = Freeze(new SolidColorBrush(Color.FromRgb(0xFF, 0xC0, 0x40)));
     private bool _pulseOn;
 
-    /// <summary>A playing tile: its progress line along the bottom, the time, and (unless it's a silent preview) a speaker to turn sound on.</summary>
+    private static double UiScale(Rect r) => Math.Clamp(Math.Min(r.Width / 260.0, r.Height / 170.0), 0.62, 1.0);
+    private static readonly Brush IconShadow = Freeze(new SolidColorBrush(Color.FromArgb(150, 0, 0, 0)));
+    private static readonly Brush VolPanelBack = Freeze(new SolidColorBrush(Color.FromArgb(205, 16, 16, 20)));
+
+    /// <summary>"0:06 / 1:02  Paused" in the bottom-left corner, sized to the tile.</summary>
+    private void DrawTimeLabel(DrawingContext dc, Rect r, string time, bool paused, double ppd)
+    {
+        double k = UiScale(r);
+        if (r.Width < 56) return;
+        double fs = 11 * k, bh = Math.Round(16 * k);
+        var ft = new FormattedText(time, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, fs, Brushes.White, ppd);
+        FormattedText? pz = paused ? new FormattedText("Paused", CultureInfo.InvariantCulture, FlowDirection.LeftToRight, new Typeface(_face.FontFamily, FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal), fs, PausedText, ppd) : null;
+        double pad = 5 * k;
+        double wBox = ft.Width + 2 * pad + (pz is null ? 0 : pz.Width + 7 * k);
+        if (wBox > r.Width - 8 && pz is not null) { pz = null; wBox = ft.Width + 2 * pad; }       // no room: just the time
+        var box = new Rect(r.Left + 6 * k, r.Bottom - 12 * k - bh, wBox, bh);
+        dc.DrawRoundedRectangle(BadgeBack, null, box, 3, 3);
+        dc.DrawText(ft, new Point(box.Left + pad, box.Top + (bh - ft.Height) / 2));
+        if (pz is not null) dc.DrawText(pz, new Point(box.Left + pad + ft.Width + 7 * k, box.Top + (bh - pz.Height) / 2));
+    }
+
+    /// <summary>A video paused earlier whose player has been let go: where it was paused, and Paused.</summary>
+    private void DrawPausedLabel(DrawingContext dc, Rect r, int i, double at)
+    {
+        string len = BadgeText is { } bt && i < bt.Length ? bt[i] ?? "" : "";
+        DrawTimeLabel(dc, r, Clock(at) + (len.Length > 0 && len.Contains(':') ? " / " + len : ""), true, VisualTreeHelper.GetDpi(this).PixelsPerDip);
+    }
+
+    /// <summary>
+    /// A playing (or paused) tile: its progress line along the bottom, the time, and a speaker that shows while the mouse moves on
+    /// the tile (or is on it). Resting on the speaker drops a volume slider under it.
+    /// </summary>
     private void DrawVideoBar(DrawingContext dc, Rect r, int index, VideoTile vt)
     {
         var v = vt.E;
@@ -1006,36 +1078,61 @@ public sealed class MasonryView : FrameworkElement
         bool dragging = _dragIndex == index;
         double frac = dragging ? _dragFrac : len > 0 ? Math.Clamp(pos / len, 0, 1) : 0;
         double ppd = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        double k = UiScale(r);
+        vt.Tile = r;
         if (!vt.Controls)
         {
             TimelineArt.Draw(dc, r.Left, r.Width, r.Bottom - 1.5, frac, double.NaN, false, len, ppd, 0);
             return;
         }
-        vt.Bar = new Rect(r.Left, r.Bottom - 14, r.Width, 14);
+        // the line reacts from as far above its bottom edge as below it
+        vt.Bar = new Rect(r.Left, r.Bottom - 14, r.Width, 28);
         double hover = dragging ? _dragFrac : _scrubIndex == index ? _scrubFrac : double.NaN;
         bool active = !double.IsNaN(hover);
-        if (r.Width > 90)
+        double shown = dragging && len > 0 ? _dragFrac * len : pos;
+        DrawTimeLabel(dc, r, Clock(shown) + (len > 0 ? " / " + Clock(len) : ""), v.Paused, ppd);
+
+        // the speaker: shows while the mouse moves on the tile, or rests on the speaker / its slider
+        double ic = Math.Round(26 * k);
+        var icon = new Rect(r.Right - ic - 6 * k, r.Top + 6 * k, ic, ic);
+        double panelH = Math.Min(110 * k, r.Height - icon.Bottom + r.Top - 20);
+        var panel = panelH >= 40 ? new Rect(icon.Left, icon.Bottom + 2, ic, panelH) : Rect.Empty;
+        var zone = panel.IsEmpty ? icon : Rect.Union(icon, panel);
+        zone.Inflate(6, 6);
+        long now = Stopwatch.GetTimestamp();
+        bool onTile = r.Contains(_mouse) || vt.Bar.Contains(_mouse);
+        bool moving = onTile && (now - _mouseMovedAt) < Stopwatch.Frequency / 2;
+        bool onIcon = zone.Contains(_mouse) && (icon.Contains(_mouse) || _volDragIndex == index || (!panel.IsEmpty && _openVol == index));
+        bool showIcon = (moving || onIcon || _volDragIndex == index) && r.Width > 50 && r.Height > 40;
+        if (onTile) _iconsUp = true;
+        if (showIcon)
         {
-            double shown = dragging && len > 0 ? _dragFrac * len : pos;
-            string text = Clock(shown) + (len > 0 ? " / " + Clock(len) : "");
-            var ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 11, Brushes.White, ppd);
-            FormattedText? pz = v.Paused ? new FormattedText("Paused", CultureInfo.InvariantCulture, FlowDirection.LeftToRight, new Typeface(_face.FontFamily, FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal), 11, PausedText, ppd) : null;
-            double wBox = ft.Width + 10 + (pz is null ? 0 : pz.Width + 8);
-            var box = new Rect(r.Left + 6, r.Bottom - 28, wBox, 16);
-            dc.DrawRoundedRectangle(BadgeBack, null, box, 3, 3);
-            dc.DrawText(ft, new Point(box.Left + 5, box.Top + (16 - ft.Height) / 2));
-            if (pz is not null) dc.DrawText(pz, new Point(box.Left + 5 + ft.Width + 8, box.Top + (16 - pz.Height) / 2));
-        }
-        if (r.Width > 60 && r.Height > 50)
-        {
-            var b = new Rect(r.Right - 34, r.Top + 6, 28, 28);
-            dc.DrawEllipse(SpeakerBack, null, new Point(b.Left + 14, b.Top + 14), 14, 14);
-            var ic = new FormattedText(v.Muted ? "\uE74F" : "\uE767", CultureInfo.InvariantCulture, FlowDirection.LeftToRight, IconFace, 14, Brushes.White, ppd);
-            dc.DrawText(ic, new Point(b.Left + (28 - ic.Width) / 2, b.Top + (28 - ic.Height) / 2));
-            vt.Mute = b;
+            vt.IconShown = true;
+            vt.Mute = icon;
+            var ift = new FormattedText(v.Muted || v.Volume == 0 ? "\uE74F" : v.Volume < 34 ? "\uE993" : v.Volume < 67 ? "\uE994" : "\uE995", CultureInfo.InvariantCulture, FlowDirection.LeftToRight, IconFace, 16 * k, Brushes.White, ppd);
+            var ishadow = new FormattedText(ift.Text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, IconFace, 16 * k, IconShadow, ppd);
+            var at = new Point(icon.Left + (ic - ift.Width) / 2, icon.Top + (ic - ift.Height) / 2);
+            dc.DrawText(ishadow, new Point(at.X + 1, at.Y + 1));
+            dc.DrawText(ift, at);
+            bool open = !panel.IsEmpty && (icon.Contains(_mouse) || _volDragIndex == index || (_openVol == index && zone.Contains(_mouse)));
+            _openVol = open ? index : _openVol == index ? -1 : _openVol;
+            if (open)
+            {
+                vt.Vol = panel;
+                dc.DrawRoundedRectangle(VolPanelBack, null, panel, 6 * k, 6 * k);
+                var tr = VolTrack(panel);
+                int shownVol = v.Muted ? 0 : v.Volume;
+                dc.DrawRoundedRectangle(TimelineArt.Track, null, tr, 2, 2);
+                double fh = tr.Height * shownVol / 100.0;
+                dc.DrawRoundedRectangle(TimelineArt.Played, null, new Rect(tr.Left, tr.Bottom - fh, tr.Width, fh), 2, 2);
+                dc.DrawEllipse(TimelineArt.Knob, null, new Point(tr.Left + tr.Width / 2, tr.Bottom - fh), 5 * k, 5 * k);
+                var nt = new FormattedText(shownVol.ToString(), CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 10.5 * k, Brushes.White, ppd);
+                dc.DrawText(nt, new Point(panel.Left + (panel.Width - nt.Width) / 2, panel.Bottom - 6 * k - nt.Height));
+            }
         }
         TimelineArt.Draw(dc, r.Left, r.Width, r.Bottom - (active ? 3.5 : 1.5), frac, hover, active, len, ppd, r.Bottom - 34);
     }
+    private int _openVol = -1;
 
     private readonly Dictionary<string, Color> _colours = new();
     private Color ColourOf(string hex)
@@ -1046,13 +1143,18 @@ public sealed class MasonryView : FrameworkElement
         return c;
     }
 
-    /// <summary>The outline round a paused video (or a watched one), drawn inside the tile's edge with an optional soft glow inward.</summary>
-    private void DrawVideoOutline(DrawingContext dc, Rect r, int index, VideoTile? vt)
+    /// <summary>
+    /// The outline round a watched or paused video (watched comes first), drawn inside the tile's edge with an optional soft glow
+    /// inward. None while it plays.
+    /// </summary>
+    private void DrawVideoOutline(DrawingContext dc, Rect r, VideoTile? vt, bool watched, double pausedAt)
     {
+        if (vt is not null && vt.E.FileId >= 0 && vt.E.Playing) return;
+        bool paused = (vt is not null && vt.Controls && vt.E.Paused) || pausedAt >= 0;
         OutlineStyle? st = null;
-        if (vt is not null && vt.Controls && vt.E.Paused) st = PausedOutline;
-        if ((st is null || !st.On) && VideoMark?.Invoke(index) == 1) st = WatchedOutline;
-        if (st is null || !st.On || r.Width < 8 || r.Height < 8) return;
+        if (watched && WatchedOutline is { On: true }) st = WatchedOutline;
+        else if (paused && PausedOutline is { On: true }) st = PausedOutline;
+        if (st is null || r.Width < 8 || r.Height < 8) return;
         var c = ColourOf(st.Colour);
         double pulse = 1;
         if (st.Pulse)

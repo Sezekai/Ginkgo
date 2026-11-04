@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -11,27 +12,37 @@ namespace Ginkgo.App;
 
 /// <summary>
 /// Video playback. A click plays a video in its tile (several at once if Quick toggles allows), resting the mouse on a video
-/// plays a preview straight away (even while others play), and the viewer plays with full controls. Each has its own player, so
-/// one never waits for another. Where each video was left, which were watched, and the volume are remembered between sessions.
+/// plays a preview straight away (even while others play; on a paused one it carries on from where it was), and the viewer plays
+/// with full controls. Each has its own player, so one never waits for another.
 /// </summary>
 public partial class MainWindow
 {
     private readonly VideoPositions _vpos = new();
-    private sealed class GridVid { public int Index; public long Id; public VideoEngine E = null!; public long Order; }
+    private sealed class GridVid { public int Index; public long Id; public VideoEngine E = null!; public long Order; public bool HoverPlay; }
     private readonly List<GridVid> _gridVids = new();
     private readonly Stack<VideoEngine> _spare = new();
     private readonly List<VideoEngine> _allEngines = new();
     private long _vidOrder;
     private VideoEngine? _preview;
     private int _previewIdx = -1, _previewWanted = -1;
+    private long _previewId = -1;
+    private GridVid? _hoverPlay;             // a paused grid video playing while the mouse is on it
     private DispatcherTimer? _previewTimer;
     private readonly HashSet<long> _cantPlay = new();
-    private long _clickPausedAt; private int _clickPausedIdx = -1;     // the first click of a double-click pauses: the viewer treats it as still playing
+    private long _clickPausedAt; private int _clickPausedIdx = -1;
     private long _videoTick;
+
+    // this session: what was paused (and where), watched, started (for the outlines, the Paused label and the Videos filter)
+    private readonly Dictionary<long, double> _sessPaused = new();
+    private readonly HashSet<long> _sessWatched = new(), _sessStarted = new();
+    // the Videos filter (hover the Videos switch): which videos show
+    private bool _vfWatched = true, _vfPaused = true, _vfUnwatched = true;
+    private Popup? _vfPopup;
+    private DispatcherTimer? _vfTimer;
 
     // the viewer
     private VideoEngine? _vEngine;
-    private bool _viewerVideo;               // the viewer is showing a video (playing or paused)
+    private bool _viewerVideo;
     private WriteableBitmap? _vBmp;
     private byte[]? _vFrame;
     private int _vSeq = -1;
@@ -40,35 +51,39 @@ public partial class MainWindow
     private static readonly float[] Speeds = { 0.25f, 0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f };
     private int _viewerFirstIndex = -1;      // the video the viewer was opened on: the only one that starts where it was left
     private bool _viewerLeftFirst;
-    private double _viewerLastPos;
-    private GridVid? _resumeGrid;            // playing in the grid when the viewer opened on it: it carries on there if you come straight back
-    // the bar and the info box show while the mouse moves (and briefly when a video comes up)
-    private long _ctrlFlashUntil, _infoFlashUntil, _lastMouseMove;
+    private long _ctrlFlashUntil, _infoFlashUntil, _lastMouseMove, _osdUntil;
+    private bool _osdTime;
     private Point _lastMousePos = new(double.NaN, double.NaN);
     private bool _infoPinnedVideo;           // H on a video: the info box stays (this session)
     private bool _speedMenuOpen;
     private long _lastRenderTick;
     private bool _vDownValid; private Point _vDownPos;
+    private bool _vSyncVol;
 
     private bool IsVideoTile(int i) => _model is not null && i >= _firstFile && i < _order.Length && _order[i] >= 0 && _model.Kind[_order[i]] == (byte)MediaKind.Video;
     private long TileId(int i) => _model is not null && i >= 0 && i < _order.Length && _order[i] >= 0 ? _model.Id[_order[i]] : -1;
     private static long Ms(double s) => (long)(s * Stopwatch.Frequency);
+    private bool Always => _settings.OutlineMemory == "Always";
+
+    private bool IsWatched(long id) => _settings.WatchedRule == "Started"
+        ? (Always ? _vpos.Started(id) : _sessStarted.Contains(id) || _sessWatched.Contains(id))
+        : (Always ? _vpos.Watched(id) : _sessWatched.Contains(id));
+    private double PausedAt(long id) => _sessPaused.TryGetValue(id, out var p) ? p : Always && _vpos.Get(id) > 0 ? _vpos.Get(id) : -1;
 
     private void InitVideo()
     {
         ThreadPool.QueueUserWorkItem(_ => VideoEngine.Warm());          // load the player early, so the first video starts sooner
-        View.VideoMuteClicked += i => { var g = _gridVids.Find(x => x.Index == i); if (g is not null) { g.E.Muted = !g.E.Muted; if (!g.E.Muted) g.E.Volume = _vpos.Volume; UpdateVideoButtons(); View.Refresh(); } };
+        View.VideoMuteClicked += i => { if (EngineAt(i) is { } e) { e.Muted = !e.Muted; if (!e.Muted && e.Volume == 0) e.Volume = _vpos.Volume; View.Refresh(); } };
+        View.VideoVolume += (i, v) => { if (EngineAt(i) is { } e) { e.Volume = v; if (e.Muted && v > 0) e.Muted = false; View.Refresh(); } };
         View.VideoSeek += (i, f, final) =>
         {
-            var g = _gridVids.Find(x => x.Index == i);
-            if (g is not null && g.E.LengthSec > 0) g.E.Seek(f * g.E.LengthSec);
+            if (EngineAt(i) is { } e && e.LengthSec > 0) e.Seek(f * e.LengthSec);
             View.Refresh();
         };
-        View.VideoMark = i =>
+        View.VideoInfo = i =>
         {
             long id = TileId(i);
-            if (id < 0) return 0;
-            return (_settings.WatchedRule == "Started" ? _vpos.Started(id) : _vpos.Watched(id)) ? 1 : 0;
+            return id < 0 ? (false, -1) : (IsWatched(id), PausedAt(id));
         };
         ApplyVideoLook();
         View.HoverChanged += OnVideoHover;
@@ -76,7 +91,7 @@ public partial class MainWindow
         _previewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(40) };
         _previewTimer.Tick += (_, _) => { _previewTimer.Stop(); StartPreview(); };
         CompositionTarget.Rendering += OnVideoRendering;
-        VVolume.Value = _vpos.Volume; VVolText.Text = _vpos.Volume.ToString();
+        SyncVolumeSlider();
         VTimeline.Source = () => (_vEngine is { } e && e.LengthSec > 0 ? e.SmoothPositionSec / e.LengthSec : 0, _vEngine?.LengthSec ?? 0);
         VTimeline.SeekTo += (f, final) => { if (_vEngine is { } e && e.LengthSec > 0) e.Seek(f * e.LengthSec); };
         ViewerRoot.PreviewMouseMove += (_, e) =>
@@ -86,6 +101,7 @@ public partial class MainWindow
             _lastMousePos = p;
         };
         VideoBar.SizeChanged += (_, _) => ClipBar();
+        InitVideoFilter();
         Closing += (_, _) =>
         {
             foreach (var g in _gridVids) SaveVideoPosition(g.E);
@@ -94,6 +110,9 @@ public partial class MainWindow
             foreach (var e in _allEngines) { try { e.Dispose(); } catch { } }
         };
     }
+
+    /// <summary>The player showing in tile i (a grid video or the preview).</summary>
+    private VideoEngine? EngineAt(int i) => _gridVids.Find(x => x.Index == i)?.E ?? (_previewIdx == i ? _preview : null);
 
     /// <summary>The bar's buttons fill it edge to edge: clip them to its rounded corners.</summary>
     private void ClipBar()
@@ -108,6 +127,9 @@ public partial class MainWindow
         View.WatchedOutline = _settings.WatchedOutline;
         View.Refresh();
     }
+
+    /// <summary>Settings &gt; Video outlines changed something.</summary>
+    public void OutlinesChanged() { ApplyVideoLook(); SaveSettings(); }
 
     private VideoEngine NewEngine()
     {
@@ -124,25 +146,52 @@ public partial class MainWindow
         return e;
     }
 
+    /// <summary>The volume you set in the viewer: kept between videos and sessions, and what grid videos start at.</summary>
     private void SetVolume(int v)
     {
         v = Math.Clamp(v, 0, 100);
         _vpos.Volume = v;
-        foreach (var e in _allEngines) e.Volume = v;
-        if (Math.Abs(VVolume.Value - v) > 0.5) VVolume.Value = v;
-        VVolText.Text = v.ToString();
+        if (_vEngine is not null) _vEngine.Volume = v;
+        SyncVolumeSlider();
     }
 
-    /// <summary>Remembers where a video is (not for a preview, and not for one that was only passed by).</summary>
+    /// <summary>The viewer's slider shows 0 while muted, and the volume again when sound comes back.</summary>
+    private void SyncVolumeSlider()
+    {
+        int shown = _viewerVideo && _vEngine is { Muted: true } ? 0 : _vpos.Volume;
+        _vSyncVol = true;
+        if (Math.Abs(VVolume.Value - shown) > 0.5) VVolume.Value = shown;
+        _vSyncVol = false;
+        VVolText.Text = shown.ToString();
+    }
+
+    /// <summary>Remembers where a video is (not for one that was only passed by).</summary>
     private void SaveVideoPosition(VideoEngine e)
     {
-        if (e.FileId < 0 || e.Preview || e.FramesShown < 10) return;
+        if (e.FileId < 0 || e.FramesShown < 10) return;
         _vpos.Set(e.FileId, e.SmoothPositionSec, e.LengthSec);
+    }
+
+    private void PauseGrid(GridVid g)
+    {
+        if (g.E.Playing) g.E.SetPaused(true);
+        g.HoverPlay = false;
+        SaveVideoPosition(g.E);
+        _sessPaused[g.Id] = g.E.SmoothPositionSec;
+    }
+
+    private void PlayGrid(GridVid g)
+    {
+        MakeRoom(g);
+        g.Order = ++_vidOrder;
+        g.HoverPlay = false;
+        _sessPaused.Remove(g.Id);
+        if (g.E.Paused) g.E.TogglePause();
     }
 
     // ---- the grid ----
 
-    /// <summary>A click on a video tile: plays it there, or pauses / carries on if it's playing there already.</summary>
+    /// <summary>A click on a video tile: plays it there, or pauses / carries on if it's there already.</summary>
     private void ClickVideoTile(int i)
     {
         long id = TileId(i);
@@ -151,20 +200,22 @@ public partial class MainWindow
         var g = _gridVids.Find(x => x.Index == i);
         if (g is not null)
         {
-            if (g.E.Playing) { g.E.SetPaused(true); SaveVideoPosition(g.E); _clickPausedAt = Stopwatch.GetTimestamp(); _clickPausedIdx = i; }
-            else { MakeRoom(g); g.Order = ++_vidOrder; g.E.TogglePause(); }
+            if (g.HoverPlay) { if (_hoverPlay == g) _hoverPlay = null; PlayGrid(g); }          // playing because the mouse is on it: keep it playing
+            else if (g.E.Playing) { PauseGrid(g); _clickPausedAt = Stopwatch.GetTimestamp(); _clickPausedIdx = i; }
+            else PlayGrid(g);
             UpdateVideoButtons(); View.Refresh();
             return;
         }
-        double saved = _vpos.Get(id);
+        double saved = _sessPaused.TryGetValue(id, out var sp) ? sp : _vpos.Get(id);
         VideoEngine e;
+        bool keepSound = false;
         if (_previewIdx == i && _preview is not null)
         {
-            // the preview carries on as the real thing (no restart): from where it was left if it was left somewhere
-            e = _preview; _preview = null; _previewIdx = -1;
+            // the preview carries on as the real thing (no restart)
+            e = _preview; _preview = null; _previewIdx = -1; _previewId = -1;
             e.Preview = false;
-            e.Muted = _settings.GridStartMuted;
-            if (saved > 1) e.Seek(saved);
+            keepSound = true;                    // whatever sound you gave the preview stays
+            if (!_sessPaused.ContainsKey(id) && saved > 1 && e.SmoothPositionSec < 1.5) e.Seek(saved);
         }
         else
         {
@@ -173,7 +224,9 @@ public partial class MainWindow
             e.Loop = true;
             if (!e.Play(id, _model!.Path[_order[i]], saved, _settings.GridStartMuted, 1280, 1280, preview: false)) { OnVideoFailed(e, id); return; }
         }
+        if (!keepSound) e.Muted = _settings.GridStartMuted;
         g = new GridVid { Index = i, Id = id, E = e, Order = ++_vidOrder };
+        _sessPaused.Remove(id);
         MakeRoom(g);
         _gridVids.Add(g);
         View.SetVideo(i, e, controls: true);
@@ -184,8 +237,8 @@ public partial class MainWindow
     private void MakeRoom(GridVid keep)
     {
         int n = Math.Clamp(_settings.VideosAtOnce, 1, 5);
-        var playing = _gridVids.Where(x => x != keep && x.E.Playing).OrderBy(x => x.Order).ToList();
-        for (int k = 0; k < playing.Count - (n - 1); k++) { playing[k].E.SetPaused(true); SaveVideoPosition(playing[k].E); }
+        var playing = _gridVids.Where(x => x != keep && x.E.Playing && !x.HoverPlay).OrderBy(x => x.Order).ToList();
+        for (int k = 0; k < playing.Count - (n - 1); k++) PauseGrid(playing[k]);
         var paused = _gridVids.Where(x => x != keep && !x.E.Playing).OrderBy(x => x.Order).ToList();
         int over = _gridVids.Count + 1 - (n + 4);
         for (int k = 0; k < over && k < paused.Count; k++) ReleaseGrid(paused[k]);
@@ -194,21 +247,12 @@ public partial class MainWindow
     private void ReleaseGrid(GridVid g)
     {
         SaveVideoPosition(g.E);
+        if (g.E.Paused || !g.E.Playing) _sessPaused[g.Id] = g.E.SmoothPositionSec;     // still shows as paused, where it was
         g.E.Stop();
         _spare.Push(g.E);
         _gridVids.Remove(g);
+        if (_hoverPlay == g) _hoverPlay = null;
         View.SetVideo(g.Index, null, false);
-    }
-
-    /// <summary>Stops every video in the grid (the tiles go back to their pictures).</summary>
-    private void StopGridVideos()
-    {
-        _previewTimer?.Stop();
-        if (_previewIdx >= 0) StopPreview();
-        foreach (var g in _gridVids.ToList()) ReleaseGrid(g);
-        _resumeGrid = null;
-        View.ClearVideos();
-        UpdateVideoButtons();
     }
 
     /// <summary>The grid's items changed (a refresh, another sort or folder): playing videos follow their tiles; a preview stops.</summary>
@@ -216,6 +260,7 @@ public partial class MainWindow
     {
         _previewTimer?.Stop();
         if (_previewIdx >= 0) StopPreview();
+        EndHoverPlay();
         var where = new Dictionary<long, int>();
         bool marks = _cantPlay.Count > 0 && View.BadgeText is not null;
         if (_gridVids.Count > 0 || marks)
@@ -239,11 +284,28 @@ public partial class MainWindow
         if (ViewerOpen) return;
         _previewTimer?.Stop();
         if (_previewIdx >= 0 && i != _previewIdx) StopPreview();
+        if (_hoverPlay is not null && _hoverPlay.Index != i) EndHoverPlay();
         _previewWanted = -1;
-        if (i < 0 || !IsVideoTile(i) || i == _previewIdx || _gridVids.Exists(x => x.Index == i)) return;
+        if (i < 0 || !IsVideoTile(i) || i == _previewIdx) return;
+        var g = _gridVids.Find(x => x.Index == i);
+        if (g is not null)
+        {
+            // a paused one carries on while the mouse is on it
+            if (!g.E.Playing && !g.E.AtEnd) { g.E.SetPaused(false); g.HoverPlay = true; _hoverPlay = g; _sessPaused.Remove(g.Id); View.Refresh(); }
+            return;
+        }
         if (_cantPlay.Contains(TileId(i))) return;
         _previewWanted = i;
         _previewTimer?.Start();          // a moment's grace, so sweeping across tiles doesn't open each one
+    }
+
+    /// <summary>The mouse left a paused video it had set playing: paused again, here (the new paused time).</summary>
+    private void EndHoverPlay()
+    {
+        var g = _hoverPlay; _hoverPlay = null;
+        if (g is null || !g.HoverPlay || !_gridVids.Contains(g)) return;
+        PauseGrid(g);
+        View.Refresh();
     }
 
     private void StartPreview()
@@ -255,46 +317,40 @@ public partial class MainWindow
         _preview ??= NewEngine();
         _preview.Loop = true;
         _preview.Volume = _vpos.Volume;
-        if (!_preview.Play(id, _model!.Path[_order[i]], 0, muted: !_settings.PreviewSound, 960, 960, preview: true)) return;
-        _previewIdx = i;
-        View.SetVideo(i, _preview, controls: false);
+        // a video paused earlier carries on from where it was paused; others from the start
+        double from = _sessPaused.TryGetValue(id, out var p) ? p : 0;
+        if (!_preview.Play(id, _model!.Path[_order[i]], from, muted: !_settings.PreviewSound, 960, 960, preview: true)) return;
+        _previewIdx = i; _previewId = id;
+        View.SetVideo(i, _preview, controls: true);
     }
 
     private void StopPreview()
     {
+        if (_preview is not null && _previewId >= 0 && _sessPaused.ContainsKey(_previewId) && _preview.FramesShown >= 5)
+        {
+            // it was a paused video: where the mouse left it is its new paused time
+            _sessPaused[_previewId] = _preview.SmoothPositionSec;
+            _vpos.Set(_previewId, _preview.SmoothPositionSec, _preview.LengthSec);
+        }
         _preview?.Stop();
         if (_previewIdx >= 0) View.SetVideo(_previewIdx, null, false);
-        _previewIdx = -1;
+        _previewIdx = -1; _previewId = -1;
     }
 
     private void OnPauseAll(object s, RoutedEventArgs e)
     {
-        foreach (var g in _gridVids) if (g.E.Playing) { g.E.SetPaused(true); SaveVideoPosition(g.E); }
+        foreach (var g in _gridVids) if (g.E.Playing) PauseGrid(g);
+        _hoverPlay = null;
         if (_previewIdx >= 0) StopPreview();
         UpdateVideoButtons(); View.Refresh();
     }
 
-    private void OnMuteAll(object s, RoutedEventArgs e)
-    {
-        bool anyLoud = _gridVids.Exists(g => g.E.Playing && !g.E.Muted);
-        foreach (var g in _gridVids) if (g.E.Playing || anyLoud) { g.E.Muted = anyLoud; if (!anyLoud) g.E.Volume = _vpos.Volume; }
-        UpdateVideoButtons(); View.Refresh();
-    }
-
-    /// <summary>The pause-all and mute-all buttons show only while a video plays in the grid.</summary>
+    /// <summary>The pause-all button shows only while a video plays in the grid.</summary>
     private void UpdateVideoButtons()
     {
-        bool any = _gridVids.Exists(g => g.E.Playing) && !ViewerOpen;
+        bool any = _gridVids.Exists(g => g.E.Playing && !g.HoverPlay) && !ViewerOpen;
         var vis = any ? Visibility.Visible : Visibility.Collapsed;
-        if (PauseAllBtn.Visibility != vis) { PauseAllBtn.Visibility = vis; MuteAllBtn.Visibility = vis; BarRow.InvalidateMeasure(); }
-        if (!any) return;
-        bool anyLoud = _gridVids.Exists(g => g.E.Playing && !g.E.Muted);
-        string glyph = anyLoud ? "" : "";
-        if ((string)MuteAllBtn.Content != glyph)
-        {
-            MuteAllBtn.Content = glyph;
-            MuteAllBtn.ToolTip = anyLoud ? "Mute every playing video" : "Sound on for every playing video";
-        }
+        if (PauseAllBtn.Visibility != vis) { PauseAllBtn.Visibility = vis; BarRow.InvalidateMeasure(); }
     }
 
     private void OnVideoFailed(VideoEngine e, long id)
@@ -305,7 +361,7 @@ public partial class MainWindow
         for (int k = _firstFile; k < _order.Length; k++) if (TileId(k) == id) { at = k; break; }
         if (at >= 0 && View.BadgeText is { } bt && at < bt.Length) bt[at] = "can't play";
         var g = _gridVids.Find(x => x.E == e);
-        if (g is not null) ReleaseGrid(g);
+        if (g is not null) { _sessPaused.Remove(g.Id); ReleaseGrid(g); _sessPaused.Remove(id); }
         if (e == _preview && _previewIdx >= 0) StopPreview();
         string msg = "This video can't be played here.\nRight-click its tile and choose Show in Explorer to open it in another player.";
         if (e == _vEngine && ViewerOpen && _viewerVideo) { ViewerNote.Text = msg; VideoBar.Visibility = Visibility.Collapsed; }
@@ -314,22 +370,80 @@ public partial class MainWindow
         View.Refresh();
     }
 
+    // ---- the Videos filter: hover the Videos switch for watched / paused / not watched yet ----
+
+    private void InitVideoFilter()
+    {
+        var panel = new StackPanel { Margin = new Thickness(12, 10, 12, 10) };
+        panel.Children.Add(new TextBlock { Text = "Videos to show", Foreground = (Brush)FindResource("Text"), FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 8) });
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        foreach (var (label, tip, get, set) in new (string, string, Func<bool>, Action<bool>)[]
+        {
+            ("Watched", "Played to the end (or started, if Settings > Video outlines says so)", () => _vfWatched, v => _vfWatched = v),
+            ("Paused", "Paused part way", () => _vfPaused, v => _vfPaused = v),
+            ("Not watched", "Not played yet", () => _vfUnwatched, v => _vfUnwatched = v),
+        })
+        {
+            var b = new ToggleButton { Content = label, IsChecked = get(), ToolTip = tip, Margin = new Thickness(0, 0, 6, 0), Height = 28, MinWidth = 70 };
+            b.Click += (_, _) => { set(b.IsChecked == true); BuildView(true); };
+            row.Children.Add(b);
+        }
+        panel.Children.Add(row);
+        panel.Children.Add(new TextBlock { Text = (Always ? "" : "This session's. ") + "Resets when Ginkgo closes.", Foreground = (Brush)FindResource("Dim"), FontSize = 11, Margin = new Thickness(0, 8, 0, 0) });
+        var card = new Border
+        {
+            Child = panel, Background = new SolidColorBrush(Color.FromRgb(0x1C, 0x1C, 0x20)), BorderBrush = new SolidColorBrush(Color.FromRgb(0x3A, 0x3A, 0x42)),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Margin = new Thickness(6, 0, 16, 16),
+            Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 14, ShadowDepth = 3, Opacity = 0.55 },
+        };
+        System.Windows.Documents.TextElement.SetFontFamily(card, new FontFamily("Segoe UI"));
+        _vfPopup = new Popup { PlacementTarget = VideosBtn, Placement = PlacementMode.Bottom, StaysOpen = true, AllowsTransparency = true, Child = card, VerticalOffset = 2, PopupAnimation = PopupAnimation.Fade };
+        _vfTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+        long overSince = 0, awaySince = 0;
+        _vfTimer.Tick += (_, _) =>
+        {
+            bool over = VideosBtn.IsMouseOver || card.IsMouseOver;
+            long now = Stopwatch.GetTimestamp();
+            if (over) { awaySince = 0; if (overSince == 0) overSince = now; }
+            else { overSince = 0; if (awaySince == 0) awaySince = now; }
+            if (!_vfPopup.IsOpen && over && now - overSince >= Ms(0.3) && VideosBtn.IsVisible) { _vfPopup.IsOpen = true; ApplyBar(); }
+            else if (_vfPopup.IsOpen && !over && now - awaySince >= Ms(0.35)) { _vfPopup.IsOpen = false; ApplyBar(); }
+            if (!_vfPopup.IsOpen && !over) _vfTimer.Stop();
+        };
+        VideosBtn.MouseEnter += (_, _) => _vfTimer.Start();
+    }
+
+    /// <summary>Applied to the files of a new view: the videos the Videos filter leaves out are dropped. Null when it shows them all.</summary>
+    private Func<int, bool>? VideoRowFilter()
+    {
+        if (_vfWatched && _vfPaused && _vfUnwatched || _model is null) return null;
+        var m = _model;
+        var watched = new HashSet<long>(); var paused = new HashSet<long>();
+        for (int r = 0; r < m.Id.Length; r++)
+        {
+            if (m.Kind[r] != (byte)MediaKind.Video) continue;
+            long id = m.Id[r];
+            if (IsWatched(id)) watched.Add(id); else if (PausedAt(id) >= 0) paused.Add(id);
+        }
+        bool w = _vfWatched, p = _vfPaused, u = _vfUnwatched;
+        return row =>
+        {
+            if (m.Kind[row] != (byte)MediaKind.Video) return true;
+            long id = m.Id[row];
+            return watched.Contains(id) ? w : paused.Contains(id) ? p : u;
+        };
+    }
+
     // ---- the viewer ----
 
-    /// <summary>The viewer opens: videos in the grid pause (the one it opened on carries on there if you come straight back).</summary>
+    /// <summary>The viewer opens: videos in the grid pause.</summary>
     private void VideoViewerOpening(int index)
     {
         _previewTimer?.Stop();
         if (_previewIdx >= 0) StopPreview();
-        _resumeGrid = null;
+        _hoverPlay = null;
         _viewerFirstIndex = index; _viewerLeftFirst = false;
-        bool justPaused = _clickPausedIdx == index && (Stopwatch.GetTimestamp() - _clickPausedAt) * 1000 < 700 * Stopwatch.Frequency;
-        foreach (var g in _gridVids)
-        {
-            if (g.Index == index && (g.E.Playing || justPaused)) _resumeGrid = g;
-            if (g.E.Playing) g.E.SetPaused(true);
-            SaveVideoPosition(g.E);                 // the viewer starts the opened one from here
-        }
+        foreach (var g in _gridVids) if (g.E.Playing) PauseGrid(g); else SaveVideoPosition(g.E);
         UpdateVideoButtons();
     }
 
@@ -337,33 +451,51 @@ public partial class MainWindow
     private void LeaveViewerVideo()
     {
         if (!_viewerVideo || _vEngine is null) return;
-        _viewerLastPos = _vEngine.SmoothPositionSec;
         SaveVideoPosition(_vEngine);
+        if (_vEngine.FramesShown >= 10) _sessStarted.Add(_vEngine.FileId);
         _vEngine.Stop();
         _viewerVideo = false;
         _vBmp = null; _vSeq = -1;
         VideoBar.Visibility = Visibility.Collapsed;
+        VBubble.Visibility = Visibility.Collapsed;
+        ViewerOsd.Opacity = 0;
         InfoBox.Opacity = 1;
     }
 
+    /// <summary>The viewer closes on a video: it waits, paused where you left it, in its tile.</summary>
     private void VideoViewerClosed()
     {
+        int idx = _vIndex;
+        bool wasVideo = _viewerVideo && _vEngine is not null && _vEngine.FileId >= 0;
+        long id = wasVideo ? _vEngine!.FileId : -1;
+        double at = wasVideo ? _vEngine!.SmoothPositionSec : 0;
+        bool watchedSome = wasVideo && _vEngine!.FramesShown >= 10;
         LeaveViewerVideo();
-        // straight back from the video it opened on, which was playing in the grid: it carries on there, from where the viewer got to
-        var g = _resumeGrid; _resumeGrid = null;
-        if (g is not null && !_viewerLeftFirst && _gridVids.Contains(g))
+        if (wasVideo && watchedSome && IsVideoTile(idx) && TileId(idx) == id)
         {
-            double at = _viewerLastPos;
-            if (at > 0.2) g.E.Seek(at);
-            g.Order = ++_vidOrder;
-            g.E.SetPaused(false);
+            var g = _gridVids.Find(x => x.Index == idx);
+            if (g is not null) { if (g.E.Playing) g.E.SetPaused(true); g.E.Seek(at); }
+            else
+            {
+                var e = NewEngine();
+                e.Loop = true;
+                if (e.Play(id, _model!.Path[_order[idx]], at, _settings.GridStartMuted, 1280, 1280, preview: false, startPaused: true))
+                {
+                    g = new GridVid { Index = idx, Id = id, E = e, Order = ++_vidOrder };
+                    MakeRoom(g);
+                    _gridVids.Add(g);
+                    View.SetVideo(idx, e, controls: true);
+                }
+                else _spare.Push(e);
+            }
+            _sessPaused[id] = at;
         }
         UpdateVideoButtons();
         View.Refresh();
     }
 
     /// <summary>LoadPicture for a video: plays it at the size of the screen. Only the video the viewer opened on starts where it was left.</summary>
-    private async Task LoadVideo(int index, int token)
+    private async Task LoadVideo(int index, int token, bool fast)
     {
         int row = _order[index];
         var m = _model!;
@@ -379,7 +511,7 @@ public partial class MainWindow
             return;
         }
         bool first = index == _viewerFirstIndex && !_viewerLeftFirst;
-        double start = first ? _vpos.Get(id) : 0;
+        double start = first ? (_sessPaused.TryGetValue(id, out var sp) ? sp : _vpos.Get(id)) : 0;
         var (fw, fh) = FitPixels(row);
         _vEngine ??= NewEngine();
         _vEngine.Loop = VLoopBtn.IsChecked == true;
@@ -389,12 +521,16 @@ public partial class MainWindow
         if (!_vEngine.Play(id, path, start, _viewerMuted, fw, fh, preview: false)) { OnVideoFailed(_vEngine, id); return; }
         VideoBar.Visibility = Visibility.Visible;
         long now = Stopwatch.GetTimestamp();
-        _ctrlFlashUntil = now + Ms(0.3); _infoFlashUntil = now + Ms(0.3);
+        _ctrlFlashUntil = now + Ms(1); _infoFlashUntil = now + Ms(1);
         VideoBar.Opacity = 1; InfoBox.Opacity = 1;
+        SyncVolumeSlider();
         SyncVideoBar();
-        Dispatcher.BeginInvoke(PlaceInfo, DispatcherPriority.Loaded);
-        // the tile's picture until the first frame arrives (the player has started meanwhile)
+        _ = Dispatcher.BeginInvoke(PlaceInfo, DispatcherPriority.Loaded);
+        // the previous picture stays until the first frame (no flash of the small thumbnail); only when keys are held, or if the
+        // video is slow to start, the thumbnail shows meanwhile
         var vl = _loader;
+        if (!fast) await Task.Delay(700);
+        if (token != _vToken || !_viewerVideo || _vBmp is not null) return;
         var poster = vl is null ? null : await Task.Run(() => vl.QuickPicture(index, false));
         if (token != _vToken || !_viewerVideo || _vBmp is not null) return;
         Pic.Source = poster;
@@ -409,11 +545,12 @@ public partial class MainWindow
         {
             _videoTick = now;
             UpdateVideoButtons();
-            // watched: 90% played
-            foreach (var g in _gridVids) MarkIfWatched(g.E);
-            if (_viewerVideo && _vEngine is not null) MarkIfWatched(_vEngine);
+            foreach (var g in _gridVids) MarkProgress(g.E);
+            if (_preview is not null && _previewIdx >= 0) MarkProgress(_preview);
+            if (_viewerVideo && _vEngine is not null) MarkProgress(_vEngine);
         }
         if (!ViewerOpen) return;
+        Fade(ViewerOsd, now < _osdUntil, dt);
         if (!_viewerVideo || _vEngine is null || _vEngine.FileId < 0)
         {
             if (InfoBox.Opacity != 1) InfoBox.Opacity = 1;
@@ -427,41 +564,71 @@ public partial class MainWindow
             if (!ReferenceEquals(Pic.Source, _vBmp)) Pic.Source = _vBmp;
         }
         SyncVideoBar();
+        if (_osdTime && now < _osdUntil) ViewerOsdText.Text = TimelineArt.Clock(_vEngine.SmoothPositionSec) + " / " + TimelineArt.Clock(_vEngine.LengthSec);
 
-        // the bar shows while the mouse moves or is on it (and briefly when a video comes up); the info box only briefly, or when H pins it
-        bool show = now < _ctrlFlashUntil || (now - _lastMouseMove) < Ms(0.15) || VideoBar.IsMouseOver || VTimeline.Dragging || _speedMenuOpen;
+        // the bar: while the mouse moves (and half a second after), while it's on the bar, while paused, and for a second when a
+        // video comes up. The info box: that first second, while paused, or when H pinned it.
+        bool paused = _vEngine.Paused;
+        bool show = paused || now < _ctrlFlashUntil || (now - _lastMouseMove) < Ms(0.5) || VideoBar.IsMouseOver || VTimeline.Dragging || _speedMenuOpen;
         Fade(VideoBar, show, dt);
-        Fade(InfoBox, _infoPinnedVideo || now < _infoFlashUntil, dt);
+        VideoBar.IsHitTestVisible = VideoBar.Opacity > 0.05;
+        Fade(InfoBox, _infoPinnedVideo || paused || now < _infoFlashUntil, dt);
+
+        // the time under the mouse, just above the bar
+        double hf = VTimeline.HoverFrac;
+        if (!double.IsNaN(hf) && VideoBar.Opacity > 0.5 && _vEngine.LengthSec > 0)
+        {
+            VBubbleText.Text = TimelineArt.Clock(hf * _vEngine.LengthSec);
+            VBubble.Visibility = Visibility.Visible;
+            var at = VTimeline.TranslatePoint(new Point(VTimeline.XOf(hf), 0), ViewerRoot);
+            double barTop = VideoBar.TranslatePoint(new Point(0, 0), ViewerRoot).Y;
+            double bw = VBubble.ActualWidth > 0 ? VBubble.ActualWidth : 40;
+            VBubble.Margin = new Thickness(Math.Max(4, at.X - bw / 2), Math.Max(0, barTop - 26), 0, 0);
+        }
+        else if (VBubble.Visibility == Visibility.Visible) VBubble.Visibility = Visibility.Collapsed;
     }
 
     private static void Fade(UIElement el, bool show, double dt)
     {
         double target = show ? 1 : 0;
         double o = el.Opacity;
-        if (Math.Abs(o - target) > 0.001) el.Opacity = show ? Math.Min(1, o + dt / 0.08) : Math.Max(0, o - dt / 0.12);
-        bool hit = el.Opacity > 0.05;
-        if (el is FrameworkElement fe && fe.Name == "VideoBar" && el.IsHitTestVisible != hit) el.IsHitTestVisible = hit;
+        if (Math.Abs(o - target) > 0.001) el.Opacity = show ? Math.Min(1, o + dt / 0.08) : Math.Max(0, o - dt / 0.15);
     }
 
-    private void MarkIfWatched(VideoEngine e)
+    /// <summary>Started (a little played) and watched (90%), for the outlines and the filter; previews count too.</summary>
+    private void MarkProgress(VideoEngine e)
     {
-        if (e.FileId < 0 || e.Preview) return;
+        if (e.FileId < 0) return;
+        if (e.FramesShown >= 10) _sessStarted.Add(e.FileId);
         double len = e.LengthSec;
-        if (len > 0 && e.SmoothPositionSec >= len * 0.9 && !_vpos.Watched(e.FileId)) { _vpos.MarkWatched(e.FileId); View.Refresh(); }
+        if (len > 0 && e.SmoothPositionSec >= len * 0.9 && !_sessWatched.Contains(e.FileId))
+        {
+            _sessWatched.Add(e.FileId);
+            _vpos.MarkWatched(e.FileId);
+            View.Refresh();
+        }
     }
 
     private void SyncVideoBar()
     {
         if (!_viewerVideo || _vEngine is null) return;
         double len = _vEngine.LengthSec;
-        double pos = VTimeline.Dragging && len > 0 ? _vEngine.SmoothPositionSec : _vEngine.SmoothPositionSec;
-        string t = TimelineArt.Clock(pos) + " / " + TimelineArt.Clock(len);
+        string t = TimelineArt.Clock(_vEngine.SmoothPositionSec) + " / " + TimelineArt.Clock(len);
         if (VTime.Text != t) VTime.Text = t;
         string play = _vEngine.Playing ? "" : "";
         if ((string)VPlayBtn.Content != play) VPlayBtn.Content = play;
         string mute = _vEngine.Muted ? "" : "";
         if ((string)VMuteBtn.Content != mute) VMuteBtn.Content = mute;
         VTimeline.InvalidateVisual();
+    }
+
+    /// <summary>A note in the top-right corner for a moment: the volume, or (time = true) where the video is, kept up to date.</summary>
+    private void Osd(string text, bool time = false)
+    {
+        _osdTime = time;
+        ViewerOsdText.Text = time && _vEngine is not null ? TimelineArt.Clock(_vEngine.SmoothPositionSec) + " / " + TimelineArt.Clock(_vEngine.LengthSec) : text;
+        _osdUntil = Stopwatch.GetTimestamp() + Ms(0.9);
+        ViewerOsd.Opacity = 1;
     }
 
     private void OnVPlay(object s, RoutedEventArgs e) { VideoTogglePause(); ViewerRoot.Focus(); }
@@ -476,17 +643,23 @@ public partial class MainWindow
     private void OnVPrevFrame(object s, RoutedEventArgs e) { _vEngine?.PrevFrame(); SyncVideoBar(); ViewerRoot.Focus(); }
     private void OnVNextFrame(object s, RoutedEventArgs e) { _vEngine?.NextFrame(); SyncVideoBar(); ViewerRoot.Focus(); }
     private void OnVMute(object s, RoutedEventArgs e) { VideoToggleMute(); ViewerRoot.Focus(); }
-    private void VideoToggleMute() { if (_vEngine is null) return; _vEngine.Muted = !_vEngine.Muted; _viewerMuted = _vEngine.Muted; SyncVideoBar(); }
+    private void VideoToggleMute()
+    {
+        if (_vEngine is null) return;
+        _vEngine.Muted = !_vEngine.Muted; _viewerMuted = _vEngine.Muted;
+        SyncVolumeSlider();
+        SyncVideoBar();
+    }
     private void OnVLoop(object s, RoutedEventArgs e) { if (_vEngine is not null) _vEngine.Loop = VLoopBtn.IsChecked == true; ViewerRoot.Focus(); }
 
     private void OnVSpeedBtn(object s, RoutedEventArgs e)
     {
-        var menu = new ContextMenu { PlacementTarget = VSpeedBtn, Placement = System.Windows.Controls.Primitives.PlacementMode.Top };
+        var menu = new ContextMenu { PlacementTarget = VSpeedBtn, Placement = PlacementMode.Top };
         foreach (var r in Speeds)
         {
             float rr = r;
             var it = new MenuItem { Header = $"{r:0.##}x", IsCheckable = true, IsChecked = Math.Abs(r - _viewerRate) < 0.001f };
-            it.Click += (_, _) => SetSpeed(rr);
+            it.Click += (_, _) => SetSpeed(rr, false);
             menu.Items.Add(it);
         }
         _speedMenuOpen = true;
@@ -494,38 +667,37 @@ public partial class MainWindow
         menu.IsOpen = true;
     }
 
-    private void SetSpeed(float r)
+    private void SetSpeed(float r, bool fromKey)
     {
         _viewerRate = r;
         VSpeedBtn.Content = $"{r:0.##}x";
         _vEngine?.SetRate(r);
-        Flash(0.8);
+        if (fromKey) Osd($"Speed {r:0.##}x");
     }
 
     private void StepSpeed(int d)
     {
         int k = Array.FindIndex(Speeds, x => Math.Abs(x - _viewerRate) < 0.001f);
         if (k < 0) k = 3;
-        SetSpeed(Speeds[Math.Clamp(k + d, 0, Speeds.Length - 1)]);
+        SetSpeed(Speeds[Math.Clamp(k + d, 0, Speeds.Length - 1)], true);
     }
-
-    /// <summary>Shows the bar for a moment (a key changed something on it).</summary>
-    private void Flash(double sec) { long u = Stopwatch.GetTimestamp() + Ms(sec); if (u > _ctrlFlashUntil) _ctrlFlashUntil = u; }
 
     private void OnVVolume(object s, RoutedPropertyChangedEventArgs<double> e)
     {
         int v = (int)Math.Round(e.NewValue);
         if (VVolText is not null) VVolText.Text = v.ToString();
-        if (!IsLoaded) return;
-        if (v != _vpos.Volume) SetVolume(v);
-        if (_viewerVideo && _vEngine is { Muted: true } en && v > 0 && Mouse.LeftButton == MouseButtonState.Pressed) { en.Muted = false; _viewerMuted = false; }
+        if (_vSyncVol || !IsLoaded) return;
+        // dragging or clicking the slider sets the volume, and turns the sound back on if it was off
+        if (_vEngine is { Muted: true } en) { en.Muted = false; _viewerMuted = false; }
+        SetVolume(v);
+        SyncVideoBar();
     }
 
     private void SeekBy(double sec)
     {
         if (_vEngine is null) return;
         _vEngine.Seek(_vEngine.SmoothPositionSec + sec);
-        Flash(0.8);
+        Osd("", time: true);
         SyncVideoBar();
     }
 
@@ -545,12 +717,12 @@ public partial class MainWindow
         switch (e.Key)
         {
             case Key.Space: VideoTogglePause(); return true;
-            case Key.OemComma: _vEngine.PrevFrame(); Flash(0.8); SyncVideoBar(); return true;
-            case Key.OemPeriod: _vEngine.NextFrame(); Flash(0.8); SyncVideoBar(); return true;
-            case Key.M: VideoToggleMute(); Flash(0.8); return true;
+            case Key.OemComma: _vEngine.PrevFrame(); Osd("", time: true); SyncVideoBar(); return true;
+            case Key.OemPeriod: _vEngine.NextFrame(); Osd("", time: true); SyncVideoBar(); return true;
+            case Key.M: VideoToggleMute(); Osd(_vEngine.Muted ? "Muted" : $"Volume {_vpos.Volume}"); return true;
             case Key.OemOpenBrackets: StepSpeed(-1); return true;
             case Key.OemCloseBrackets: StepSpeed(1); return true;
-            case Key.L: VLoopBtn.IsChecked = VLoopBtn.IsChecked != true; _vEngine.Loop = VLoopBtn.IsChecked == true; Flash(0.8); return true;
+            case Key.L: VLoopBtn.IsChecked = VLoopBtn.IsChecked != true; _vEngine.Loop = VLoopBtn.IsChecked == true; Osd(_vEngine.Loop ? "Loop on" : "Loop off"); return true;
             case Key.D9: case Key.NumPad9: SeekBy(-3); return true;
             case Key.D0: case Key.NumPad0: SeekBy(3); return true;
             case Key.Left when shift: SeekBy(-5); return true;
@@ -558,11 +730,10 @@ public partial class MainWindow
             case Key.Up:
             case Key.Down:
                 {
-                    // 3% a press (holding the key repeats)
-                    int v = _vpos.Volume + (e.Key == Key.Up ? 3 : -3);
-                    SetVolume(v);
-                    if (e.Key == Key.Up && _vEngine.Muted) { _vEngine.Muted = false; _viewerMuted = false; }
-                    Flash(0.8);
+                    // 3% a press (holding the key repeats); shown in the corner, not on the bar
+                    if (_vEngine.Muted) { _vEngine.Muted = false; _viewerMuted = false; }
+                    SetVolume(_vpos.Volume + (e.Key == Key.Up ? 3 : -3));
+                    Osd($"Volume {_vpos.Volume}");
                     SyncVideoBar();
                     return true;
                 }

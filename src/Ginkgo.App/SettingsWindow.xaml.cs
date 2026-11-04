@@ -52,6 +52,7 @@ public partial class SettingsWindow : Window
     }
     private void OnWarmChanged(object s, RoutedEventArgs e) { _s.WarmCache = WarmBox.IsChecked == true; _engine.Warmer.Enabled = _s.WarmCache; _main.ApplySettings(); Result.Text = "The limit and GIF settings are in Optimisations (next to Settings in the menu bar)."; }
     private void OnLook(object s, RoutedEventArgs e) => _main.OpenLook();
+    private void OnOutlines(object s, RoutedEventArgs e) => new OutlineWindow(_s, _main.OutlinesChanged) { Owner = this }.ShowDialog();
     private void OnRoundChanged(object s, RoutedEventArgs e) { _s.CoverRounded = RoundBox.IsChecked == true; RadiusSlider.IsEnabled = _s.CoverRounded; _main.ApplySettings(); }
     private void OnRadiusChanged(object s, RoutedPropertyChangedEventArgs<double> e)
     {

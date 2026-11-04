@@ -71,8 +71,7 @@
                         <Button x:Name="ShuffleBtn" Content="Reshuffle" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Visibility="Collapsed" Click="OnReshuffle"/>
                         <Slider x:Name="SizeSlider" local:BarPanel.PreferredWidth="120" MinWidth="60" Minimum="0" Maximum="1" Margin="10,3,12,3" VerticalAlignment="Center" ValueChanged="OnSizeChanged" ToolTip="Picture size (Ctrl + mouse wheel, + and -)"/>
                         <ToggleButton x:Name="RowsBtn" Content="Equal rows" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnLayoutChanged" ToolTip="Rows of equal height instead of equal-width columns (L)"/>
-                        <Button x:Name="PauseAllBtn" Style="{StaticResource IconButton}" Content="&#xE769;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Pause every playing video" Click="OnPauseAll" Visibility="Collapsed"/>
-                        <Button x:Name="MuteAllBtn" Style="{StaticResource IconButton}" Content="&#xE74F;" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" ToolTip="Mute every playing video" Click="OnMuteAll" Visibility="Collapsed"/>
+                        <Button x:Name="PauseAllBtn" Style="{StaticResource IconButton}" Content="&#xE769;" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" ToolTip="Pause every playing video" Click="OnPauseAll" Visibility="Collapsed"/>
                         <Button x:Name="QuickBtn" Style="{StaticResource IconButton}" Content="&#xE9E9;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Quick toggles: videos (Q)" Click="OnQuick"/>
                         <Button x:Name="OptimiseBtn" Style="{StaticResource IconButton}" Content="&#xE9D9;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Optimisations: memory and GIFs" Click="OnOptimise"/>
                         <Button x:Name="SettingsBtn" Style="{StaticResource IconButton}" Content="&#xE713;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Settings" Click="OnSettings"/>
@@ -238,10 +237,20 @@
                     <ToggleButton x:Name="VLoopBtn" Grid.Column="6" Style="{StaticResource VToggle}" Content="&#xE8EE;" IsChecked="True" ToolTip="Loop: play again from the start at the end (L)" Click="OnVLoop"/>
                     <Button x:Name="VMuteBtn" Grid.Column="7" Style="{StaticResource VBtn}" Content="&#xE767;" ToolTip="Sound on / off (M)" Click="OnVMute"/>
                     <StackPanel Grid.Column="8" Orientation="Horizontal" Margin="2,0,12,0">
-                        <Slider x:Name="VVolume" Width="90" Minimum="0" Maximum="100" VerticalAlignment="Center" ValueChanged="OnVVolume" ToolTip="Volume (Up and Down)" Focusable="False"/>
+                        <Slider x:Name="VVolume" Width="90" Minimum="0" Maximum="100" VerticalAlignment="Center" ValueChanged="OnVVolume" ToolTip="Volume (Up and Down)" Focusable="False" IsMoveToPointEnabled="True"/>
                         <TextBlock x:Name="VVolText" Width="28" TextAlignment="Right" Foreground="#E4E4E8" FontFamily="Consolas" FontSize="12.5" VerticalAlignment="Center" Text="80"/>
                     </StackPanel>
                 </Grid>
+            </Border>
+            <!-- the time under the mouse on the video's progress line, just above the bar -->
+            <Border x:Name="VBubble" HorizontalAlignment="Left" VerticalAlignment="Top" Padding="6,1,6,2" CornerRadius="4" Background="#D80C0C0E"
+                    IsHitTestVisible="False" Visibility="Collapsed">
+                <TextBlock x:Name="VBubbleText" Foreground="White" FontSize="12"/>
+            </Border>
+            <!-- volume, or where the video is, for a moment after a key changes it -->
+            <Border x:Name="ViewerOsd" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,18,22,0" Padding="12,6" CornerRadius="6"
+                    Background="#B4000000" IsHitTestVisible="False" Opacity="0">
+                <TextBlock x:Name="ViewerOsdText" Foreground="White" FontSize="18" FontFamily="Segoe UI Semibold"/>
             </Border>
             <Border x:Name="InfoBox" HorizontalAlignment="Left" VerticalAlignment="Bottom" Padding="10,6" CornerRadius="5"
                     Background="#8C000000" IsHitTestVisible="False">

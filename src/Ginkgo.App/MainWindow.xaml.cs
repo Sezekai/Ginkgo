@@ -223,6 +223,7 @@ public partial class MainWindow : Window
         string fsort = prefs.FolderSort; bool frev = prefs.FolderReverse;
         bool grid = _settings.BrowseCoverGrid;
         var details = BrowseDetails();
+        var vf = VideoRowFilter();
         var result = await Task.Run(() =>
         {
             BrowsePage? page = null;
@@ -234,6 +235,12 @@ public partial class MainWindow : Window
                 order = page.Order;
             }
             else order = model.Select(q);
+            if (vf is not null)
+            {
+                // the Videos filter: watched / paused / not watched yet (folder tiles stay)
+                int ff = page?.FirstFile ?? 0;
+                order = order.Take(ff).Concat(order.Skip(ff).Where(r => r < 0 || vf(r))).ToArray();
+            }
             return (order, page, slice: model.Slice(order, stores));
         });
         if (version != _buildVersion) return;                     // something newer was asked for meanwhile
@@ -805,7 +812,7 @@ public partial class MainWindow : Window
     // ---- top bar: slides away on scroll down, back on scroll up; H hides it for good until shown again ----
 
     private bool BarPinned =>
-        _folderPopup.IsOpen || (_optPopup?.IsOpen ?? false) || (_quickPopup?.IsOpen ?? false) || _sideOpen || BarRow.Expanded || Banner.Visibility == Visibility.Visible || SearchBox.IsKeyboardFocused ||
+        _folderPopup.IsOpen || (_optPopup?.IsOpen ?? false) || (_quickPopup?.IsOpen ?? false) || (_vfPopup?.IsOpen ?? false) || _sideOpen || BarRow.Expanded || Banner.Visibility == Visibility.Visible || SearchBox.IsKeyboardFocused ||
         (TopBar.IsMouseOver && Stopwatch.GetTimestamp() > _ignoreOverUntil) || HoverStrip.IsMouseOver;
 
     private void ApplyBar()
@@ -1250,7 +1257,7 @@ public partial class MainWindow : Window
         {
             if (full && _viewerVideo) return;                 // zooming a video: nothing to reload
             LeaveViewerVideo();
-            await LoadVideo(index, token);
+            await LoadVideo(index, token, fast);
             return;
         }
         LeaveViewerVideo();
@@ -1348,7 +1355,9 @@ public partial class MainWindow : Window
 
     private void OnViewerWheel(object s, MouseWheelEventArgs e)
     {
-        ZoomAt(e.GetPosition(PicHost), _zoom * Math.Pow(1.18, e.Delta / 120.0));
+        // a video zooms into the middle of the window; a picture into where the mouse is
+        var at = _viewerVideo ? new Point(PicHost.ActualWidth / 2, PicHost.ActualHeight / 2) : e.GetPosition(PicHost);
+        ZoomAt(at, _zoom * Math.Pow(1.18, e.Delta / 120.0));
         e.Handled = true;
     }
 

@@ -91,6 +91,9 @@ public sealed class VideoEngine : IDisposable
         _mp.SetVideoCallbacks(_lockCb, null, _display);
         _mp.Volume = _volume;
         _mp.EndReached += (_, _) => { int g = _gen; Post(() => OnEnded(g)); };
+        // LibVLC forgets sound settings made before a file starts (it makes the sound output then): set them again once it plays
+        _mp.Playing += (_, _) => Post(() => { if (_mp is null) return; _mp.Mute = _muted; _mp.Volume = _volume; });
+        _mp.ESAdded += (_, _) => Post(() => { if (_mp is null) return; _mp.Mute = _muted; _mp.Volume = _volume; });
         _mp.EncounteredError += (_, _) =>
         {
             int g = _gen;
@@ -118,7 +121,7 @@ public sealed class VideoEngine : IDisposable
     /// Plays a file from <paramref name="startSec"/>, decoding at most <paramref name="maxW"/> x <paramref name="maxH"/> (a tile
     /// doesn't need full HD frames). Replaces whatever this player was playing. Returns at once; the file opens on the player's thread.
     /// </summary>
-    public bool Play(long fileId, string path, double startSec, bool muted, int maxW, int maxH, bool preview)
+    public bool Play(long fileId, string path, double startSec, bool muted, int maxW, int maxH, bool preview, bool startPaused = false)
     {
         if (!Ensure()) return false;
         int g = ++_gen;
@@ -126,8 +129,9 @@ public sealed class VideoEngine : IDisposable
         FileId = fileId; Path = path; Preview = preview; Failed = false; Error = "";
         StartSec = Math.Max(0, startSec);
         _muted = muted;
-        _pausedWanted = false; _ended = false;
-        ResetClock(StartSec, false);
+        _pausedWanted = startPaused; _ended = false;
+        _pauseOnFirstFrame = startPaused;
+        ResetClock(StartSec, startPaused);
         _seqAtStart = _frameSeq;
         Post(() =>
         {
@@ -137,6 +141,7 @@ public sealed class VideoEngine : IDisposable
             _media?.Dispose();
             _media = new Media(s_vlc!, path, FromType.FromPath);
             if (StartSec > 0.5) _media.AddOption($":start-time={StartSec.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}");
+            if (_pauseOnFirstFrame) _media.AddOption(":start-paused");
             mp.Mute = _muted;
             mp.Volume = _volume;
             lock (_lock) _ready = -1;
@@ -144,7 +149,7 @@ public sealed class VideoEngine : IDisposable
             _seqAtStart = _frameSeq;
             mp.Play(_media);
             if (Math.Abs(Rate - 1f) > 0.01f) mp.SetRate(Rate);
-            if (_pausedWanted && g == _gen) mp.SetPause(true);
+            if (_pausedWanted && !_pauseOnFirstFrame && g == _gen) mp.SetPause(true);
         });
         return true;
     }
@@ -180,6 +185,7 @@ public sealed class VideoEngine : IDisposable
         _pausedWanted = pause;
         ResetClock(now, pause);
         int g = _gen;
+        if (!pause) _pauseOnFirstFrame = false;
         Post(() => { if (g == _gen && _runningGen == g) _mp!.SetPause(pause); });
     }
     public void TogglePause()
@@ -354,10 +360,19 @@ public sealed class VideoEngine : IDisposable
         return IntPtr.Zero;
     }
 
+    private volatile bool _pauseOnFirstFrame;
+
     private void OnDisplay(IntPtr opaque, IntPtr picture)
     {
         lock (_lock) { _ready = _write; _write ^= 1; _bufGen = _runningGen; }
         _frameSeq++;
+        if (_pauseOnFirstFrame)
+        {
+            // started paused: the first picture is up, make sure it stays there
+            _pauseOnFirstFrame = false;
+            int g = _gen;
+            Post(() => { if (g == _gen && _pausedWanted && _mp is { IsPlaying: true }) _mp.SetPause(true); });
+        }
     }
 
     /// <summary>UI thread. Copies the newest frame into <paramref name="dst"/> (made or resized as needed). False when there's none yet.</summary>

@@ -72,11 +72,13 @@ public sealed class AppSettings
     /// <summary>Videos clicked in the grid start without sound (the speaker on the tile turns it on).</summary>
     public bool GridStartMuted { get; set; }
     /// <summary>Outline round a paused video in the grid.</summary>
-    public OutlineStyle PausedOutline { get; set; } = new() { On = true, Colour = "#FFB000", Width = 2, Opacity = 0.9, Glow = 8, GlowStrength = 0.45 };
+    public OutlineStyle PausedOutline { get; set; } = OutlineStyle.PausedDefault();
     /// <summary>Outline round a watched video in the grid.</summary>
-    public OutlineStyle WatchedOutline { get; set; } = new() { On = true, Colour = "#5FAF6B", Width = 2, Opacity = 0.75, Glow = 0, GlowStrength = 0.3 };
+    public OutlineStyle WatchedOutline { get; set; } = OutlineStyle.WatchedDefault();
     /// <summary>What counts as watched: "End" (played to 90% or more) or "Started" (any of it played).</summary>
     public string WatchedRule { get; set; } = "End";
+    /// <summary>"Session": outlines and the Paused label are for videos watched / paused since Ginkgo opened. "Always": remembered between sessions.</summary>
+    public string OutlineMemory { get; set; } = "Session";
     /// <summary>How the buttons look (shape, colours, outline, glow).</summary>
     public ButtonLook Look { get; set; } = new();
 

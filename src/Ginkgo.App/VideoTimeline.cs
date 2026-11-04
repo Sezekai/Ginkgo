@@ -39,7 +39,7 @@ public static class TimelineArt
         if (!double.IsNaN(hover)) dc.DrawRectangle(HoverFill, null, new Rect(left, r.Top, width * Math.Clamp(hover, 0, 1), th));
         dc.DrawRectangle(Played, null, new Rect(left, r.Top, width * frac, th));
         if (active) dc.DrawEllipse(Knob, null, new Point(left + width * frac, y), 6.5, 6.5);
-        if (!double.IsNaN(hover) && lenSec > 0)
+        if (!double.IsNaN(hover) && lenSec > 0 && !double.IsNaN(bubbleTop))
         {
             var ft = new FormattedText(Clock(hover * lenSec), CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Face, 11.5, Brushes.White, ppd);
             double bw = ft.Width + 12, bh = 18;
@@ -59,6 +59,10 @@ public sealed class VideoTimeline : FrameworkElement
     /// <summary>A seek: where (0..1), and whether the drag has finished.</summary>
     public event Action<double, bool>? SeekTo;
     public bool Dragging { get; private set; }
+    /// <summary>0..1 under the mouse (or being dragged to); NaN when the mouse isn't on the line.</summary>
+    public double HoverFrac => Dragging ? _dragFrac : _hover;
+    /// <summary>Where on this control a fraction of the line is.</summary>
+    public double XOf(double frac) => Pad + (ActualWidth - 2 * Pad) * Math.Clamp(frac, 0, 1);
     private double _hover = double.NaN;
     private double _dragFrac;
     private long _lastSeek;
@@ -74,8 +78,9 @@ public sealed class VideoTimeline : FrameworkElement
         var (frac, len) = Source?.Invoke() ?? (0, 0);
         if (Dragging) frac = _dragFrac;
         bool active = IsMouseOver || Dragging;
-        double y = ActualHeight / 2 + 8;
-        TimelineArt.Draw(dc, Pad, ActualWidth - 2 * Pad, y, frac, Dragging ? _dragFrac : _hover, active, len, VisualTreeHelper.GetDpi(this).PixelsPerDip, y - 27);
+        double y = ActualHeight / 2;
+        // the time under the mouse is shown above the bar by the viewer (the bar clips to its rounded corners)
+        TimelineArt.Draw(dc, Pad, ActualWidth - 2 * Pad, y, frac, Dragging ? _dragFrac : _hover, active, len, VisualTreeHelper.GetDpi(this).PixelsPerDip, double.NaN);
     }
 
     protected override void OnMouseMove(MouseEventArgs e)
@@ -131,4 +136,6 @@ public sealed class OutlineStyle
     /// <summary>Glow on the tile only while paused/watched; "Pulse" makes it breathe slowly.</summary>
     public bool Pulse { get; set; }
     public OutlineStyle Copy() => (OutlineStyle)MemberwiseClone();
+    public static OutlineStyle PausedDefault() => new() { On = true, Colour = "#FFB000", Width = 2, Opacity = 0.9, Glow = 5, GlowStrength = 0.45 };
+    public static OutlineStyle WatchedDefault() => new() { On = true, Colour = "#5FAF6B", Width = 2, Opacity = 0.9, Glow = 5, GlowStrength = 0.45 };
 }
