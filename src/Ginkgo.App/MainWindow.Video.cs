@@ -26,6 +26,7 @@ public partial class MainWindow
     private VideoEngine? _preview;
     private int _previewIdx = -1, _previewWanted = -1;
     private long _previewId = -1;
+    private bool _previewSoundTouched;      // you changed the preview's sound yourself (it keeps it if you click to play)
     private GridVid? _hoverPlay;             // a paused grid video playing while the mouse is on it
     private DispatcherTimer? _previewTimer;
     private readonly HashSet<long> _cantPlay = new();
@@ -71,13 +72,13 @@ public partial class MainWindow
     private bool IsWatched(long id) => _settings.WatchedRule == "Started"
         ? (Always ? _vpos.Started(id) : _sessStarted.Contains(id) || _sessWatched.Contains(id))
         : (Always ? _vpos.Watched(id) : _sessWatched.Contains(id));
-    private double PausedAt(long id) => _sessPaused.TryGetValue(id, out var p) ? p : Always && _vpos.Get(id) > 0 ? _vpos.Get(id) : -1;
+    private double PausedAt(long id) => !_settings.ResumeVideos ? -1 : _sessPaused.TryGetValue(id, out var p) ? p : Always && _vpos.Get(id) > 0 ? _vpos.Get(id) : -1;
 
     private void InitVideo()
     {
         ThreadPool.QueueUserWorkItem(_ => VideoEngine.Warm());          // load the player early, so the first video starts sooner
-        View.VideoMuteClicked += i => { if (EngineAt(i) is { } e) { e.Muted = !e.Muted; if (!e.Muted && e.Volume == 0) e.Volume = _vpos.Volume; View.Refresh(); } };
-        View.VideoVolume += (i, v) => { if (EngineAt(i) is { } e) { e.Volume = v; if (e.Muted && v > 0) e.Muted = false; View.Refresh(); } };
+        View.VideoMuteClicked += i => { if (i == _previewIdx) _previewSoundTouched = true; if (EngineAt(i) is { } e) { e.Muted = !e.Muted; if (!e.Muted && e.Volume == 0) e.Volume = _vpos.Volume; View.Refresh(); } };
+        View.VideoVolume += (i, v) => { if (i == _previewIdx) _previewSoundTouched = true; if (EngineAt(i) is { } e) { e.Volume = v; if (e.Muted && v > 0) e.Muted = false; View.Refresh(); } };
         View.VideoSeek += (i, f, final) =>
         {
             if (EngineAt(i) is { } e && e.LengthSec > 0) e.Seek(f * e.LengthSec);
@@ -192,6 +193,8 @@ public partial class MainWindow
 
     private void PauseGrid(GridVid g)
     {
+        // not carrying on where you left off: pausing stops it, and the tile is a thumbnail like the rest again
+        if (!_settings.ResumeVideos) { ReleaseGrid(g); return; }
         if (g.E.Playing) g.E.SetPaused(true);
         g.HoverPlay = false;
         SaveVideoPosition(g.E);
@@ -232,7 +235,7 @@ public partial class MainWindow
             // the preview carries on as the real thing (no restart)
             e = _preview; _preview = null; _previewIdx = -1; _previewId = -1;
             e.Preview = false;
-            keepSound = true;                    // whatever sound you gave the preview stays
+            keepSound = _previewSoundTouched;    // sound you set on the preview stays; otherwise the grid's setting
             if (!_sessPaused.ContainsKey(id) && saved > 1 && e.SmoothPositionSec < 1.5) e.Seek(saved);
         }
         else
@@ -265,7 +268,7 @@ public partial class MainWindow
     private void ReleaseGrid(GridVid g)
     {
         SaveVideoPosition(g.E);
-        if (g.E.Paused || !g.E.Playing) { _sessPaused[g.Id] = g.E.SmoothPositionSec; FreezeFrame(g.Id, View.FrameOf(g.Index)); }     // still shows as paused, where it was
+        if (_settings.ResumeVideos && (g.E.Paused || !g.E.Playing)) { _sessPaused[g.Id] = g.E.SmoothPositionSec; FreezeFrame(g.Id, View.FrameOf(g.Index)); }     // still shows as paused, where it was
         g.E.Stop();
         _spare.Push(g.E);
         _gridVids.Remove(g);
@@ -338,7 +341,7 @@ public partial class MainWindow
         // a video paused earlier carries on from where it was paused; others from the start
         double from = _settings.ResumeVideos && _sessPaused.TryGetValue(id, out var p) ? p : 0;
         if (!_preview.Play(id, _model!.Path[_order[i]], from, muted: !_settings.PreviewSound, 960, 960, preview: true)) return;
-        _previewIdx = i; _previewId = id;
+        _previewIdx = i; _previewId = id; _previewSoundTouched = false;
         View.SetVideo(i, _preview, controls: true);
     }
 
@@ -358,7 +361,7 @@ public partial class MainWindow
 
     private void OnPauseAll(object s, RoutedEventArgs e)
     {
-        foreach (var g in _gridVids) if (g.E.Playing) PauseGrid(g);
+        foreach (var g in _gridVids.ToList()) if (g.E.Playing) PauseGrid(g);
         _hoverPlay = null;
         if (_previewIdx >= 0) StopPreview();
         UpdateVideoButtons(); View.Refresh();
@@ -461,7 +464,7 @@ public partial class MainWindow
         if (_previewIdx >= 0) StopPreview();
         _hoverPlay = null;
         _viewerFirstIndex = index; _viewerLeftFirst = false;
-        foreach (var g in _gridVids) if (g.E.Playing) PauseGrid(g); else SaveVideoPosition(g.E);
+        foreach (var g in _gridVids.ToList()) if (g.E.Playing) PauseGrid(g); else SaveVideoPosition(g.E);
         UpdateVideoButtons();
     }
 
@@ -476,7 +479,7 @@ public partial class MainWindow
             long vid = _vEngine.FileId;
             double at = _vEngine.SmoothPositionSec, len = _vEngine.LengthSec;
             _sessStarted.Add(vid);
-            if (len <= 0 || at < len - 2) _sessPaused[vid] = at; else _sessPaused.Remove(vid);
+            if (_settings.ResumeVideos && (len <= 0 || at < len - 2)) _sessPaused[vid] = at; else _sessPaused.Remove(vid);
             _frozen.Remove(vid); _frozenOrder.Remove(vid);            // that frame is from earlier
         }
         _vEngine.Stop();
@@ -497,7 +500,7 @@ public partial class MainWindow
         double at = wasVideo ? _vEngine!.SmoothPositionSec : 0;
         bool watchedSome = wasVideo && _vEngine!.FramesShown >= 10;
         LeaveViewerVideo();
-        if (wasVideo && watchedSome && IsVideoTile(idx) && TileId(idx) == id)
+        if (wasVideo && watchedSome && _settings.ResumeVideos && IsVideoTile(idx) && TileId(idx) == id)
         {
             var g = _gridVids.Find(x => x.Index == idx);
             if (g is not null) { if (g.E.Playing) g.E.SetPaused(true); g.E.Seek(at); }

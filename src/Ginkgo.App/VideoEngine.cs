@@ -79,7 +79,8 @@ public sealed class VideoEngine : IDisposable
                 // session, so every player shared them: a muted preview could be heard, and one video's volume carried to the next.)
                 // Decoding on the processor: frames go to memory anyway, and copying them back from the graphics card stalled the
                 // first seconds of some videos (a still picture with the sound running).
-                s_vlc = new LibVLC("--quiet", "--no-osd", "--no-video-title-show", "--no-snapshot-preview", "--aout=directsound,any", "--avcodec-hw=none");
+                s_vlc = new LibVLC("--quiet", "--no-osd", "--no-video-title-show", "--no-snapshot-preview", "--aout=directsound,any", "--no-volume-save",
+                    "--avcodec-hw=any", "--no-drop-late-frames");
                 return true;
             }
             catch (Exception ex) { s_error = "video playback isn't available: " + ex.Message; return false; }
@@ -115,9 +116,27 @@ public sealed class VideoEngine : IDisposable
     private void ApplySound()
     {
         if (_mp is null) return;
-        _mp.Mute = _muted;
-        _mp.Volume = _muted ? 0 : _volume;
+        bool muted = _muted;
+        _mp.Mute = muted;
+        _mp.Volume = muted ? 0 : _volume;
+        // and, muted, the sound track itself is switched off: whatever the sound output thinks, there is nothing to hear
+        try
+        {
+            int cur = _mp.AudioTrack;
+            if (muted)
+            {
+                if (cur >= 0) { _audioTrack = cur; _mp.SetAudioTrack(-1); }
+            }
+            else if (cur < 0)
+            {
+                int id = _audioTrack;
+                if (id < 0) foreach (var t in _mp.AudioTrackDescription) if (t.Id >= 0) { id = t.Id; break; }
+                if (id >= 0) { _mp.SetAudioTrack(id); _mp.Mute = false; _mp.Volume = _volume; }
+            }
+        }
+        catch { }
     }
+    private int _audioTrack = -1;
 
     private void Post(Action a) { if (!_disposed) try { _work.Add(a); } catch { } }
 
@@ -144,7 +163,7 @@ public sealed class VideoEngine : IDisposable
         _pausedWanted = startPaused; _ended = false;
         _pauseOnFirstFrame = startPaused;
         ResetClock(StartSec, startPaused);
-        _floorSec = StartSec; _floorUntil = StartSec > 0.5 ? Stopwatch.GetTimestamp() + 3 * Stopwatch.Frequency : 0;
+        _floorSec = StartSec; _floorUntil = 0;          // a start part way begins at the key frame there: its own time is right
         _seqAtStart = _frameSeq;
         Post(() =>
         {
@@ -153,7 +172,14 @@ public sealed class VideoEngine : IDisposable
             try { mp.Stop(); } catch { }
             _media?.Dispose();
             _media = new Media(s_vlc!, path, FromType.FromPath);
-            if (StartSec > 0.5) _media.AddOption($":start-time={StartSec.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}");
+            _audioTrack = -1;
+            if (StartSec > 0.5)
+            {
+                // starting part way: from the key frame there, so picture and sound start together (an exact start made the
+                // picture wait, still, while the sound ran)
+                _media.AddOption($":start-time={StartSec.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}");
+                _media.AddOption(":input-fast-seek");
+            }
             if (_pauseOnFirstFrame) _media.AddOption(":start-paused");
             ApplySound();
             lock (_lock) _ready = -1;
