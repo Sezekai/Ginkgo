@@ -6,7 +6,7 @@
         <SolidColorBrush x:Key="Bar" Color="#1C1C20"/>
         <SolidColorBrush x:Key="Text" Color="#E4E4E8"/>
         <SolidColorBrush x:Key="Dim" Color="#9AA0A6"/>
-        <SolidColorBrush x:Key="Accent" Color="#5FAF6B"/>
+        <SolidColorBrush x:Key="Accent" Color="#8A5CF5"/>
         <SolidColorBrush x:Key="Field" Color="#26262C"/>
         <SolidColorBrush x:Key="Edge" Color="#3A3A42"/>
 
@@ -164,8 +164,8 @@
             <Setter Property="Foreground" Value="#F0F0F4"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
-            <Setter Property="FontSize" Value="16"/>
-            <Setter Property="Width" Value="48"/>
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="Width" Value="41"/>
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -183,7 +183,7 @@
         </Style>
         <Style x:Key="VToggle" TargetType="ToggleButton" BasedOn="{StaticResource VBtn}">
             <Style.Triggers>
-                <Trigger Property="IsChecked" Value="True"><Setter Property="Foreground" Value="#7EC98A"/></Trigger>
+                <Trigger Property="IsChecked" Value="True"><Setter Property="Foreground" Value="#C9A8FF"/></Trigger>
                 <Trigger Property="IsChecked" Value="False"><Setter Property="Foreground" Value="#8A8A94"/></Trigger>
             </Style.Triggers>
         </Style>
@@ -423,7 +423,7 @@
                         </StackPanel>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
-                                <Setter TargetName="Box" Property="Background" Value="#3E7A48"/>
+                                <Setter TargetName="Box" Property="Background" Value="#6A3CF0"/>
                                 <Setter TargetName="Box" Property="BorderBrush" Value="#3E7A48"/>
                                 <Setter TargetName="Tick" Property="Visibility" Value="Visible"/>
                             </Trigger>

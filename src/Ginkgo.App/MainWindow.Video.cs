@@ -35,10 +35,13 @@ public partial class MainWindow
     // this session: what was paused (and where), watched, started (for the outlines, the Paused label and the Videos filter)
     private readonly Dictionary<long, double> _sessPaused = new();
     private readonly HashSet<long> _sessWatched = new(), _sessStarted = new();
+    // the last frame of paused videos whose player was let go: they keep showing it rather than going back to the thumbnail
+    private readonly Dictionary<long, ThumbLoader.Pix> _frozen = new();
+    private readonly LinkedList<long> _frozenOrder = new();
+    private const int FrozenMax = 40;
     // the Videos filter (hover the Videos switch): which videos show
     private bool _vfWatched = true, _vfPaused = true, _vfUnwatched = true;
     private Popup? _vfPopup;
-    private DispatcherTimer? _vfTimer;
 
     // the viewer
     private VideoEngine? _vEngine;
@@ -84,6 +87,11 @@ public partial class MainWindow
         {
             long id = TileId(i);
             return id < 0 ? (false, -1) : (IsWatched(id), PausedAt(id));
+        };
+        View.FrozenFrame = i =>
+        {
+            long id = TileId(i);
+            return id >= 0 && _frozen.TryGetValue(id, out var f) && PausedAt(id) >= 0 ? f : null;
         };
         ApplyVideoLook();
         View.HoverChanged += OnVideoHover;
@@ -172,6 +180,16 @@ public partial class MainWindow
         _vpos.Set(e.FileId, e.SmoothPositionSec, e.LengthSec);
     }
 
+    /// <summary>Keeps a paused video's frame for its tile after its player goes (the oldest are dropped past a limit).</summary>
+    private void FreezeFrame(long id, ThumbLoader.Pix? f)
+    {
+        if (id < 0 || f is null) return;
+        if (_frozen.ContainsKey(id)) _frozenOrder.Remove(id);
+        _frozen[id] = f;
+        _frozenOrder.AddLast(id);
+        while (_frozenOrder.Count > FrozenMax) { _frozen.Remove(_frozenOrder.First!.Value); _frozenOrder.RemoveFirst(); }
+    }
+
     private void PauseGrid(GridVid g)
     {
         if (g.E.Playing) g.E.SetPaused(true);
@@ -206,7 +224,7 @@ public partial class MainWindow
             UpdateVideoButtons(); View.Refresh();
             return;
         }
-        double saved = _sessPaused.TryGetValue(id, out var sp) ? sp : _vpos.Get(id);
+        double saved = !_settings.ResumeVideos ? 0 : _sessPaused.TryGetValue(id, out var sp) ? sp : _vpos.Get(id);
         VideoEngine e;
         bool keepSound = false;
         if (_previewIdx == i && _preview is not null)
@@ -247,7 +265,7 @@ public partial class MainWindow
     private void ReleaseGrid(GridVid g)
     {
         SaveVideoPosition(g.E);
-        if (g.E.Paused || !g.E.Playing) _sessPaused[g.Id] = g.E.SmoothPositionSec;     // still shows as paused, where it was
+        if (g.E.Paused || !g.E.Playing) { _sessPaused[g.Id] = g.E.SmoothPositionSec; FreezeFrame(g.Id, View.FrameOf(g.Index)); }     // still shows as paused, where it was
         g.E.Stop();
         _spare.Push(g.E);
         _gridVids.Remove(g);
@@ -286,7 +304,7 @@ public partial class MainWindow
         if (_previewIdx >= 0 && i != _previewIdx) StopPreview();
         if (_hoverPlay is not null && _hoverPlay.Index != i) EndHoverPlay();
         _previewWanted = -1;
-        if (i < 0 || !IsVideoTile(i) || i == _previewIdx) return;
+        if (i < 0 || !IsVideoTile(i) || i == _previewIdx || !_settings.HoverPreviews) return;
         var g = _gridVids.Find(x => x.Index == i);
         if (g is not null)
         {
@@ -318,7 +336,7 @@ public partial class MainWindow
         _preview.Loop = true;
         _preview.Volume = _vpos.Volume;
         // a video paused earlier carries on from where it was paused; others from the start
-        double from = _sessPaused.TryGetValue(id, out var p) ? p : 0;
+        double from = _settings.ResumeVideos && _sessPaused.TryGetValue(id, out var p) ? p : 0;
         if (!_preview.Play(id, _model!.Path[_order[i]], from, muted: !_settings.PreviewSound, 960, 960, preview: true)) return;
         _previewIdx = i; _previewId = id;
         View.SetVideo(i, _preview, controls: true);
@@ -331,6 +349,7 @@ public partial class MainWindow
             // it was a paused video: where the mouse left it is its new paused time
             _sessPaused[_previewId] = _preview.SmoothPositionSec;
             _vpos.Set(_previewId, _preview.SmoothPositionSec, _preview.LengthSec);
+            if (_previewIdx >= 0) FreezeFrame(_previewId, View.FrameOf(_previewIdx));
         }
         _preview?.Stop();
         if (_previewIdx >= 0) View.SetVideo(_previewIdx, null, false);
@@ -370,7 +389,7 @@ public partial class MainWindow
         View.Refresh();
     }
 
-    // ---- the Videos filter: hover the Videos switch for watched / paused / not watched yet ----
+    // ---- the Videos filter: the arrow beside Videos, for watched / paused / not watched yet ----
 
     private void InitVideoFilter()
     {
@@ -397,20 +416,19 @@ public partial class MainWindow
             Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 14, ShadowDepth = 3, Opacity = 0.55 },
         };
         System.Windows.Documents.TextElement.SetFontFamily(card, new FontFamily("Segoe UI"));
-        _vfPopup = new Popup { PlacementTarget = VideosBtn, Placement = PlacementMode.Bottom, StaysOpen = true, AllowsTransparency = true, Child = card, VerticalOffset = 2, PopupAnimation = PopupAnimation.Fade };
-        _vfTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
-        long overSince = 0, awaySince = 0;
-        _vfTimer.Tick += (_, _) =>
-        {
-            bool over = VideosBtn.IsMouseOver || card.IsMouseOver;
-            long now = Stopwatch.GetTimestamp();
-            if (over) { awaySince = 0; if (overSince == 0) overSince = now; }
-            else { overSince = 0; if (awaySince == 0) awaySince = now; }
-            if (!_vfPopup.IsOpen && over && now - overSince >= Ms(0.3) && VideosBtn.IsVisible) { _vfPopup.IsOpen = true; ApplyBar(); }
-            else if (_vfPopup.IsOpen && !over && now - awaySince >= Ms(0.35)) { _vfPopup.IsOpen = false; ApplyBar(); }
-            if (!_vfPopup.IsOpen && !over) _vfTimer.Stop();
-        };
-        VideosBtn.MouseEnter += (_, _) => _vfTimer.Start();
+        _vfPopup = new Popup { PlacementTarget = VideosBtn, Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true, Child = card, VerticalOffset = 2, PopupAnimation = PopupAnimation.Fade };
+        _vfPopup.Closed += (_, _) => { _vfClosedAt = Stopwatch.GetTimestamp(); ApplyBar(); };
+    }
+    private long _vfClosedAt;
+
+    /// <summary>The arrow beside Videos: which videos to show.</summary>
+    private void OnVideosMore(object s, RoutedEventArgs e)
+    {
+        if (_vfPopup is null) return;
+        if (_vfPopup.IsOpen) { _vfPopup.IsOpen = false; return; }
+        if (Stopwatch.GetTimestamp() - _vfClosedAt < Ms(0.25)) return;     // the click that just closed it
+        _vfPopup.IsOpen = true;
+        ApplyBar();
     }
 
     /// <summary>Applied to the files of a new view: the videos the Videos filter leaves out are dropped. Null when it shows them all.</summary>
@@ -452,7 +470,15 @@ public partial class MainWindow
     {
         if (!_viewerVideo || _vEngine is null) return;
         SaveVideoPosition(_vEngine);
-        if (_vEngine.FramesShown >= 10) _sessStarted.Add(_vEngine.FileId);
+        if (_vEngine.FramesShown >= 10)
+        {
+            // watched a bit in the viewer: it shows as paused there in the grid (unless it was watched through)
+            long vid = _vEngine.FileId;
+            double at = _vEngine.SmoothPositionSec, len = _vEngine.LengthSec;
+            _sessStarted.Add(vid);
+            if (len <= 0 || at < len - 2) _sessPaused[vid] = at; else _sessPaused.Remove(vid);
+            _frozen.Remove(vid); _frozenOrder.Remove(vid);            // that frame is from earlier
+        }
         _vEngine.Stop();
         _viewerVideo = false;
         _vBmp = null; _vSeq = -1;
@@ -511,7 +537,7 @@ public partial class MainWindow
             return;
         }
         bool first = index == _viewerFirstIndex && !_viewerLeftFirst;
-        double start = first ? (_sessPaused.TryGetValue(id, out var sp) ? sp : _vpos.Get(id)) : 0;
+        double start = first && _settings.ResumeVideos ? (_sessPaused.TryGetValue(id, out var sp) ? sp : _vpos.Get(id)) : 0;
         var (fw, fh) = FitPixels(row);
         _vEngine ??= NewEngine();
         _vEngine.Loop = VLoopBtn.IsChecked == true;
@@ -554,6 +580,7 @@ public partial class MainWindow
         if (!_viewerVideo || _vEngine is null || _vEngine.FileId < 0)
         {
             if (InfoBox.Opacity != 1) InfoBox.Opacity = 1;
+            if (ViewerRoot.Cursor is not null) ViewerRoot.Cursor = null;
             return;
         }
         if (_vEngine.FrameSeq != _vSeq && _vEngine.CopyFrame(ref _vFrame, out int w, out int h))
@@ -573,6 +600,9 @@ public partial class MainWindow
         Fade(VideoBar, show, dt);
         VideoBar.IsHitTestVisible = VideoBar.Opacity > 0.05;
         Fade(InfoBox, _infoPinnedVideo || paused || now < _infoFlashUntil, dt);
+        // the pointer hides with the bar while the video plays
+        var cur = !show && VideoBar.Opacity < 0.05 ? Cursors.None : null;
+        if (!ReferenceEquals(ViewerRoot.Cursor, cur)) ViewerRoot.Cursor = cur;
 
         // the time under the mouse, just above the bar
         double hf = VTimeline.HoverFrac;
@@ -717,14 +747,14 @@ public partial class MainWindow
         switch (e.Key)
         {
             case Key.Space: VideoTogglePause(); return true;
-            case Key.OemComma: _vEngine.PrevFrame(); Osd("", time: true); SyncVideoBar(); return true;
-            case Key.OemPeriod: _vEngine.NextFrame(); Osd("", time: true); SyncVideoBar(); return true;
+            case Key.OemComma: SeekBy(-3); return true;
+            case Key.OemPeriod: SeekBy(3); return true;
+            case Key.D9: case Key.NumPad9: _vEngine.PrevFrame(); Osd("", time: true); SyncVideoBar(); return true;
+            case Key.D0: case Key.NumPad0: _vEngine.NextFrame(); Osd("", time: true); SyncVideoBar(); return true;
             case Key.M: VideoToggleMute(); Osd(_vEngine.Muted ? "Muted" : $"Volume {_vpos.Volume}"); return true;
             case Key.OemOpenBrackets: StepSpeed(-1); return true;
             case Key.OemCloseBrackets: StepSpeed(1); return true;
             case Key.L: VLoopBtn.IsChecked = VLoopBtn.IsChecked != true; _vEngine.Loop = VLoopBtn.IsChecked == true; Osd(_vEngine.Loop ? "Loop on" : "Loop off"); return true;
-            case Key.D9: case Key.NumPad9: SeekBy(-3); return true;
-            case Key.D0: case Key.NumPad0: SeekBy(3); return true;
             case Key.Left when shift: SeekBy(-5); return true;
             case Key.Right when shift: SeekBy(5); return true;
             case Key.Up:

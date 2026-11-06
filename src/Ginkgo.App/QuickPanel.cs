@@ -32,6 +32,9 @@ public sealed class QuickPanel : Border
         stack.Children.Add(new TextBlock { Text = "Quick toggles", FontSize = 15, FontWeight = FontWeights.SemiBold, Foreground = Txt, Margin = new Thickness(0, 0, 0, 12) });
 
         // ---- previews ----
+        stack.Children.Add(Head("Hover previews", OnOff(() => _s.HoverPreviews, v => _s.HoverPreviews = v)));
+        stack.Children.Add(Note("Resting the mouse on a video plays it in its tile."));
+        Sep(stack);
         stack.Children.Add(Head("Sound in hover previews", OnOff(() => _s.PreviewSound, v => _s.PreviewSound = v)));
         stack.Children.Add(Note("Resting the mouse on a video plays it without sound unless this is on (at the volume you last set)."));
         Sep(stack);
@@ -56,7 +59,14 @@ public sealed class QuickPanel : Border
         stack.Children.Add(row);
         Sep(stack);
 
-        stack.Children.Add(Note("The outlines round paused and watched videos are in Settings, under Video outlines."));
+        Sep(stack);
+        stack.Children.Add(Head("Carry on where you left off", OnOff(() => _s.ResumeVideos, v => _s.ResumeVideos = v)));
+        stack.Children.Add(Note("Videos start from where they were paused or left. Off: always from the beginning."));
+        Sep(stack);
+        stack.Children.Add(Head("Paused outline", OnOff(() => _s.PausedOutline.On, v => _s.PausedOutline.On = v)));
+        Sep(stack);
+        stack.Children.Add(Head("Watched outline", OnOff(() => _s.WatchedOutline.On, v => _s.WatchedOutline.On = v)));
+        stack.Children.Add(Note("Their colours, glow and the rest are in Settings, under Video outlines."));
         Sync();
     }
 

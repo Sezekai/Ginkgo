@@ -67,6 +67,10 @@ public sealed class AppSettings
     // ---- videos (Quick Toggles) ----
     /// <summary>Hover previews play with sound (at the saved volume).</summary>
     public bool PreviewSound { get; set; }
+    /// <summary>Resting the mouse on a video plays a preview.</summary>
+    public bool HoverPreviews { get; set; } = true;
+    /// <summary>Videos carry on from where they were left (paused, or closed part way); off: always from the start.</summary>
+    public bool ResumeVideos { get; set; } = true;
     /// <summary>How many videos may play in the grid at once (1 to 5); starting one more pauses the one started longest ago.</summary>
     public int VideosAtOnce { get; set; } = 1;
     /// <summary>Videos clicked in the grid start without sound (the speaker on the tile turns it on).</summary>

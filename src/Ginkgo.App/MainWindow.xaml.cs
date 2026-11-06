@@ -988,8 +988,8 @@ public partial class MainWindow : Window
         ("Left   Right   (Space)", "Previous / next picture"), ("Home   End", "First / last picture"), ("Mouse wheel   Up   Down", "Zoom in and out (Up and Down: volume on a video)"),
         ("Drag", "Move a zoomed picture"), ("1", "Fit to window"), ("2", "Actual size (100%)"), ("I", "More or less information"),
         ("Click off the picture", "Close the viewer"), ("H", "Show or hide the information box (stays until you press it again)"), ("T  or  mouse back", "Close the viewer"), ("F  or  F11", "Full screen"), ("K", "This list"), ("Esc  or  double-click", "Leave full screen, then back to the grid"),
-        ("Space  or  click the video", "Video: play / pause"), ("9   0", "Video: back / forward 3 seconds"), ("Shift + Left   Right", "Video: back / forward 5 seconds"),
-        (",   .", "Video: back / forward a frame"), ("Up   Down", "Video: volume (3% a press, hold to keep going)"), ("M", "Video: sound on / off"),
+        ("Space  or  click the video", "Video: play / pause"), (",   .", "Video: back / forward 3 seconds"), ("Shift + Left   Right", "Video: back / forward 5 seconds"),
+        ("9   0", "Video: back / forward a frame"), ("Up   Down", "Video: volume (3% a press, hold to keep going)"), ("M", "Video: sound on / off"),
         ("[   ]", "Video: slower / faster"), ("L", "Video: loop on / off"),
     };
 

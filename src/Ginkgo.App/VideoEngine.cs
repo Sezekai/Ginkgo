@@ -75,7 +75,11 @@ public sealed class VideoEngine : IDisposable
             try
             {
                 LibVLCSharp.Shared.Core.Initialize();
-                s_vlc = new LibVLC("--quiet", "--no-osd", "--no-video-title-show", "--no-snapshot-preview", "--avcodec-hw=any", "--file-caching=150");
+                // directsound: each player has its own volume and mute. (The Windows default, mmdevice, sets them on the app's one sound
+                // session, so every player shared them: a muted preview could be heard, and one video's volume carried to the next.)
+                // Decoding on the processor: frames go to memory anyway, and copying them back from the graphics card stalled the
+                // first seconds of some videos (a still picture with the sound running).
+                s_vlc = new LibVLC("--quiet", "--no-osd", "--no-video-title-show", "--no-snapshot-preview", "--aout=directsound,any", "--avcodec-hw=none");
                 return true;
             }
             catch (Exception ex) { s_error = "video playback isn't available: " + ex.Message; return false; }
@@ -92,8 +96,8 @@ public sealed class VideoEngine : IDisposable
         _mp.Volume = _volume;
         _mp.EndReached += (_, _) => { int g = _gen; Post(() => OnEnded(g)); };
         // LibVLC forgets sound settings made before a file starts (it makes the sound output then): set them again once it plays
-        _mp.Playing += (_, _) => Post(() => { if (_mp is null) return; _mp.Mute = _muted; _mp.Volume = _volume; });
-        _mp.ESAdded += (_, _) => Post(() => { if (_mp is null) return; _mp.Mute = _muted; _mp.Volume = _volume; });
+        _mp.Playing += (_, _) => Post(ApplySound);
+        _mp.ESAdded += (_, _) => Post(ApplySound);
         _mp.EncounteredError += (_, _) =>
         {
             int g = _gen;
@@ -105,6 +109,14 @@ public sealed class VideoEngine : IDisposable
         _thread = new Thread(Run) { IsBackground = true, Name = "Ginkgo video", Priority = ThreadPriority.AboveNormal };
         _thread.Start();
         return true;
+    }
+
+    /// <summary>Player thread: the sound as asked for (muted = also no volume, so nothing can get through).</summary>
+    private void ApplySound()
+    {
+        if (_mp is null) return;
+        _mp.Mute = _muted;
+        _mp.Volume = _muted ? 0 : _volume;
     }
 
     private void Post(Action a) { if (!_disposed) try { _work.Add(a); } catch { } }
@@ -132,6 +144,7 @@ public sealed class VideoEngine : IDisposable
         _pausedWanted = startPaused; _ended = false;
         _pauseOnFirstFrame = startPaused;
         ResetClock(StartSec, startPaused);
+        _floorSec = StartSec; _floorUntil = StartSec > 0.5 ? Stopwatch.GetTimestamp() + 3 * Stopwatch.Frequency : 0;
         _seqAtStart = _frameSeq;
         Post(() =>
         {
@@ -142,8 +155,7 @@ public sealed class VideoEngine : IDisposable
             _media = new Media(s_vlc!, path, FromType.FromPath);
             if (StartSec > 0.5) _media.AddOption($":start-time={StartSec.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}");
             if (_pauseOnFirstFrame) _media.AddOption(":start-paused");
-            mp.Mute = _muted;
-            mp.Volume = _volume;
+            ApplySound();
             lock (_lock) _ready = -1;
             _runningGen = g;
             _seqAtStart = _frameSeq;
@@ -238,7 +250,14 @@ public sealed class VideoEngine : IDisposable
                     // a new report: follow it, unless it's only slightly behind where the clock already is (no jumping back)
                     double est = Estimate(now);
                     double rep = t / 1000.0;
-                    if (_lastVlcMs == long.MinValue || Math.Abs(rep - est) > 0.25 || _clockStill || _pausedWanted) { _clockBase = rep; _clockTick = now; }
+                    // just after a jump LibVLC reports the key frame before the target for a moment (the picture is already the
+                    // target's): that report is ignored, so 0:31 stays 0:31
+                    if (_floorUntil != 0 && now < _floorUntil && rep < _floorSec - 0.08) { }
+                    else
+                    {
+                        if (_floorUntil != 0 && rep >= _floorSec - 0.08) _floorUntil = 0;
+                        if (_lastVlcMs == long.MinValue || Math.Abs(rep - est) > 0.25 || _clockStill || _pausedWanted) { _clockBase = rep; _clockTick = now; }
+                    }
                     _lastVlcMs = t;
                 }
             }
@@ -260,6 +279,7 @@ public sealed class VideoEngine : IDisposable
         bool paused = _pausedWanted;
         _ended = false;
         ResetClock(sec, paused);
+        _floorSec = sec; _floorUntil = Stopwatch.GetTimestamp() + 3 * Stopwatch.Frequency;
         _seekTo = sec;
         if (Interlocked.Exchange(ref _seekQueued, 1) == 1) return;           // one already waiting: it'll use the newest time
         int g = _gen;
@@ -274,13 +294,15 @@ public sealed class VideoEngine : IDisposable
         });
     }
     private double _seekTo;
+    private double _floorSec;
+    private long _floorUntil;
     private int _seekQueued;
 
     public double LengthSec => Live ? Math.Max(0, _mp!.Length / 1000.0) : 0;
     private volatile bool _muted;
-    public bool Muted { get => _muted; set { _muted = value; int g = _gen; Post(() => { if (_mp is not null) _mp.Mute = value; }); } }
+    public bool Muted { get => _muted; set { _muted = value; Post(ApplySound); } }
     private volatile int _volume = 80;
-    public int Volume { get => _volume; set { int v = Math.Clamp(value, 0, 100); if (v == _volume) return; _volume = v; Post(() => { if (_mp is not null) _mp.Volume = v; }); } }
+    public int Volume { get => _volume; set { int v = Math.Clamp(value, 0, 100); if (v == _volume) return; _volume = v; Post(ApplySound); } }
     public float Rate { get; private set; } = 1f;
     public void SetRate(float r)
     {

@@ -76,6 +76,10 @@ public sealed class MasonryView : FrameworkElement
     public event Action<int, int>? VideoVolume;
     /// <summary>Tile i's video: watched (for its outline), and where it was paused (-1: not paused) for the Paused label.</summary>
     public Func<int, (bool watched, double pausedAt)>? VideoInfo { get; set; }
+    /// <summary>The last frame of a video paused earlier whose player has been let go: shown instead of its thumbnail.</summary>
+    public Func<int, ThumbLoader.Pix?>? FrozenFrame { get; set; }
+    /// <summary>The frame tile i's player shows now (to keep when the player goes).</summary>
+    public ThumbLoader.Pix? FrameOf(int i) => _videos.TryGetValue(i, out var vt) ? vt.Pix : null;
     private int _volDragIndex = -1;
     private Point _mouse = new(-1, -1);
     private long _mouseMovedAt;
@@ -389,6 +393,25 @@ public sealed class MasonryView : FrameworkElement
         EndAutoScroll();
     }
 
+    /// <summary>
+    /// The mouse pointer: hidden while it rests on a playing video (it comes back as soon as it moves), a hand on a progress line.
+    /// </summary>
+    private void UpdateCursor()
+    {
+        if (_autoScroll) return;
+        Cursor want = Cursors.Arrow;
+        if (_scrubIndex >= 0 || _dragIndex >= 0) want = Cursors.Hand;
+        else if (_volDragIndex < 0 && _mouse.X >= 0)
+        {
+            long now = Stopwatch.GetTimestamp();
+            bool still = now - _mouseMovedAt > Stopwatch.Frequency / 2;
+            foreach (var vt in _videos.Values)
+                if (vt.E.Playing && !vt.Tile.IsEmpty && vt.Tile.Contains(_mouse) && !(vt.IconShown && vt.Mute.Contains(_mouse)) && vt.Vol.IsEmpty)
+                { if (still) want = Cursors.None; else _iconsUp = true; break; }
+        }
+        if (!ReferenceEquals(Cursor, want)) Cursor = want;
+    }
+
     private void EndAutoScroll()
     {
         _autoScroll = false; _autoSticky = false;
@@ -402,7 +425,8 @@ public sealed class MasonryView : FrameworkElement
     {
         base.OnMouseLeave(e);
         _mouse = new Point(-1, -1);
-        if (_scrubIndex >= 0) { _scrubIndex = -1; _scrubFrac = double.NaN; Cursor = Cursors.Arrow; }
+        if (_scrubIndex >= 0) { _scrubIndex = -1; _scrubFrac = double.NaN; }
+        if (!_autoScroll) Cursor = Cursors.Arrow;
         if (_videos.Count > 0) InvalidateVisual();
     }
 
@@ -427,7 +451,8 @@ public sealed class MasonryView : FrameworkElement
         int si = -1; double sf = double.NaN;
         foreach (var (vi, vt) in _videos)
             if (vt.Controls && vt.Bar.Contains(p) && vt.Bar.Width > 0) { si = vi; sf = Math.Clamp((p.X - vt.Bar.Left) / vt.Bar.Width, 0, 1); break; }
-        if (si != _scrubIndex || (si >= 0 && Math.Abs(sf - _scrubFrac) > 0.0005)) { _scrubIndex = si; _scrubFrac = sf; Cursor = si >= 0 ? Cursors.Hand : Cursors.Arrow; InvalidateVisual(); }
+        if (si != _scrubIndex || (si >= 0 && Math.Abs(sf - _scrubFrac) > 0.0005)) { _scrubIndex = si; _scrubFrac = sf; UpdateCursor(); InvalidateVisual(); }
+        else if (!ReferenceEquals(Cursor, Cursors.Arrow) && !ReferenceEquals(Cursor, Cursors.Hand)) UpdateCursor();
         int found = -1;
         // just below a playing video's progress line still counts as on that video (the line reaches a little past its edge)
         foreach (var (vi, vt) in _videos)
@@ -568,6 +593,7 @@ public sealed class MasonryView : FrameworkElement
             // a playing GIF shows its current frame instead of the still picture
             ThumbLoader.Pix? over = null;
             if (_videos.TryGetValue(i, out var vtile) && vtile.Pix is not null) over = vtile.Pix;
+            else if (FrozenFrame is { } ff && Badges is { } fbd && i < fbd.Length && fbd[i] == 2 && ff(i) is { } frozen) over = frozen;
             else if (Gifs is not null && e is not null && Badges is { } gb && i < gb.Length && gb[i] == 1 && y < offPx + ph && y + hPx > offPx
                 && (Player is null || _gpu is null || i == _hoverIndex))
             {
@@ -621,6 +647,7 @@ public sealed class MasonryView : FrameworkElement
             else if (isVideo && info.Item2 >= 0) DrawPausedLabel(dc, r, index, info.Item2);
             else if (gif && r.Width > 70) DrawBadge(dc, r, index);
         }
+        UpdateCursor();
         _fadingNow = fading;
         LastRenderMs = sw.Elapsed.TotalMilliseconds;
         _maxRender = Math.Max(_maxRender, LastRenderMs);
@@ -1023,15 +1050,19 @@ public sealed class MasonryView : FrameworkElement
         bool video = Badges is { } bd && i < bd.Length && bd[i] == 2;
         string text = video ? (BadgeText is { } bt && i < bt.Length ? bt[i] ?? "" : "") : "GIF";
         if (text.Length == 0) return;
-        if (!_badgeCache.TryGetValue(text, out var ft))
+        // a video's length shrinks with the tile, like the time on a playing one
+        double k = video ? Math.Round(UiScale(r) * 20) / 20 : 1;
+        string key = k < 1 ? text + "|" + k : text;
+        if (!_badgeCache.TryGetValue(key, out var ft))
         {
-            ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 11, Brushes.White, VisualTreeHelper.GetDpi(this).PixelsPerDip);
+            ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 11 * k, Brushes.White, VisualTreeHelper.GetDpi(this).PixelsPerDip);
             if (_badgeCache.Count > 500) _badgeCache.Clear();
-            _badgeCache[text] = ft;
+            _badgeCache[key] = ft;
         }
-        var box = new Rect(r.Left + 6, r.Bottom - 22, ft.Width + 10, 16);
+        double bh = Math.Round(16 * k), pad = 5 * k;
+        var box = video ? new Rect(r.Left + 6 * k, r.Bottom - 12 * k - bh, ft.Width + 2 * pad, bh) : new Rect(r.Left + 6, r.Bottom - 22, ft.Width + 10, 16);
         dc.DrawRoundedRectangle(BadgeBack, null, box, 3, 3);
-        dc.DrawText(ft, new Point(box.Left + 5, box.Top + (16 - ft.Height) / 2));
+        dc.DrawText(ft, new Point(box.Left + pad, box.Top + (bh - ft.Height) / 2));
     }
 
     private static readonly Brush SpeakerBack = Freeze(new SolidColorBrush(Color.FromArgb(170, 20, 20, 24)));
@@ -1130,7 +1161,7 @@ public sealed class MasonryView : FrameworkElement
                 dc.DrawText(nt, new Point(panel.Left + (panel.Width - nt.Width) / 2, panel.Bottom - 6 * k - nt.Height));
             }
         }
-        TimelineArt.Draw(dc, r.Left, r.Width, r.Bottom - (active ? 3.5 : 1.5), frac, hover, active, len, ppd, r.Bottom - 34);
+        if (!v.Paused || active) TimelineArt.Draw(dc, r.Left, r.Width, r.Bottom - (active ? 3.5 : 1.5), frac, hover, active, len, ppd, r.Bottom - 34);
     }
     private int _openVol = -1;
 

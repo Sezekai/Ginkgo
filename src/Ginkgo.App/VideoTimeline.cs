@@ -13,8 +13,8 @@ public static class TimelineArt
 {
     public static readonly Brush Track = Freeze(new SolidColorBrush(Color.FromArgb(90, 255, 255, 255)));
     public static readonly Brush HoverFill = Freeze(new SolidColorBrush(Color.FromArgb(120, 255, 255, 255)));
-    public static readonly Brush Played = Freeze(new SolidColorBrush(Color.FromRgb(0x5F, 0xAF, 0x6B)));
-    public static readonly Brush Knob = Freeze(new SolidColorBrush(Color.FromRgb(0x7E, 0xC9, 0x8A)));
+    public static readonly Brush Played = Freeze(new SolidColorBrush(Color.FromRgb(0x8A, 0x5C, 0xF5)));
+    public static readonly Brush Knob = Freeze(new SolidColorBrush(Color.FromRgb(0xC9, 0xA8, 0xFF)));
     public static readonly Brush BubbleBack = Freeze(new SolidColorBrush(Color.FromArgb(215, 12, 12, 14)));
     private static readonly Typeface Face = new("Segoe UI");
     private static Brush Freeze(Brush b) { b.Freeze(); return b; }
