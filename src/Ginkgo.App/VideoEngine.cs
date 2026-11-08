@@ -149,7 +149,7 @@ public sealed class VideoEngine : IDisposable
         FileId = fileId; Path = path; Preview = preview; Failed = false; Error = "";
         StartSec = Math.Max(0, startSec);
         _muted = muted;
-        _audio.Flush();
+        _audio.Reset();
         ApplySound();
         _pausedWanted = startPaused; _ended = false;
         _pauseOnFirstFrame = false;
@@ -174,7 +174,7 @@ public sealed class VideoEngine : IDisposable
                 _flushAtStart = _flushes;
             }
             else _hideUntil = 0;
-            _audio.Flush();
+            _audio.Reset();
             lock (_lock) _ready = -1;
             _runningGen = g;
             _seqAtStart = _frameSeq;
@@ -200,13 +200,14 @@ public sealed class VideoEngine : IDisposable
         int g = ++_gen;
         FileId = -1; Path = ""; Preview = false;
         _pausedWanted = false; _ended = false;
-        _audio.Flush();
+        _audio.Reset();
         lock (_lock) _ready = -1;
         Post(() =>
         {
             if (g != _gen) return;
             _runningGen = -1;
             try { _mp!.Stop(); } catch { }
+            _audio.Reset();
             _media?.Dispose(); _media = null;
         });
     }
@@ -370,6 +371,8 @@ public sealed class VideoEngine : IDisposable
     public bool Muted { get => _muted; set { _muted = value; ApplySound(); } }
     private volatile int _volume = 80;
     public int Volume { get => _volume; set { int v = Math.Clamp(value, 0, 100); if (v == _volume) return; _volume = v; ApplySound(); } }
+    /// <summary>Sound has come from the player for this file (for F3).</summary>
+    public bool SoundQueued => _audio.HasSound;
     public float Rate { get; private set; } = 1f;
     public void SetRate(float r)
     {

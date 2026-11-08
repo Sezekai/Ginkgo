@@ -76,10 +76,16 @@ public sealed class AudioStream
             // something gone wrong (a jump LibVLC didn't flush): don't let it pile up
             if (_q.Count > 0 && pts - _q.Peek().Pts > MaxQueued) _q.Clear();
             _q.Enqueue(new Block { Pts = pts, Data = data });
+            HasSound = true;
         }
     }
 
+    /// <summary>Sound has arrived since the last reset.</summary>
+    public bool HasSound { get; private set; }
     public void Flush() { lock (_lock) _q.Clear(); }
+
+    /// <summary>A new file on this player: nothing queued, and not paused (a pause from the last file must not silence this one).</summary>
+    public void Reset() { lock (_lock) { _q.Clear(); _paused = false; HasSound = false; } }
 
     /// <summary>Paused at <paramref name="date"/> (LibVLC's clock).</summary>
     public void Pause(long date) { lock (_lock) { if (!_paused) { _paused = true; _pausedAt = date; } } }

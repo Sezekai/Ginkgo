@@ -29,7 +29,7 @@ public static class AudioDevice
                 var dev = s_enum.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
                 var o = new WasapiOut(dev, AudioClientShareMode.Shared, true, LatencyMs);
                 o.Init(new Feed());
-                o.PlaybackStopped += (_, e) => { if (e.Exception is not null) Restart(); };
+                o.PlaybackStopped += (_, e) => { if (!s_stopping) { Status = "restarting" + (e.Exception is null ? "" : ": " + e.Exception.Message); Restart(); } };
                 o.Play();
                 s_out = o;
                 Status = "playing on " + dev.FriendlyName;
@@ -38,12 +38,15 @@ public static class AudioDevice
         }
     }
 
+    private static volatile bool s_stopping;
     public static void Stop()
     {
         lock (s_lock)
         {
+            s_stopping = true;
             try { s_out?.Stop(); s_out?.Dispose(); } catch { }
             s_out = null;
+            s_stopping = false;
         }
     }
 
@@ -60,7 +63,8 @@ public static class AudioDevice
             int frames = count / 8;
             if (_f.Length < frames * 2) _f = new float[frames * 2];
             // what's asked for now is heard after what's already queued in the output (about its latency)
-            AudioMixer.Mix(_f, 0, frames, LatencyMs * 1000L);
+            try { AudioMixer.Mix(_f, 0, frames, LatencyMs * 1000L); }
+            catch { Array.Clear(_f, 0, frames * 2); }                // never let the output stop over one bad stretch
             Buffer.BlockCopy(_f, 0, buffer, offset, frames * 8);
             return frames * 8;
         }
