@@ -76,7 +76,7 @@ public partial class MainWindow
 
     private void InitVideo()
     {
-        ThreadPool.QueueUserWorkItem(_ => VideoEngine.Warm());          // load the player early, so the first video starts sooner
+        ThreadPool.QueueUserWorkItem(_ => { VideoEngine.Warm(); AudioDevice.Start(); });   // the player and the sound output, ready early
         View.VideoMuteClicked += i => { if (i == _previewIdx) _previewSoundTouched = true; if (EngineAt(i) is { } e) { e.Muted = !e.Muted; if (!e.Muted && e.Volume == 0) e.Volume = _vpos.Volume; View.Refresh(); } };
         View.VideoVolume += (i, v) => { if (i == _previewIdx) _previewSoundTouched = true; if (EngineAt(i) is { } e) { e.Volume = v; if (e.Muted && v > 0) e.Muted = false; View.Refresh(); } };
         View.VideoSeek += (i, f, final) =>
@@ -117,6 +117,7 @@ public partial class MainWindow
             if (_viewerVideo && _vEngine is not null) SaveVideoPosition(_vEngine);
             _vpos.Save();
             foreach (var e in _allEngines) { try { e.Dispose(); } catch { } }
+            AudioDevice.Stop();
         };
     }
 

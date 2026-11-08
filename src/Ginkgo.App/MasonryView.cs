@@ -284,13 +284,14 @@ public sealed class MasonryView : FrameworkElement
         try { RelayoutCore(); } finally { InRelayout = false; }
     }
 
-    /// <summary>Tiles big enough for a video's time and Paused label (not at 10+ columns, or 6+ in equal rows).</summary>
-    private bool _labelsFit = true;
+    /// <summary>
+    /// Tiles big enough for a video's time and Paused label: columns at least 200 wide (about 12 across a 2560 screen), or equal
+    /// rows at least 140 tall.
+    /// </summary>
+    private bool LabelsFit(Rect r) => _rows ? r.Height >= 140 : r.Width >= 200;
 
     private void RelayoutCore()
     {
-        int sizeCols = ActualWidth >= 50 ? MasonryLayout.ColumnsFor((float)ActualWidth, _tileTarget, Gap) : 1;
-        _labelsFit = _rows ? sizeCols <= 5 : sizeCols < 10;
         if (ActualWidth < 50 || _items.Length == 0) { _layout = null; InvalidateVisual(); ScrollChanged?.Invoke(); return; }
         // keep the same position in the content after a resize/zoom
         double frac = TotalHeight > 0 ? _offset / TotalHeight : 0;
@@ -650,7 +651,7 @@ public sealed class MasonryView : FrameworkElement
             if (isVideo) DrawVideoOutline(dc, r, playingHere ? vt : null, info.Item1, info.Item2);
             if (playingHere) DrawVideoBar(dc, r, index, vt!);
             else if (isVideo && info.Item2 >= 0) DrawPausedLabel(dc, r, index, info.Item2);
-            else if (gif && r.Width > 70 && (!isVideo || _labelsFit)) DrawBadge(dc, r, index);
+            else if (gif && r.Width > 70 && (!isVideo || LabelsFit(r))) DrawBadge(dc, r, index);
         }
         UpdateCursor();
         _fadingNow = fading;
@@ -1083,7 +1084,7 @@ public sealed class MasonryView : FrameworkElement
     private void DrawTimeLabel(DrawingContext dc, Rect r, string time, bool paused, double ppd)
     {
         double k = UiScale(r);
-        if (r.Width < 56 || !_labelsFit) return;
+        if (r.Width < 56 || !LabelsFit(r)) return;
         double fs = 11 * k, bh = Math.Round(16 * k);
         var ft = new FormattedText(time, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, fs, Brushes.White, ppd);
         FormattedText? pz = paused ? new FormattedText("Paused", CultureInfo.InvariantCulture, FlowDirection.LeftToRight, new Typeface(_face.FontFamily, FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal), fs, PausedText, ppd) : null;

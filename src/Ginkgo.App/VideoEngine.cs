@@ -53,6 +53,8 @@ public sealed class VideoEngine : IDisposable
     /// <summary>Frames shown since the file started (to tell "watched a bit" from "passed by").</summary>
     public int FramesShown => _frameSeq - _seqAtStart;
     private int _seqAtStart;
+    private volatile bool _trustFirstReport;
+    private long _startTick;
 
     // keep the delegates alive while LibVLC holds them
     private readonly MediaPlayer.LibVLCVideoFormatCb _format;
@@ -63,6 +65,11 @@ public sealed class VideoEngine : IDisposable
     public VideoEngine()
     {
         _format = OnFormat; _cleanup = OnCleanup; _lockCb = OnLock; _display = OnDisplay;
+        _aPlay = (_, samples, count, pts) => _audio.Push(samples, count, pts);
+        _aPause = (_, pts) => _audio.Pause(pts);
+        _aResume = (_, pts) => _audio.Resume(pts);
+        _aFlush = (_, _) => { _audio.Flush(); Interlocked.Increment(ref _flushes); };
+        _aDrain = _ => { };
     }
 
     /// <summary>Loads LibVLC (once for the app). Safe to call early, from any thread, so the first video starts sooner.</summary>
@@ -75,12 +82,8 @@ public sealed class VideoEngine : IDisposable
             try
             {
                 LibVLCSharp.Shared.Core.Initialize();
-                // directsound: each player has its own volume and mute. (The Windows default, mmdevice, sets them on the app's one sound
-                // session, so every player shared them: a muted preview could be heard, and one video's volume carried to the next.)
-                // Decoding on the processor: frames go to memory anyway, and copying them back from the graphics card stalled the
-                // first seconds of some videos (a still picture with the sound running).
-                s_vlc = new LibVLC("--quiet", "--no-osd", "--no-video-title-show", "--no-snapshot-preview", "--aout=directsound,any", "--no-volume-save",
-                    "--avcodec-hw=any", "--no-drop-late-frames");
+                // sound comes to Ginkgo (AudioMixer) rather than to LibVLC's own outputs, whose volume and mute several players share
+                s_vlc = new LibVLC("--quiet", "--no-osd", "--no-video-title-show", "--no-snapshot-preview", "--no-volume-save");
                 return true;
             }
             catch (Exception ex) { s_error = "video playback isn't available: " + ex.Message; return false; }
@@ -94,11 +97,12 @@ public sealed class VideoEngine : IDisposable
         _mp = new MediaPlayer(s_vlc!);
         _mp.SetVideoFormatCallbacks(_format, _cleanup);
         _mp.SetVideoCallbacks(_lockCb, null, _display);
-        _mp.Volume = _volume;
+        // the sound: decoded samples come here, stamped with when they're due, and Ginkgo plays them (see AudioMixer)
+        _mp.SetAudioFormat("S16N", (uint)AudioMixer.Rate, 2);
+        _mp.SetAudioCallbacks(_aPlay, _aPause, _aResume, _aFlush, _aDrain);
+        AudioMixer.Add(_audio);
+        ApplySound();
         _mp.EndReached += (_, _) => { int g = _gen; Post(() => OnEnded(g)); };
-        // LibVLC forgets sound settings made before a file starts (it makes the sound output then): set them again once it plays
-        _mp.Playing += (_, _) => Post(ApplySound);
-        _mp.ESAdded += (_, _) => Post(ApplySound);
         _mp.EncounteredError += (_, _) =>
         {
             int g = _gen;
@@ -112,31 +116,16 @@ public sealed class VideoEngine : IDisposable
         return true;
     }
 
-    /// <summary>Player thread: the sound as asked for (muted = also no volume, so nothing can get through).</summary>
-    private void ApplySound()
-    {
-        if (_mp is null) return;
-        bool muted = _muted;
-        _mp.Mute = muted;
-        _mp.Volume = muted ? 0 : _volume;
-        // and, muted, the sound track itself is switched off: whatever the sound output thinks, there is nothing to hear
-        try
-        {
-            int cur = _mp.AudioTrack;
-            if (muted)
-            {
-                if (cur >= 0) { _audioTrack = cur; _mp.SetAudioTrack(-1); }
-            }
-            else if (cur < 0)
-            {
-                int id = _audioTrack;
-                if (id < 0) foreach (var t in _mp.AudioTrackDescription) if (t.Id >= 0) { id = t.Id; break; }
-                if (id >= 0) { _mp.SetAudioTrack(id); _mp.Mute = false; _mp.Volume = _volume; }
-            }
-        }
-        catch { }
-    }
-    private int _audioTrack = -1;
+    // ---- sound ----
+    private readonly AudioStream _audio = new();
+    private readonly MediaPlayer.LibVLCAudioPlayCb _aPlay;
+    private readonly MediaPlayer.LibVLCAudioPauseCb _aPause;
+    private readonly MediaPlayer.LibVLCAudioResumeCb _aResume;
+    private readonly MediaPlayer.LibVLCAudioFlushCb _aFlush;
+    private readonly MediaPlayer.LibVLCAudioDrainCb _aDrain;
+
+    /// <summary>The sound as asked for: this player's own volume, and silent when muted. Takes effect at once, from any thread.</summary>
+    private void ApplySound() => _audio.Set(_volume, _muted || _peeking);
 
     private void Post(Action a) { if (!_disposed) try { _work.Add(a); } catch { } }
 
@@ -160,11 +149,15 @@ public sealed class VideoEngine : IDisposable
         FileId = fileId; Path = path; Preview = preview; Failed = false; Error = "";
         StartSec = Math.Max(0, startSec);
         _muted = muted;
+        _audio.Flush();
+        ApplySound();
         _pausedWanted = startPaused; _ended = false;
-        _pauseOnFirstFrame = startPaused;
+        _pauseOnFirstFrame = false;
+        _trustFirstReport = false;
         ResetClock(StartSec, startPaused);
         _floorSec = StartSec; _floorUntil = 0;          // a start part way begins at the key frame there: its own time is right
         _seqAtStart = _frameSeq;
+        _startTick = Stopwatch.GetTimestamp();
         Post(() =>
         {
             if (g != _gen) return;                       // something newer was asked for meanwhile
@@ -172,22 +165,30 @@ public sealed class VideoEngine : IDisposable
             try { mp.Stop(); } catch { }
             _media?.Dispose();
             _media = new Media(s_vlc!, path, FromType.FromPath);
-            _audioTrack = -1;
             if (StartSec > 0.5)
             {
-                // starting part way: from the key frame there, so picture and sound start together (an exact start made the
-                // picture wait, still, while the sound ran)
+                // starting part way: LibVLC opens the file, shows its very first picture, then jumps. That first picture is kept off
+                // screen (until the jump is done: the sound is cleared then too) so it doesn't flash up
                 _media.AddOption($":start-time={StartSec.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}");
-                _media.AddOption(":input-fast-seek");
+                _hideUntil = Stopwatch.GetTimestamp() + Stopwatch.Frequency * 6 / 10;
+                _flushAtStart = _flushes;
             }
-            if (_pauseOnFirstFrame) _media.AddOption(":start-paused");
-            ApplySound();
+            else _hideUntil = 0;
+            _audio.Flush();
             lock (_lock) _ready = -1;
             _runningGen = g;
             _seqAtStart = _frameSeq;
+            if (startPaused) { _peeking = true; ApplySound(); }
             mp.Play(_media);
             if (Math.Abs(Rate - 1f) > 0.01f) mp.SetRate(Rate);
-            if (_pausedWanted && !_pauseOnFirstFrame && g == _gen) mp.SetPause(true);
+            if (startPaused)
+            {
+                // to open paused: play silently until it's going, go to the exact time, show that picture, pause there
+                long until = Stopwatch.GetTimestamp() + 3 * Stopwatch.Frequency;
+                while (mp.State is not VLCState.Playing && Stopwatch.GetTimestamp() < until && g == _gen) Thread.Sleep(5);
+                if (g == _gen && _pausedWanted) ShowFrameAt(mp, g, StartSec);
+                else { _peeking = false; ApplySound(); }
+            }
         });
         return true;
     }
@@ -199,6 +200,7 @@ public sealed class VideoEngine : IDisposable
         int g = ++_gen;
         FileId = -1; Path = ""; Preview = false;
         _pausedWanted = false; _ended = false;
+        _audio.Flush();
         lock (_lock) _ready = -1;
         Post(() =>
         {
@@ -268,7 +270,7 @@ public sealed class VideoEngine : IDisposable
             long now = Stopwatch.GetTimestamp();
             if (!Live) return _clockBase;
             var st = _mp!.State;
-            if (!_ended && st is VLCState.Playing or VLCState.Paused)
+            if (!_ended && !_pausedWanted && !_peeking && st is VLCState.Playing or VLCState.Paused)
             {
                 long t = _mp.Time;
                 if (t >= 0 && t != _lastVlcMs)
@@ -279,10 +281,16 @@ public sealed class VideoEngine : IDisposable
                     // just after a jump LibVLC reports the key frame before the target for a moment (the picture is already the
                     // target's): that report is ignored, so 0:31 stays 0:31
                     if (_floorUntil != 0 && now < _floorUntil && rep < _floorSec - 0.08) { }
+                    // starting part way, LibVLC says 0 for a moment before it has got there
+                    else if (StartSec > 0.5 && rep < 0.05 && now - _startTick < 3 * Stopwatch.Frequency) { }
+                    // then it says where it really started (the key frame before the time asked for)
+                    else if (_trustFirstReport) { _trustFirstReport = false; _clockBase = rep; _clockTick = now; }
                     else
                     {
                         if (_floorUntil != 0 && rep >= _floorSec - 0.08) _floorUntil = 0;
-                        if (_lastVlcMs == long.MinValue || Math.Abs(rep - est) > 0.25 || _clockStill || _pausedWanted) { _clockBase = rep; _clockTick = now; }
+                        // LibVLC's reports come only every half second or so, and lag: follow one only if the clock is behind it, or
+                        // it's far off (a jump back, a stall); otherwise the clock carries on smoothly
+                        if (_lastVlcMs == long.MinValue || rep > est + 0.1 || rep < est - 0.75 || _clockStill || _pausedWanted) { _clockBase = rep; _clockTick = now; }
                     }
                     _lastVlcMs = t;
                 }
@@ -315,10 +323,43 @@ public sealed class VideoEngine : IDisposable
             if (g != _gen || _runningGen != g) return;
             var mp = _mp!;
             if (mp.State == VLCState.Ended) { mp.Stop(); _media?.AddOption($":start-time={_seekTo.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}"); mp.Play(_media!); if (_pausedWanted) mp.SetPause(true); return; }
-            mp.Time = (long)(_seekTo * 1000);
-            if (_pausedWanted) { mp.NextFrame(); }
+            double to = _seekTo;
+            if (_pausedWanted) ShowFrameAt(mp, g, to);
+            else mp.Time = (long)(to * 1000);
         });
     }
+    /// <summary>
+    /// Player thread. Paused, LibVLC moves to a new time but keeps showing the old picture: so it plays, silently, just until a
+    /// picture from the new time is up, and pauses again.
+    /// </summary>
+    private void ShowFrameAt(MediaPlayer mp, int g, double to)
+    {
+        _peeking = true; ApplySound();
+        try
+        {
+            int fl0 = Volatile.Read(ref _flushes);
+            long t0 = Stopwatch.GetTimestamp();
+            mp.Time = (long)(to * 1000);
+            mp.SetPause(false);
+            long until = t0 + Stopwatch.Frequency * 3 / 2;
+            int seqAfter = -1;
+            while (Stopwatch.GetTimestamp() < until && g == _gen && _pausedWanted)
+            {
+                Thread.Sleep(3);
+                // LibVLC clears its sound when the jump is made: pictures shown after that are from the new time. (A video with no
+                // sound has nothing to clear: then a quarter of a second is allowed.)
+                bool jumped = Volatile.Read(ref _flushes) != fl0 || Stopwatch.GetTimestamp() - t0 > Stopwatch.Frequency / 4;
+                if (jumped && seqAfter < 0) seqAfter = _frameSeq;
+                if (seqAfter >= 0 && _frameSeq > seqAfter) break;
+                if (_seekQueued == 1) break;                     // a newer jump is waiting: it'll do this again
+            }
+            if (g == _gen && _pausedWanted) mp.SetPause(true);
+        }
+        finally { _peeking = false; ApplySound(); }
+    }
+    private volatile bool _peeking;
+    private int _flushes, _flushAtStart;
+    private long _hideUntil;
     private double _seekTo;
     private double _floorSec;
     private long _floorUntil;
@@ -326,9 +367,9 @@ public sealed class VideoEngine : IDisposable
 
     public double LengthSec => Live ? Math.Max(0, _mp!.Length / 1000.0) : 0;
     private volatile bool _muted;
-    public bool Muted { get => _muted; set { _muted = value; Post(ApplySound); } }
+    public bool Muted { get => _muted; set { _muted = value; ApplySound(); } }
     private volatile int _volume = 80;
-    public int Volume { get => _volume; set { int v = Math.Clamp(value, 0, 100); if (v == _volume) return; _volume = v; Post(ApplySound); } }
+    public int Volume { get => _volume; set { int v = Math.Clamp(value, 0, 100); if (v == _volume) return; _volume = v; ApplySound(); } }
     public float Rate { get; private set; } = 1f;
     public void SetRate(float r)
     {
@@ -431,6 +472,12 @@ public sealed class VideoEngine : IDisposable
             w = _w; h = _h;
             // only frames of the file asked for most recently (not the one before, still finishing on the player's thread)
             if (_ready < 0 || _bufs[_ready] == IntPtr.Zero || FileId < 0 || _bufGen != _gen) return false;
+            if (_hideUntil != 0)
+            {
+                // the first picture shown is the file's opening one, from before the jump
+                if (_frameSeq - _seqAtStart <= 1 && Stopwatch.GetTimestamp() < _hideUntil) return false;
+                _hideUntil = 0;
+            }
             if (dst is null || dst.Length != _bufBytes) dst = new byte[_bufBytes];
             Marshal.Copy(_bufs[_ready], dst, 0, _bufBytes);
             // RV32 leaves the alpha byte undefined: make every pixel opaque
@@ -448,6 +495,7 @@ public sealed class VideoEngine : IDisposable
     public void Dispose()
     {
         if (_disposed) return;
+        AudioMixer.Remove(_audio);
         _gen++;
         Post(() =>
         {
