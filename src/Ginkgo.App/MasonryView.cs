@@ -42,7 +42,7 @@ public sealed class MasonryView : FrameworkElement
     private long _autoDownTick;
     private bool _autoSticky;
     private readonly Dictionary<int, FormattedText> _textCache = new();
-    private static readonly Brush Background = Freeze(new SolidColorBrush(Color.FromRgb(18, 18, 20)));
+    private static Brush Background = Freeze(new SolidColorBrush(Color.FromRgb(18, 18, 20)));
     private static Brush Freeze(Brush b) { b.Freeze(); return b; }
 
     public event Action? ScrollChanged;
@@ -66,6 +66,38 @@ public sealed class MasonryView : FrameworkElement
     private readonly List<(int first, Rect rect)> _setLabels = new();
     public static readonly Brush StarFill = Freeze(new SolidColorBrush(Color.FromRgb(0xFF, 0xC8, 0x3D)));
     private (int index, Rect rect) _starHit = (-1, Rect.Empty);
+
+    private int _selected = -1;
+    /// <summary>The tile chosen with the arrow keys (-1: none). It gets an outline in the accent colour.</summary>
+    public int SelectedIndex { get => _selected; set { if (_selected == value) return; _selected = value; InvalidateVisual(); } }
+
+    /// <summary>The tile next to <paramref name="from"/> in a direction (dx, dy = -1, 0 or 1), as it is laid out; -1 when there is none.</summary>
+    public int Neighbour(int from, int dx, int dy)
+    {
+        if (_layout is null || _layout.Count == 0) return -1;
+        int n = _layout.Count;
+        bool Usable(int i) => i >= 0 && i < n && _layout.W[i] > 0;
+        if (!Usable(from)) { for (int i = Math.Max(0, from); i < n; i++) if (Usable(i)) return i; return -1; }
+        if (dy == 0)
+        {
+            for (int i = from + dx; i >= 0 && i < n; i += dx) if (Usable(i)) return i;
+            return -1;
+        }
+        double cx = _layout.X[from] + _layout.W[from] / 2, top = _layout.Y[from], bottom = top + _layout.H[from];
+        int best = -1; double bestScore = double.MaxValue;
+        int lo = Math.Max(0, from - 600), hi = Math.Min(n - 1, from + 600);
+        for (int i = lo; i <= hi; i++)
+        {
+            if (i == from || !Usable(i)) continue;
+            double ty = _layout.Y[i], tb = ty + _layout.H[i];
+            if (dy > 0 ? ty < bottom - 1 : tb > top + 1) continue;               // must lie below (or above)
+            double vd = dy > 0 ? ty - bottom : top - tb;
+            double ix = _layout.X[i] + _layout.W[i] / 2;
+            double score = vd * 3 + Math.Abs(ix - cx);
+            if (score < bestScore) { bestScore = score; best = i; }
+        }
+        return best;
+    }
     private int _downIndex = -1;
     /// <summary>Optional per-tile badge: 1 = GIF.</summary>
     public byte[]? Badges { get; set; }
@@ -542,7 +574,19 @@ public sealed class MasonryView : FrameworkElement
     private Dictionary<int, object?> _sigPrev = new(), _sigNow = new();
     private readonly List<TileDraw> _tiles = new();
     private readonly List<(Rect r, bool hovered, bool gif, int label, int index)> _overlay = new();
-    private static readonly uint BgPixel = TileBlit.Pack(18, 18, 20), FadePixel = TileBlit.Pack(40, 40, 46);
+    private static uint BgPixel = TileBlit.Pack(18, 18, 20), FadePixel = TileBlit.Pack(40, 40, 46);
+
+    /// <summary>The colour behind the tiles (from the theme), and the slightly lighter one a tile shows while its picture loads.</summary>
+    public static void SetBackground(Color c)
+    {
+        Background = Freeze(new SolidColorBrush(c));
+        BgPixel = TileBlit.Pack(c.R, c.G, c.B);
+        byte L(byte v) => (byte)Math.Min(255, v + (v < 128 ? 22 : -22));
+        FadePixel = TileBlit.Pack(L(c.R), L(c.G), L(c.B));
+    }
+
+    /// <summary>The theme changed: paint every strip again.</summary>
+    public void ThemeChanged() { if (_gpu is null && _bandW > 0) ResetBands(_bandW); _sigPrev.Clear(); InvalidateVisual(); }
     private uint[]? _paletteBgra;
 
     private struct TileDraw { public int Index, X, Y, W, H; public ThumbLoader.Entry? E; public double A; public bool Changed; public ThumbLoader.Pix? Over; }
@@ -660,7 +704,7 @@ public sealed class MasonryView : FrameworkElement
             int below = i < CoverCount ? (int)(CaptionHeight * dpi) : 0;
             bool labelled = _labels is { } lb && i < lb.Length && lb[i] is not null && y < offPx + ph && y + hPx + below > offPx;
             bool starred = e is not null && ((Starred is { } stf && stf(i)) || (CopiesOf is { } cof && cof(i) > 0));
-            if (i == _hoverIndex || gif || labelled || starred) _overlay.Add((new Rect(x / dpi, (y - offPx) / dpi, wPx / dpi, hPx / dpi), i == _hoverIndex, gif, labelled ? i : -1, i));
+            if (i == _hoverIndex || gif || labelled || starred || i == _selected) _overlay.Add((new Rect(x / dpi, (y - offPx) / dpi, wPx / dpi, hPx / dpi), i == _hoverIndex, gif, labelled ? i : -1, i));
         }
         (_sigPrev, _sigNow) = (_sigNow, _sigPrev);
         if (Gifs is not null)
@@ -691,6 +735,7 @@ public sealed class MasonryView : FrameworkElement
         {
             if (label >= 0) { if (label < CoverCount) DrawCaptionBelow(dc, r, label, dpi); else DrawCaption(dc, r, label, dpi); }
             if (hovered) dc.DrawRectangle(null, _hover, r);
+            if (index == _selected) { var sr = r; sr.Inflate(1, 1); dc.DrawRectangle(null, SelectPen, sr); }
             bool playingHere = _videos.TryGetValue(index, out var vt) && vt.E.FileId >= 0;
             bool isVideo = gif && Badges is { } vb && index < vb.Length && vb[index] == 2;
             var info = isVideo && VideoInfo is { } vinf ? vinf(index) : (false, -1.0);
@@ -1081,7 +1126,7 @@ public sealed class MasonryView : FrameworkElement
         {
             ft = new FormattedText("\uE8B7  " + name, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, _face, 14, Brushes.White, dpi)
             { MaxTextWidth = maxW, MaxLineCount = 1, Trimming = TextTrimming.CharacterEllipsis };
-            ft.SetFontFamily(new FontFamily("Segoe MDL2 Assets"), 0, 1);
+            ft.SetFontFamily(ThemeKit.IconFamily, 0, 1);
             ft.SetFontSize(12, 0, 1);
             ft.SetFontWeight(FontWeights.SemiBold, 1, ft.Text.Length - 1);
             _textCache[i] = ft;
@@ -1125,6 +1170,9 @@ public sealed class MasonryView : FrameworkElement
         if (hovered) _starHit = (i, box);
     }
     private static readonly Pen SetPen = MakeSetPen();
+    private static Pen SelectPen => _selectPen ??= MakeSelectPen();
+    private static Pen? _selectPen;
+    private static Pen MakeSelectPen() { var p = new Pen(ThemeKit.Brush("Accent"), 2.5); return p; }
     private static Pen MakeSetPen() { var p = new Pen(new SolidColorBrush(Color.FromArgb(220, 0xB8, 0x9C, 0xFF)), 1.5); p.Freeze(); return p; }
     private static readonly Brush SetBack = Freeze(new SolidColorBrush(Color.FromArgb(215, 0x24, 0x1C, 0x3A)));
 
@@ -1228,7 +1276,7 @@ public sealed class MasonryView : FrameworkElement
     }
 
     private static readonly Brush SpeakerBack = Freeze(new SolidColorBrush(Color.FromArgb(170, 20, 20, 24)));
-    private static readonly Typeface IconFace = new("Segoe MDL2 Assets");
+    private static Typeface IconFace => ThemeKit.IconTypeface;
     private static readonly Brush PausedText = Freeze(new SolidColorBrush(Color.FromRgb(0xFF, 0xC0, 0x40)));
     private bool _pulseOn;
 

@@ -636,7 +636,7 @@ public sealed class VideoPositions
         _dirty = true;
     }
 
-    public void Clear() { _pos.Clear(); _watched.Clear(); _dirty = true; Save(); }
+    public void Clear() { _pos.Clear(); _watched.Clear(); _vols.Clear(); _dirty = true; Save(); }
 
     public void Save()
     {

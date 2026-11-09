@@ -9,6 +9,7 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AssemblyName>Ginkgo</AssemblyName>
     <RootNamespace>Ginkgo.App</RootNamespace>
+    <ApplicationIcon>Assets\ginkgo.ico</ApplicationIcon>
     <VlcWindowsX86Enabled>false</VlcWindowsX86Enabled>
   </PropertyGroup>
   <ItemGroup>
@@ -17,6 +18,10 @@
     <PackageReference Include="LibVLCSharp" Version="3.9.1" />
     <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
     <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.21" />
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="Assets\ginkgo.png" />
+    <Resource Include="Assets\ginkgo.ico" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Ginkgo.Core\Ginkgo.Core.csproj" />

@@ -39,6 +39,14 @@ public partial class MainWindow
     private long _videoTick;
 
     // this session: what was paused (and where), watched, started (for the outlines, the Paused label and the Videos filter)
+    /// <summary>Clear video positions (Settings > Resets): where every video was, which were watched, and each one's volume.</summary>
+    private void ResetVideoMemory()
+    {
+        _vpos.Clear();
+        _sessPaused.Clear(); _sessWatched.Clear(); _sessStarted.Clear();
+        _frozen.Clear(); _frozenOrder.Clear();
+    }
+
     private readonly Dictionary<long, double> _sessPaused = new();
     private readonly HashSet<long> _sessWatched = new(), _sessStarted = new();
     // the last frame of paused videos whose player was let go: they keep showing it rather than going back to the thumbnail
@@ -458,11 +466,11 @@ public partial class MainWindow
         panel.Children.Add(new TextBlock { Text = (Always ? "" : "This session's. ") + "Resets when Ginkgo closes.", Foreground = (Brush)FindResource("Dim"), FontSize = 11, Margin = new Thickness(0, 8, 0, 0) });
         var card = new Border
         {
-            Child = panel, Background = new SolidColorBrush(Color.FromRgb(0x1C, 0x1C, 0x20)), BorderBrush = new SolidColorBrush(Color.FromRgb(0x3A, 0x3A, 0x42)),
+            Child = panel, Background = ThemeKit.Brush("Bar"), BorderBrush = ThemeKit.Brush("Edge"),
             BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Margin = new Thickness(6, 0, 16, 16),
             Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 14, ShadowDepth = 3, Opacity = 0.55 },
         };
-        System.Windows.Documents.TextElement.SetFontFamily(card, new FontFamily("Segoe UI"));
+        System.Windows.Documents.TextElement.SetFontFamily(card, (FontFamily)Application.Current.Resources["AppFont"]);
         _vfPopup = new Popup { PlacementTarget = VideosBtn, Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true, Child = card, VerticalOffset = 2, PopupAnimation = PopupAnimation.Fade };
         _vfPopup.Closed += (_, _) => { _vfClosedAt = Stopwatch.GetTimestamp(); ApplyBar(); };
     }

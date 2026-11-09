@@ -48,6 +48,8 @@ public sealed class CoverStore
     private static string FilePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ginkgo", "covers.json");
 
     private CoverStore(Dictionary<string, Cover> covers) { _covers = covers; }
+    /// <summary>Clear folder covers: every folder goes back to a random cover.</summary>
+    public void Clear() { _covers.Clear(); _dirty = true; }
 
     public static CoverStore Load()
     {

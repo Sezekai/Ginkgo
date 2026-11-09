@@ -23,7 +23,7 @@ public sealed class ButtonLookWindow : Window
         _look = look; _before = look.Copy(); _changed = changed;
         Title = "Button look"; Width = 640; Height = 820; MinWidth = 460; MinHeight = 400;
         WindowStartupLocation = WindowStartupLocation.CenterOwner; ShowInTaskbar = false;
-        Background = new SolidColorBrush(Color.FromRgb(0x1C, 0x1C, 0x20));
+        Background = ThemeKit.Brush("Bar");
         Foreground = (Brush)FindResource("Text");
         SourceInitialized += (_, _) => Theme.DarkTitleBar(this);
 
@@ -42,7 +42,7 @@ public sealed class ButtonLookWindow : Window
             el.SetResourceReference(HeightProperty, "KeyHeight");
             preview.Children.Add(el);
         }
-        var previewBox = new Border { Background = new SolidColorBrush(Color.FromRgb(0x1C, 0x1C, 0x20)), BorderBrush = (Brush)FindResource("Edge"), BorderThickness = new Thickness(1),
+        var previewBox = new Border { Background = ThemeKit.Brush("Bar"), BorderBrush = (Brush)FindResource("Edge"), BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(10), Padding = new Thickness(16, 14, 16, 14), Child = preview };
         DockPanel.SetDock(previewBox, Dock.Top);
         root.Children.Add(previewBox);
@@ -206,7 +206,7 @@ public sealed class ColourButton : StackPanel
         _popup = new Popup
         {
             PlacementTarget = _swatch, Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true,
-            Child = new Border { Background = new SolidColorBrush(Color.FromRgb(0x1C, 0x1C, 0x20)), BorderBrush = new SolidColorBrush(Color.FromRgb(58, 58, 66)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Child = panel, Margin = new Thickness(0, 4, 0, 0) }
+            Child = new Border { Background = ThemeKit.Brush("Bar"), BorderBrush = new SolidColorBrush(Color.FromRgb(58, 58, 66)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Child = panel, Margin = new Thickness(0, 4, 0, 0) }
         };
         _swatch.MouseLeftButtonUp += (_, _) => _popup.IsOpen = !_popup.IsOpen;
         _hex.LostKeyboardFocus += (_, _) => TryHex();

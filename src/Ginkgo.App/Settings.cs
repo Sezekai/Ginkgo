@@ -98,6 +98,17 @@ public sealed class AppSettings
     /// <summary>A video plays to its end before the slideshow moves on (otherwise it gets the same time as a picture).</summary>
     public bool SlideVideosToEnd { get; set; } = true;
 
+    // ---- appearance, first run, library folders, things done at the next start ----
+    public AppTheme Theme { get; set; } = new();
+    /// <summary>Folders left out of the app: top-level names, or deeper paths ("Average & LQ\Real\Photos").</summary>
+    public List<string> ExcludedFolders { get; set; } = Ginkgo.Core.MediaTypes.DefaultExcludedTopFolders.ToList();
+    /// <summary>Done when Ginkgo next starts (before the index opens): "index" (rebuild it), "thumbnails" (make them again).</summary>
+    public List<string> PendingResets { get; set; } = new();
+    /// <summary>Move the cache to this folder when Ginkgo next starts ("" = nothing to do).</summary>
+    public string PendingCacheMove { get; set; } = "";
+    /// <summary>The library's old folder, when it was pointed somewhere new: the index's paths are moved at the next start.</summary>
+    public string PendingRelocateFrom { get; set; } = "";
+
     // ---- Tools ----
     public string Tool { get; set; } = "Duplicates";
     public bool DupNear { get; set; }
@@ -158,6 +169,9 @@ public sealed class AppSettings
     public int MemoryRulesVersion { get; set; } = 1;
     public int LookAheadWindows { get; set; } = 1;
     public bool FadeSharpening { get; set; } = true;
+
+    /// <summary>True once settings have been saved on this computer (false: first run).</summary>
+    public static bool Exists => File.Exists(FilePath);
 
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ginkgo", "settings.json");

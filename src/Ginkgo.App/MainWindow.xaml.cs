@@ -54,7 +54,7 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
-        _settings.Look.Apply(Application.Current.Resources);      // the button look, before anything is drawn
+        ThemeKit.Apply(_settings.Theme, _settings.Look);           // the theme and button look, before anything is drawn
         InitializeComponent();
         System.Runtime.GCSettings.LatencyMode = System.Runtime.GCLatencyMode.SustainedLowLatency;
         _engine = new Engine(_settings);
@@ -315,6 +315,7 @@ public partial class MainWindow : Window
         View.BadgeText = BadgeTexts(result.order, result.slice.badges);
         View.Thumbs = _loader;
         View.CoverRadius = _settings.CoverRounded ? _settings.CoverRadius : 0;
+        if (!keepPosition) View.SelectedIndex = -1;
         View.SetItems(result.slice.specs, result.page?.Labels, keepPosition, grid && result.page is not null ? _firstFile : 0);
         VideoItemsChanged();
         if (offset is double o) View.Offset = o;
@@ -508,7 +509,7 @@ public partial class MainWindow : Window
 
     private void OnUpdateView(object s, RoutedEventArgs e) => _ = ReloadModel(true);
 
-    private void SaveSettings() { _settings.Save(); }
+    private void SaveSettings() { if (!_skipSave) _settings.Save(); }
 
     // called by the settings window
     /// <summary>Lays the view out again (after a setting that changes what shows or its order).</summary>
@@ -581,6 +582,7 @@ public partial class MainWindow : Window
     }
 
     private int _slowAtLastTick;
+    private long _moveStarted;
 
     private void Tick()
     {
@@ -625,10 +627,19 @@ public partial class MainWindow : Window
         MoveLayer.Visibility = moving ? Visibility.Visible : Visibility.Collapsed;
         if (moving)
         {
+            if (_moveStarted == 0) _moveStarted = Stopwatch.GetTimestamp();
             long total = Math.Max(1, _engine.MoveTotal);
-            MoveBar.Value = _engine.MoveDone / (double)total;
-            MoveText.Text = $"{_engine.MoveDone / 1073741824.0:F2} of {total / 1073741824.0:F2} GB";
+            double f = _engine.MoveDone / (double)total, secs = (Stopwatch.GetTimestamp() - _moveStarted) / (double)Stopwatch.Frequency;
+            MoveBar.Value = f;
+            string left = f > 0.01 && secs > 1 ? $", about {Clock(secs / f - secs)} left" : "";
+            MoveText.Text = $"{f * 100:F0}%   {_engine.MoveDone / 1073741824.0:F2} of {total / 1073741824.0:F2} GB   {Clock(secs)} so far{left}";
+            if (_engine.MovingWhat == "cache")
+            {
+                MoveTitle.Text = "Moving the cache to " + _settings.PendingCacheMove;
+                MoveNote.Text = "Asked for in Settings. Every thumbnail file is copied to the new folder and checked; the old ones are removed only after all of them arrived. Ginkgo opens when it is done.";
+            }
         }
+        else _moveStarted = 0;
         bool ids = _engine.IdsRunning && _engine.IdsTotal > 0;
         IdBar.Visibility = ids ? Visibility.Visible : Visibility.Collapsed;
         if (ids) IdBar.Value = _engine.IdsDone / (double)_engine.IdsTotal;
@@ -753,7 +764,19 @@ public partial class MainWindow : Window
             case Key.End: View.Offset = double.MaxValue / 4; e.Handled = true; break;
             case Key.PageDown: View.ScrollBy(View.ActualHeight * 0.9); e.Handled = true; break;
             case Key.PageUp: View.ScrollBy(-View.ActualHeight * 0.9); e.Handled = true; break;
-            case Key.Enter: if (IsFolderTile(View.HoverIndex)) { OpenFolder(_page!.Tiles[View.HoverIndex].Path); e.Handled = true; } else if (View.HoverIndex >= 0) { OpenViewer(View.HoverIndex); e.Handled = true; } break;
+            case Key.Enter:
+            {
+                int at = View.SelectedIndex >= 0 && View.SelectedIndex < _order.Length ? View.SelectedIndex : View.HoverIndex;
+                if (IsFolderTile(at)) { OpenFolder(_page!.Tiles[at].Path); e.Handled = true; } else if (at >= 0) { OpenViewer(at); e.Handled = true; }
+                break;
+            }
+            case Key.Left: MoveSelection(-1, 0); e.Handled = true; break;
+            case Key.Right: MoveSelection(1, 0); e.Handled = true; break;
+            case Key.Up: MoveSelection(0, -1); e.Handled = true; break;
+            case Key.Down: MoveSelection(0, 1); e.Handled = true; break;
+            case Key.Space:
+                if (View.SelectedIndex >= 0 && IsVideoTile(View.SelectedIndex)) { ClickVideoTile(View.SelectedIndex); e.Handled = true; }
+                break;
             case Key.OemQuestion: RevealBar(); SearchBox.Focus(); e.Handled = true; break;
             case Key.K: ShowKeys(false); e.Handled = true; break;
             case Key.S: OpenSettings(); e.Handled = true; break;
@@ -1050,12 +1073,58 @@ public partial class MainWindow : Window
     }
 
     private void OnSideSettings(object s, RoutedEventArgs e) { ((System.Windows.Controls.Primitives.ToggleButton)s).IsChecked = false; SetSidebar(false); OpenSettings(); }
+    /// <summary>The arrow keys move a highlight through the tiles (starting at the one under the mouse, or the first on screen).</summary>
+    private void MoveSelection(int dx, int dy)
+    {
+        if (_order.Length == 0) return;
+        int cur = View.SelectedIndex;
+        if (cur < 0 || cur >= _order.Length) { cur = View.HoverIndex >= 0 ? View.HoverIndex : Math.Max(0, View.VisibleRange().first); View.SelectedIndex = cur; View.ScrollToIndex(cur); return; }
+        int next = View.Neighbour(cur, dx, dy);
+        if (next < 0) return;
+        View.SelectedIndex = next;
+        View.ScrollToIndex(next);
+        StatusText.Text = IsFolderTile(next) ? FolderHoverText(next) : next < _paths.Length ? HoverText(next) : StatusText.Text;
+    }
+
+    private void OnSideAppearance(object s, RoutedEventArgs e) { ((System.Windows.Controls.Primitives.ToggleButton)s).IsChecked = false; OpenAppearance(); }
     private void OnSideLook(object s, RoutedEventArgs e) { ((System.Windows.Controls.Primitives.ToggleButton)s).IsChecked = false; SetSidebar(false); OpenLook(); }
 
     /// <summary>The button look window: changes show at once; Save keeps them.</summary>
+    /// <summary>Appearance: themes, colours, fonts, icons and backgrounds.</summary>
+    public void OpenAppearance()
+    {
+        SetSidebar(false);
+        var w = new AppearanceWindow(_settings, ThemeApplied) { Owner = this };
+        w.Show();
+    }
+
+    /// <summary>The theme changed: the grid repaints, and the window's own frame follows.</summary>
+    public void ThemeApplied()
+    {
+        View.ThemeChanged();
+        SaveSettings();
+    }
+
+    public void ResetSettings()
+    {
+        var fresh = new AppSettings
+        {
+            LibraryRoot = _settings.LibraryRoot, CacheDir = _settings.CacheDir, FastCacheDir = _settings.FastCacheDir, UseFastCache = _settings.UseFastCache,
+            ExcludedFolders = _settings.ExcludedFolders, Theme = _settings.Theme, FolderRulesVersion = 3,
+        };
+        fresh.Save();
+        _skipSave = true;                                          // closing must not write the old settings back
+    }
+    private bool _skipSave;
+
+    public void ClearSavedSearches() { _saved.Clear(); SavedSearches.Save(_saved); RebuildSavedList(); }
+    public void ClearCovers() { _covers.Clear(); _covers.Save(); if (InBrowse) BuildView(true); }
+    public void ClearVideoPositions() { ResetVideoMemory(); View.Refresh(); }
+    public Task ReloadAfterFolders() => ReloadModel(true);
+
     public void OpenLook()
     {
-        var w = new ButtonLookWindow(_settings.Look, () => _settings.Look.Apply(Application.Current.Resources)) { Owner = this };
+        var w = new ButtonLookWindow(_settings.Look, () => ThemeKit.Apply(_settings.Theme, _settings.Look)) { Owner = this };
         if (w.ShowDialog() == true) SaveSettings();
     }
 

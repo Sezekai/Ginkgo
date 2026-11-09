@@ -56,4 +56,34 @@ public static class CacheMigration
 
     /// <summary>Marks a folder as the place to use without copying anything (nothing to move).</summary>
     public static void MarkEmpty(string to) { Directory.CreateDirectory(to); File.WriteAllText(System.IO.Path.Combine(to, Marker), DateTime.UtcNow.ToString("O")); }
+
+    /// <summary>
+    /// Moves the whole cache folder (every file, folders included) to <paramref name="to"/>: copied first, checked, and the originals
+    /// removed only after everything arrived. Files already there in full are skipped, so a stopped move carries on.
+    /// </summary>
+    public static void MoveAll(string from, string to, Action<long, long>? progress, CancellationToken ct)
+    {
+        string a = System.IO.Path.GetFullPath(from).TrimEnd('\\', '/'), b = System.IO.Path.GetFullPath(to).TrimEnd('\\', '/');
+        if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase) || !Directory.Exists(a)) return;
+        var files = Directory.EnumerateFiles(a, "*", SearchOption.AllDirectories).Where(f => !f.EndsWith(".part", StringComparison.OrdinalIgnoreCase))
+            .Select(f => (path: f, size: new FileInfo(f).Length)).ToList();
+        long total = files.Sum(f => f.size), done = 0;
+        var buf = new byte[4 << 20];
+        foreach (var (path, size) in files)
+        {
+            ct.ThrowIfCancellationRequested();
+            string dest = System.IO.Path.Combine(b, System.IO.Path.GetRelativePath(a, path)), part = dest + ".part";
+            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(dest)!);
+            if (File.Exists(dest) && new FileInfo(dest).Length == size) { done += size; progress?.Invoke(done, total); continue; }
+            using (var src = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1 << 20, FileOptions.SequentialScan))
+            using (var dst = new FileStream(part, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 20))
+            {
+                int n;
+                while ((n = src.Read(buf, 0, buf.Length)) > 0) { ct.ThrowIfCancellationRequested(); dst.Write(buf, 0, n); done += n; progress?.Invoke(done, total); }
+            }
+            if (new FileInfo(part).Length != size) throw new IOException("copy of " + path + " is incomplete");
+            File.Move(part, dest, true);
+        }
+        foreach (var (path, _) in files) { try { File.Delete(path); } catch { } }
+    }
 }

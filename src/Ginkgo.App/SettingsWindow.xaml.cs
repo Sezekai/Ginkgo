@@ -30,6 +30,8 @@ public partial class SettingsWindow : Window
         BuildGpu();
         BuildSets();
         BuildView();
+        BuildFolderTree();
+        BuildResets();
         _init = false;
         OnMeasure(this, new RoutedEventArgs());
     }
@@ -38,10 +40,15 @@ public partial class SettingsWindow : Window
     {
         var dlg = new Microsoft.Win32.OpenFolderDialog { Title = "Choose your library folder", InitialDirectory = _s.LibraryRoot };
         if (dlg.ShowDialog(this) != true) return;
+        string old = _s.LibraryRoot;
         _s.LibraryRoot = dlg.FolderName;
         LibraryBox.Text = _s.LibraryRoot;
+        // the same library somewhere new (another drive letter): the index's paths move, so nothing is made again
+        if (MessageBox.Show(this, $"Is this the same library, moved from {old}?\n\nYes: Ginkgo matches files by their place inside the library and keeps all thumbnails.\nNo: it is treated as a different library.", "Library folder", MessageBoxButton.YesNo) == MessageBoxResult.Yes)
+            _s.PendingRelocateFrom = old;
         _main.ApplySettings();
-        Result.Text = "Library folder changed. Restart Ginkgo to look through the new folder.";
+        if (MessageBox.Show(this, "Restart Ginkgo now to use the new folder?", "Library folder", MessageBoxButton.YesNo) == MessageBoxResult.Yes) App.Restart();
+        else Result.Text = "Library folder changed. It is used from the next start.";
     }
 
     private async void OnRescan(object s, RoutedEventArgs e) { Result.Text = "Looking for changes..."; await _engine.Rescan(); Result.Text = _engine.Status; }
@@ -54,6 +61,102 @@ public partial class SettingsWindow : Window
     }
     private void OnWarmChanged(object s, RoutedEventArgs e) { _s.WarmCache = WarmBox.IsChecked == true; _engine.Warmer.Enabled = _s.WarmCache; _main.ApplySettings(); Result.Text = "The limit and GIF settings are in Optimisations (next to Settings in the menu bar)."; }
     private void OnLook(object s, RoutedEventArgs e) => _main.OpenLook();
+    private void OnAppearance(object s, RoutedEventArgs e) => _main.OpenAppearance();
+
+    // ---- library folders: untick to remove from Ginkgo ----
+
+    private readonly HashSet<string> _excl = new(StringComparer.OrdinalIgnoreCase);
+
+    private void BuildFolderTree()
+    {
+        foreach (var e in _s.ExcludedFolders) _excl.Add(e.Replace('/', '\\'));
+        FolderTree.Items.Clear();
+        if (!System.IO.Directory.Exists(_s.LibraryRoot)) { FolderTree.Items.Add(new TreeViewItem { Header = "(the library folder can't be found right now)" }); return; }
+        foreach (var d in Kids(_s.LibraryRoot)) FolderTree.Items.Add(Node(d));
+    }
+
+    private static IEnumerable<string> Kids(string dir)
+    {
+        try { return System.IO.Directory.GetDirectories(dir).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList(); }
+        catch { return Array.Empty<string>(); }
+    }
+
+    private TreeViewItem Node(string full)
+    {
+        string rel = System.IO.Path.GetRelativePath(_s.LibraryRoot, full);
+        var cb = new CheckBox { Content = System.IO.Path.GetFileName(full), IsChecked = !_excl.Contains(rel), Foreground = ThemeKit.Brush("Text") };
+        var item = new TreeViewItem { Header = cb, Tag = full };
+        cb.Click += (_, _) =>
+        {
+            if (cb.IsChecked == true) _excl.Remove(rel); else _excl.Add(rel);
+            ApplyFoldersBtn.IsEnabled = true;
+            FoldersNote.Text = $"{_excl.Count} folder{(_excl.Count == 1 ? "" : "s")} left out";
+        };
+        if (Kids(full).Any())
+        {
+            item.Items.Add("…");                                    // filled when opened
+            item.Expanded += (_, _) =>
+            {
+                if (item.Items.Count == 1 && item.Items[0] is string)
+                {
+                    item.Items.Clear();
+                    foreach (var k in Kids(full)) item.Items.Add(Node(k));
+                }
+            };
+        }
+        return item;
+    }
+
+    private async void OnApplyFolders(object s, RoutedEventArgs e)
+    {
+        var before = new HashSet<string>(_s.ExcludedFolders.Select(x => x.Replace('/', '\\')), StringComparer.OrdinalIgnoreCase);
+        var removed = _excl.Where(x => !before.Contains(x)).ToList();
+        bool restored = before.Any(x => !_excl.Contains(x));
+        _s.ExcludedFolders = _excl.ToList();
+        _main.ApplySettings();
+        ApplyFoldersBtn.IsEnabled = false;
+        Result.Text = "Applying the folder changes...";
+        await _engine.ExcludedChanged(removed, restored);
+        await _main.ReloadAfterFolders();
+        Result.Text = $"Done: {removed.Count} folder{(removed.Count == 1 ? "" : "s")} removed{(restored ? ", and the ones brought back were looked through again" : "")}.";
+    }
+
+    // ---- moving the cache, and resets ----
+
+    private void OnMoveCache(object s, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFolderDialog { Title = "Move the cache to", InitialDirectory = _s.CacheDir };
+        if (dlg.ShowDialog(this) != true) return;
+        if (string.Equals(System.IO.Path.GetFullPath(dlg.FolderName).TrimEnd('\\'), System.IO.Path.GetFullPath(_s.CacheDir).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)) return;
+        if (MessageBox.Show(this, $"Move the cache from\n{_s.CacheDir}\nto\n{dlg.FolderName}?\n\nGinkgo restarts and moves it before opening, with progress. Nothing has to be made again.", "Move cache", MessageBoxButton.OKCancel) != MessageBoxResult.OK) return;
+        _s.PendingCacheMove = dlg.FolderName;
+        _main.ApplySettings();
+        App.Restart();
+    }
+
+    private void BuildResets()
+    {
+        void Reset(string label, string question, Action act, bool restart = false)
+        {
+            var b = new Button { Content = label, Margin = new Thickness(0, 0, 8, 8) };
+            b.Click += (_, _) =>
+            {
+                if (MessageBox.Show(this, question + (restart ? "\n\nGinkgo restarts to do it." : ""), label, MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK) return;
+                act();
+                _main.ApplySettings();
+                if (restart) App.Restart(); else Result.Text = label + ": done.";
+            };
+            ResetPanel.Children.Add(b);
+        }
+        Reset("Reset settings", "Put every setting back to how Ginkgo starts out? (The library and cache folders, saved searches and themes stay.)", () => _main.ResetSettings(), restart: true);
+        Reset("Reset themes", "Delete your own themes and go back to the default theme?", () => { ThemeKit.ResetOwn(); _s.Theme = new AppTheme(); ThemeKit.Apply(_s.Theme, _s.Look); _main.ThemeApplied(); });
+        Reset("Clear saved searches", "Delete every saved search?", () => _main.ClearSavedSearches());
+        Reset("Clear defaults", "Forget the defaults you saved for each section (Ginkgo's own come back)?", () => _s.Defaults.Clear());
+        Reset("Rebuild the index", "Make the index again from scratch? Ginkgo looks through the whole library again and makes thumbnails again (this takes a while).", () => { if (!_s.PendingResets.Contains("index")) _s.PendingResets.Add("index"); }, restart: true);
+        Reset("Clear thumbnails", "Delete every thumbnail and make them again in the background?", () => { if (!_s.PendingResets.Contains("thumbnails")) _s.PendingResets.Add("thumbnails"); }, restart: true);
+        Reset("Clear video positions", "Forget where every video was paused, which were watched, and each video's volume?", () => _main.ClearVideoPositions());
+        Reset("Clear folder covers", "Forget every folder cover you picked or adjusted (they go back to random)?", () => _main.ClearCovers());
+    }
     private void OnOutlines(object s, RoutedEventArgs e) => new OutlineWindow(_s, _main.OutlinesChanged) { Owner = this }.ShowDialog();
     private void OnRoundChanged(object s, RoutedEventArgs e) { _s.CoverRounded = RoundBox.IsChecked == true; RadiusSlider.IsEnabled = _s.CoverRounded; _main.ApplySettings(); }
     private void OnRadiusChanged(object s, RoutedPropertyChangedEventArgs<double> e)
@@ -102,11 +205,11 @@ public partial class SettingsWindow : Window
     // ---- GPU grid ----
 
     private readonly ComboBox _drawBox = new() { MinWidth = 160, HorizontalAlignment = HorizontalAlignment.Right };
-    private readonly TextBlock _gpuStatus = new() { TextWrapping = TextWrapping.Wrap, Foreground = Brush("#9AA0A6"), Margin = new Thickness(0, 6, 0, 6) };
+    private readonly TextBlock _gpuStatus = new() { TextWrapping = TextWrapping.Wrap, Foreground = ThemeKit.Brush("Dim"), Margin = new Thickness(0, 6, 0, 6) };
     private readonly Button _prefBtn = new() { Content = "Use the NVIDIA GPU for Ginkgo", Visibility = Visibility.Collapsed };
     private readonly Button _restartBtn = new() { Content = "Restart Ginkgo", Visibility = Visibility.Collapsed };
     private readonly StackPanel _gifPanel = new() { Margin = new Thickness(0, 10, 0, 0) };
-    private readonly TextBlock _gifOff = new() { Text = "These apply only while the GPU grid is drawing.", Foreground = Brush("#9AA0A6"), Margin = new Thickness(0, 0, 0, 6) };
+    private readonly TextBlock _gifOff = new() { Text = "These apply only while the GPU grid is drawing.", Foreground = ThemeKit.Brush("Dim"), Margin = new Thickness(0, 0, 0, 6) };
 
     private static System.Windows.Media.Brush Brush(string hex) => (System.Windows.Media.Brush)new System.Windows.Media.BrushConverter().ConvertFromString(hex)!;
 
@@ -126,7 +229,7 @@ public partial class SettingsWindow : Window
         var gapText = new TextBlock { Text = $"{_s.Spacing:0} px" };
         gap.ValueChanged += (_, e) => { gapText.Text = $"{e.NewValue:0} px"; if (_init) return; _s.Spacing = (float)e.NewValue; _main.ApplySpacing(); _main.ApplySettings(); };
         ViewPanel.Children.Add(Row("Space between pictures", gap, null, gapText));
-        var hover = new CheckBox { Content = "Show size and dimensions in the corner of the picture under the mouse", Foreground = Brush("#E4E4E8"), IsChecked = _s.HoverDetails, Margin = new Thickness(0, 0, 0, 10) };
+        var hover = new CheckBox { Content = "Show size and dimensions in the corner of the picture under the mouse", Foreground = ThemeKit.Brush("Text"), IsChecked = _s.HoverDetails, Margin = new Thickness(0, 0, 0, 10) };
         hover.Click += (_, _) => { _s.HoverDetails = hover.IsChecked == true; _main.ApplySettings(); };
         ViewPanel.Children.Add(hover);
         var secs = new Slider { Width = 160, Minimum = 1, Maximum = 60, IsSnapToTickEnabled = true, TickFrequency = 1, Value = Math.Clamp(_s.SlideSeconds, 1, 60), VerticalAlignment = VerticalAlignment.Center };
@@ -135,7 +238,7 @@ public partial class SettingsWindow : Window
         ViewPanel.Children.Add(Row("Slideshow: each picture shows for", secs, null, secsText));
         CheckBox Box(string text, bool on, Action<bool> set)
         {
-            var b = new CheckBox { Content = text, Foreground = Brush("#E4E4E8"), IsChecked = on, Margin = new Thickness(0, 0, 0, 6) };
+            var b = new CheckBox { Content = text, Foreground = ThemeKit.Brush("Text"), IsChecked = on, Margin = new Thickness(0, 0, 0, 6) };
             b.Click += (_, _) => { set(b.IsChecked == true); _main.ApplySettings(); };
             ViewPanel.Children.Add(b);
             return b;
@@ -152,10 +255,10 @@ public partial class SettingsWindow : Window
         var limitText = new TextBlock { Text = $"{_s.SetLimit}" };
         limit.ValueChanged += (_, e) => { limitText.Text = $"{(int)e.NewValue}"; if (_init) return; _s.SetLimit = (int)e.NewValue; _main.ApplySettings(); _main.RebuildView(); };
         SetsPanel.Children.Add(Row("Sets with up to this many images show as one block; bigger ones as a stacked tile that opens with a click", limit, null, limitText));
-        var first = new CheckBox { Content = "Sort every set by its first image (otherwise: name by the set's folder, size by its total, dates by its newest file)", Foreground = Brush("#E4E4E8"), IsChecked = _s.SetsByFirst, Margin = new Thickness(0, 0, 0, 6) };
+        var first = new CheckBox { Content = "Sort every set by its first image (otherwise: name by the set's folder, size by its total, dates by its newest file)", Foreground = ThemeKit.Brush("Text"), IsChecked = _s.SetsByFirst, Margin = new Thickness(0, 0, 0, 6) };
         first.Click += (_, _) => { _s.SetsByFirst = first.IsChecked == true; _main.ApplySettings(); _main.RebuildView(); };
         SetsPanel.Children.Add(first);
-        var copies = new CheckBox { Content = "Show a file once when the exact same file is in several folders (a +1 in its corner; right-click lists the other places)", Foreground = Brush("#E4E4E8"), IsChecked = _s.HideCopies, Margin = new Thickness(0, 0, 0, 6) };
+        var copies = new CheckBox { Content = "Show a file once when the exact same file is in several folders (a +1 in its corner; right-click lists the other places)", Foreground = ThemeKit.Brush("Text"), IsChecked = _s.HideCopies, Margin = new Thickness(0, 0, 0, 6) };
         copies.Click += (_, _) => { _s.HideCopies = copies.IsChecked == true; _main.ApplySettings(); _main.RebuildView(); };
         SetsPanel.Children.Add(copies);
     }
@@ -174,11 +277,11 @@ public partial class SettingsWindow : Window
         GpuPanel.Children.Add(Row("Drawing", _drawBox));
         GpuPanel.Children.Add(new TextBlock
         {
-            TextWrapping = TextWrapping.Wrap, Foreground = Brush("#9AA0A6"),
+            TextWrapping = TextWrapping.Wrap, Foreground = ThemeKit.Brush("Dim"),
             Text = "The GPU grid draws the thumbnails and plays the GIFs on the NVIDIA graphics card instead of the processor. Press F3 in the grid to compare it with Current."
         });
         GpuPanel.Children.Add(_gpuStatus);
-        var cardOnly = new CheckBox { Content = "Keep decoded pictures only on the graphics card (frees the memory they took; F3 shows how much)", Foreground = Brush("#E4E4E8"), IsChecked = _s.GpuCardOnly, Margin = new Thickness(0, 0, 0, 6) };
+        var cardOnly = new CheckBox { Content = "Keep decoded pictures only on the graphics card (frees the memory they took; F3 shows how much)", Foreground = ThemeKit.Brush("Text"), IsChecked = _s.GpuCardOnly, Margin = new Thickness(0, 0, 0, 6) };
         cardOnly.Click += (_, _) => { _s.GpuCardOnly = cardOnly.IsChecked == true; _main.ApplySettings(); };
         GpuPanel.Children.Add(cardOnly);
         var buttons = new WrapPanel();
@@ -195,7 +298,7 @@ public partial class SettingsWindow : Window
 
         // GIFs (GPU grid only)
         _gifPanel.Children.Add(_gifOff);
-        var animate = new CheckBox { Content = "Animate GIFs in the grid (off: still covers; they play on hover)", Foreground = Brush("#E4E4E8"), IsChecked = _s.GifAnimate, Margin = new Thickness(0, 0, 0, 6) };
+        var animate = new CheckBox { Content = "Animate GIFs in the grid (off: still covers; they play on hover)", Foreground = ThemeKit.Brush("Text"), IsChecked = _s.GifAnimate, Margin = new Thickness(0, 0, 0, 6) };
         animate.Click += (_, _) => { _s.GifAnimate = animate.IsChecked == true; _main.ApplySettings(); };
         _gifPanel.Children.Add(animate);
 
@@ -209,7 +312,7 @@ public partial class SettingsWindow : Window
         var fadeLen = new Slider { Width = 120, Minimum = 0.1, Maximum = 1.0, IsSnapToTickEnabled = true, TickFrequency = 0.1, Value = _s.GifCrossFadeSec, VerticalAlignment = VerticalAlignment.Center, IsEnabled = _s.GifCrossFade };
         fadeText.Text = $"{_s.GifCrossFadeSec:0.0} s";
         fadeLen.ValueChanged += (_, e) => { fadeText.Text = $"{e.NewValue:0.0} s"; if (_init) return; _s.GifCrossFadeSec = Math.Round(e.NewValue, 1); _main.ApplySettings(); };
-        var fade = new CheckBox { Content = "Cross-fade at the loop (GIFs cut to the length above)", Foreground = Brush("#E4E4E8"), IsChecked = _s.GifCrossFade, VerticalAlignment = VerticalAlignment.Center };
+        var fade = new CheckBox { Content = "Cross-fade at the loop (GIFs cut to the length above)", Foreground = ThemeKit.Brush("Text"), IsChecked = _s.GifCrossFade, VerticalAlignment = VerticalAlignment.Center };
         fade.Click += (_, _) => { _s.GifCrossFade = fade.IsChecked == true; fadeLen.IsEnabled = _s.GifCrossFade; _main.ApplySettings(); };
         var fadeRow = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
         fadeText.Width = 52; fadeText.TextAlignment = TextAlignment.Right; fadeText.VerticalAlignment = VerticalAlignment.Center;
@@ -228,7 +331,7 @@ public partial class SettingsWindow : Window
         if (fps.SelectedItem is null) fps.SelectedIndex = 0;
         fps.SelectionChanged += (_, _) => { if (_init) return; _s.GifFps = (int)((ComboBoxItem)fps.SelectedItem).Tag; _main.ApplySettings(); };
         _gifPanel.Children.Add(Row("GIF frame rate (Automatic lowers it when many GIFs are on screen)", fps));
-        _gifStat.Foreground = Brush("#9AA0A6"); _gifStat.TextWrapping = TextWrapping.Wrap; _gifStat.Margin = new Thickness(0, 4, 0, 0);
+        _gifStat.Foreground = ThemeKit.Brush("Dim"); _gifStat.TextWrapping = TextWrapping.Wrap; _gifStat.Margin = new Thickness(0, 4, 0, 0);
         _gifPanel.Children.Add(_gifStat);
 
         // extra-large versions on the drive: their size, a limit, and a way to clear them
@@ -255,7 +358,7 @@ public partial class SettingsWindow : Window
             Task.Run(() => { try { gm.ClearBig(); } catch { } }).ContinueWith(_ => Dispatcher.BeginInvoke(GifStat));
         };
         _gifPanel.Children.Add(clearBig);
-        _bigStat.Foreground = Brush("#9AA0A6"); _bigStat.TextWrapping = TextWrapping.Wrap; _bigStat.Margin = new Thickness(0, 4, 0, 0);
+        _bigStat.Foreground = ThemeKit.Brush("Dim"); _bigStat.TextWrapping = TextWrapping.Wrap; _bigStat.Margin = new Thickness(0, 4, 0, 0);
         _gifPanel.Children.Add(_bigStat);
         GpuPanel.Children.Add(_gifPanel);
         var tick = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };

@@ -11,7 +11,7 @@ public sealed class OutlineWindow : Window
 {
     public OutlineWindow(AppSettings s, Action changed)
     {
-        Title = "Video outlines"; Width = 470; Height = 760; Background = new SolidColorBrush(Color.FromRgb(0x1C, 0x1C, 0x20));
+        Title = "Video outlines"; Width = 470; Height = 760; Background = ThemeKit.Brush("Bar");
         WindowStartupLocation = WindowStartupLocation.CenterOwner; ShowInTaskbar = false;
         var ed = new OutlineEditor(s);
         ed.Changed += changed;
@@ -25,7 +25,7 @@ public sealed class OutlineEditor : StackPanel
     public event Action? Changed;
     private readonly AppSettings _s;
     private readonly List<Action> _syncs = new();
-    private static readonly Brush Dim = Frozen("#B5BAC0"), Txt = Frozen("#E4E4E8"), Line = Frozen("#2E2E36");
+    private static readonly Brush Dim = ThemeKit.Brush("Dim"), Txt = ThemeKit.Brush("Text"), Line = ThemeKit.Brush("Edge");
     private static Brush Frozen(string hex) { var b = (SolidColorBrush)new BrushConverter().ConvertFromString(hex)!; b.Freeze(); return b; }
     private static readonly string[] Swatches = { "#FFB000", "#FF8A00", "#FFD84A", "#FF4D4D", "#FF5FA2", "#B07CFF", "#4DA3FF", "#3FD0D0", "#5FAF6B", "#9BE07A", "#FFFFFF" };
 
@@ -33,7 +33,7 @@ public sealed class OutlineEditor : StackPanel
     {
         _s = s;
         Margin = new Thickness(18, 14, 18, 18);
-        TextElement.SetFontFamily(this, new FontFamily("Segoe UI")); TextElement.SetFontSize(this, 12);
+        TextElement.SetFontFamily(this, (FontFamily)Application.Current.Resources["AppFont"]); TextElement.SetFontSize(this, 12);
         var stack = this;
         stack.Children.Add(new TextBlock { Text = "Video outlines", FontSize = 15, FontWeight = FontWeights.SemiBold, Foreground = Txt, Margin = new Thickness(0, 0, 0, 6) });
         stack.Children.Add(Note("Watched comes first: a watched video you pause keeps the watched outline. A video playing has no outline."));

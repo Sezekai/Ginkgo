@@ -42,7 +42,9 @@ public sealed class Engine : IDisposable
 
     public Engine(AppSettings settings) { Settings = settings; }
 
-    public IEnumerable<string> Excluded => MediaTypes.DefaultExcludedTopFolders;
+    public IEnumerable<string> Excluded => Settings.ExcludedFolders;
+    /// <summary>What the one-time move is moving ("thumbnails" to the fast drive, or the whole "cache").</summary>
+    public volatile string MovingWhat = "thumbnails";
 
     public void Start() => Task.Run(Run);
 
@@ -50,7 +52,16 @@ public sealed class Engine : IDisposable
     {
         try
         {
+            DoPendingResets();
+            if (Settings.PendingCacheMove.Length > 0) MoveCache();
             Db = new IndexDb(AppSettings.IndexPath);
+            if (Settings.PendingResets.Remove("thumbnails")) ForgetThumbnails();
+            if (Settings.PendingRelocateFrom.Length > 0)
+            {
+                int n = Db.Relocate(Settings.PendingRelocateFrom, Settings.LibraryRoot);
+                Status = $"library moved: {n:N0} files matched in the new place";
+                Settings.PendingRelocateFrom = ""; Settings.Save();
+            }
             if (Db.LargeInvalidated && Directory.Exists(Settings.CacheDir))
                 foreach (var f in Directory.EnumerateFiles(Settings.CacheDir, "large-*.bin")) { try { File.Delete(f); } catch { } }
             string thumbDir = ChooseThumbDir();
@@ -75,6 +86,66 @@ public sealed class Engine : IDisposable
             StartDetails();
         }
         catch (Exception ex) { Status = "problem: " + ex.Message; }
+    }
+
+    /// <summary>Rebuild the index (asked for in Settings > Resets): the old one is set aside before it is opened.</summary>
+    private void DoPendingResets()
+    {
+        if (!Settings.PendingResets.Remove("index")) return;
+        foreach (var suffix in new[] { "", "-wal", "-shm" })
+        {
+            string f = AppSettings.IndexPath + suffix;
+            try { if (File.Exists(f)) File.Move(f, f + ".old", true); } catch { }
+        }
+        if (!Settings.PendingResets.Contains("thumbnails")) Settings.PendingResets.Add("thumbnails");    // the new index can't find the old ones
+        Settings.Save();
+    }
+
+    /// <summary>Clear thumbnails: the thumbnail files go, and every file is made again in the background.</summary>
+    private void ForgetThumbnails()
+    {
+        foreach (var dir in new[] { Settings.CacheDir, Settings.FastCacheDir }.Distinct())
+        {
+            try
+            {
+                if (!Directory.Exists(dir)) continue;
+                foreach (var f in Directory.EnumerateFiles(dir, "*.bin")) { try { File.Delete(f); } catch { } }
+            }
+            catch { }
+        }
+        using (var c = Db!.Open())
+            IndexDb.Exec(c, "UPDATE files SET state=0, thumb_pack=0, thumb_off=0, thumb_len=0, s_pack=0, s_off=0, s_len=0, m_pack=0, m_off=0, m_len=0, l_pack=0, l_off=0, l_len=0, vhash=0");
+        using (var c = Db!.Open()) { try { IndexDb.Exec(c, "DELETE FROM gif_renditions"); } catch { } }       // the GIF versions went with the files
+        Settings.Save();
+    }
+
+    /// <summary>Move cache (Settings): every cache file is copied to the new folder with progress, then the old ones go.</summary>
+    private void MoveCache()
+    {
+        string to = Settings.PendingCacheMove;
+        try
+        {
+            MovingWhat = "cache"; MoveDone = 0; MoveTotal = 1; Moving = true;
+            Status = "moving the cache to " + to + "...";
+            CacheMigration.MoveAll(Settings.CacheDir, to, (d, t) => { MoveDone = d; MoveTotal = t; }, _cts.Token);
+            Settings.CacheDir = to;
+            Status = "cache moved to " + to;
+        }
+        catch (Exception ex) { Status = "could not move the cache (it stays where it was): " + ex.Message; }
+        finally { Moving = false; MovingWhat = "thumbnails"; Settings.PendingCacheMove = ""; Settings.Save(); }
+    }
+
+    /// <summary>Folders removed in Settings: hidden at once; restored ones come back with the next scan.</summary>
+    public async Task ExcludedChanged(IEnumerable<string> removed, bool anyRestored)
+    {
+        if (Db is null) return;
+        long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        int hidden = 0;
+        foreach (var f in removed) hidden += Db.HideFolder(Settings.LibraryRoot, f, now);
+        if (hidden > 0) { Interlocked.Add(ref _changesSinceView, hidden); DataChanged?.Invoke(); }
+        _watcher?.Dispose(); _watcher = null;
+        if (anyRestored) await Refresh(scan: true, confirmLargeRemoval: false);
+        StartWatcher();
     }
 
     /// <summary>Where the micro/small/full thumbnails are being read from and written to.</summary>

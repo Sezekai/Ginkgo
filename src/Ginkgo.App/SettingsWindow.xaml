@@ -1,17 +1,28 @@
 <Window x:Class="Ginkgo.App.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Settings" Width="620" Height="720" Background="#1C1C20" WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+        Title="Settings" Width="620" Height="720" Background="{StaticResource Bar}" WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
+        FontFamily="{DynamicResource AppFont}" FontSize="{DynamicResource AppFontSize}">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="18" TextBlock.Foreground="#E4E4E8">
+        <StackPanel Margin="18" TextBlock.Foreground="{StaticResource Text}">
             <TextBlock Text="Library" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,6"/>
             <DockPanel Margin="0,0,0,4">
                 <Button DockPanel.Dock="Right" Content="Choose..." Margin="8,0,0,0" Click="OnChooseLibrary"/>
                 <TextBox x:Name="LibraryBox" IsReadOnly="True" VerticalContentAlignment="Center"/>
             </DockPanel>
-            <TextBlock x:Name="CacheLine" Foreground="#9AA0A6" Margin="0,0,0,8" TextWrapping="Wrap"/>
+            <TextBlock x:Name="CacheLine" Foreground="{StaticResource Dim}" Margin="0,0,0,8" TextWrapping="Wrap"/>
             <StackPanel Orientation="Horizontal">
                 <Button Content="Look for changes now" Click="OnRescan"/>
+            </StackPanel>
+            <TextBlock Text="Library folders" FontSize="14" FontWeight="SemiBold" Margin="0,14,0,4"/>
+            <TextBlock TextWrapping="Wrap" Foreground="{StaticResource Dim}" Margin="0,0,0,6"
+                       Text="Untick a folder or subfolder to remove it from Ginkgo (it isn't looked through or counted; your files are never touched). Tick it again to bring it back, with its thumbnails if it was removed in the last 30 days."/>
+            <Border BorderBrush="{StaticResource Edge}" BorderThickness="1" CornerRadius="6" Height="240" Margin="0,0,0,6">
+                <TreeView x:Name="FolderTree" Background="Transparent" BorderThickness="0"/>
+            </Border>
+            <StackPanel Orientation="Horizontal">
+                <Button x:Name="ApplyFoldersBtn" Content="Apply folder changes" IsEnabled="False" Click="OnApplyFolders"/>
+                <TextBlock x:Name="FoldersNote" Foreground="{StaticResource Dim}" VerticalAlignment="Center" Margin="10,0,0,0"/>
             </StackPanel>
 
             <TextBlock Text="Speed and memory" FontSize="16" FontWeight="SemiBold" Margin="0,22,0,6"/>
@@ -30,23 +41,24 @@
                     <ComboBoxItem Content="8 windows" Tag="8"/>
                 </ComboBox>
             </DockPanel>
-            <CheckBox x:Name="WarmBox" Content="Keep the thumbnails in memory (instant lookups; uses free memory, gives it back when other programs need it)" Foreground="#E4E4E8" Margin="0,0,0,6" Click="OnWarmChanged"/>
+            <CheckBox x:Name="WarmBox" Content="Keep the thumbnails in memory (instant lookups; uses free memory, gives it back when other programs need it)" Foreground="{StaticResource Text}" Margin="0,0,0,6" Click="OnWarmChanged"/>
             <TextBlock Text="Look" FontSize="16" FontWeight="SemiBold" Margin="0,16,0,6"/>
             <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                <Button Content="Appearance..." Click="OnAppearance" Margin="0,0,8,0"/>
                 <Button Content="Button look..." Click="OnLook"/>
-                <TextBlock Text="shape, size, colours, outline, glow and shadow of the buttons" Foreground="#9AA0A6" VerticalAlignment="Center" Margin="10,0,0,0"/>
+                <TextBlock Text="themes, colours, fonts and backgrounds; the buttons' shape, outline, glow and shadow" Foreground="{StaticResource Dim}" VerticalAlignment="Center" Margin="10,0,0,0"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
                 <Button Content="Video outlines..." Click="OnOutlines"/>
-                <TextBlock Text="the outlines round paused and watched videos: colour, thickness, glow and which videos" Foreground="#9AA0A6" VerticalAlignment="Center" Margin="10,0,0,0" TextWrapping="Wrap" MaxWidth="400"/>
+                <TextBlock Text="the outlines round paused and watched videos: colour, thickness, glow and which videos" Foreground="{StaticResource Dim}" VerticalAlignment="Center" Margin="10,0,0,0" TextWrapping="Wrap" MaxWidth="400"/>
             </StackPanel>
             <TextBlock Text="Browse" FontSize="16" FontWeight="SemiBold" Margin="0,16,0,6"/>
             <DockPanel Margin="0,0,0,6">
                 <TextBlock x:Name="RadiusText" DockPanel.Dock="Right" Width="44" TextAlignment="Right" VerticalAlignment="Center"/>
                 <Slider x:Name="RadiusSlider" DockPanel.Dock="Right" Width="160" Minimum="0" Maximum="24" IsSnapToTickEnabled="True" TickFrequency="1" Margin="10,0,0,0" VerticalAlignment="Center" ValueChanged="OnRadiusChanged"/>
-                <CheckBox x:Name="RoundBox" Content="Round the corners of the covers in the cover grid" Foreground="#E4E4E8" VerticalAlignment="Center" Click="OnRoundChanged"/>
+                <CheckBox x:Name="RoundBox" Content="Round the corners of the covers in the cover grid" Foreground="{StaticResource Text}" VerticalAlignment="Center" Click="OnRoundChanged"/>
             </DockPanel>
-            <CheckBox x:Name="FadeBox" Content="Fade when a sharper picture replaces a soft one" Foreground="#E4E4E8" Margin="0,0,0,6" Click="OnFadeChanged"/>
+            <CheckBox x:Name="FadeBox" Content="Fade when a sharper picture replaces a soft one" Foreground="{StaticResource Text}" Margin="0,0,0,6" Click="OnFadeChanged"/>
 
             <TextBlock Text="Grid and slideshow" FontSize="16" FontWeight="SemiBold" Margin="0,22,0,6"/>
             <StackPanel x:Name="ViewPanel"/>
@@ -58,7 +70,7 @@
             <StackPanel x:Name="GpuPanel"/>
 
             <TextBlock Text="Sharp pictures" FontSize="16" FontWeight="SemiBold" Margin="0,22,0,6"/>
-            <TextBlock TextWrapping="Wrap" Foreground="#9AA0A6" Margin="0,0,0,6"
+            <TextBlock TextWrapping="Wrap" Foreground="{StaticResource Dim}" Margin="0,0,0,6"
                        Text="Sharp versions are made the first time a large tile needs them and are kept for good. These buttons make them ahead of time. It reads a lot from your drive, so it pauses while you scroll."/>
             <StackPanel Orientation="Horizontal">
                 <Button x:Name="SharpBigBtn" Content="PNGs and files over 3 MB" Click="OnSharpBig"/>
@@ -68,13 +80,19 @@
 
             <TextBlock Text="Cache" FontSize="16" FontWeight="SemiBold" Margin="0,22,0,6"/>
             <TextBlock x:Name="UsageText" FontFamily="Consolas" Margin="0,0,0,6"/>
-            <TextBlock TextWrapping="Wrap" Foreground="#9AA0A6" Margin="0,0,0,6"
+            <TextBlock TextWrapping="Wrap" Foreground="{StaticResource Dim}" Margin="0,0,0,6"
                        Text="Nothing here is ever capped. Thumbnails of files that were confirmed deleted leave unused space in the cache files; Clean up gives it back and leaves everything in use alone."/>
             <StackPanel Orientation="Horizontal">
                 <Button x:Name="MeasureBtn" Content="Measure" Click="OnMeasure"/>
                 <Button x:Name="CleanBtn" Content="Clean up cache" Click="OnClean"/>
+                <Button Content="Move cache..." Click="OnMoveCache" Margin="8,0,0,0" ToolTip="Moves the cache to another folder or drive without making it again (done when Ginkgo next starts, with progress)"/>
             </StackPanel>
-            <TextBlock x:Name="Result" Foreground="#9AA0A6" Margin="0,18,0,0" TextWrapping="Wrap"/>
+
+            <TextBlock Text="Resets" FontSize="16" FontWeight="SemiBold" Margin="0,22,0,6"/>
+            <TextBlock TextWrapping="Wrap" Foreground="{StaticResource Dim}" Margin="0,0,0,6"
+                       Text="Each one asks first. None of them touches your library's files."/>
+            <WrapPanel x:Name="ResetPanel"/>
+            <TextBlock x:Name="Result" Foreground="{StaticResource Dim}" Margin="0,18,0,0" TextWrapping="Wrap"/>
             <Button Content="Close" Width="90" HorizontalAlignment="Right" Margin="0,18,0,0" Click="OnClose"/>
         </StackPanel>
     </ScrollViewer>

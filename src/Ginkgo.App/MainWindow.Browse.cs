@@ -193,7 +193,7 @@ public partial class MainWindow
             var parts = _folder.Split('\\');
             for (int k = 0; k < parts.Length; k++)
             {
-                Crumbs.Children.Add(new TextBlock { Text = "", FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"), FontSize = 9, Foreground = (System.Windows.Media.Brush)FindResource("Dim"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 4, 0) });
+                Crumbs.Children.Add(new TextBlock { Text = "", FontFamily = ThemeKit.IconFamily, FontSize = 9, Foreground = (System.Windows.Media.Brush)FindResource("Dim"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 4, 0) });
                 AddCrumb(parts[k], string.Join('\\', parts.Take(k + 1)), k == parts.Length - 1);
             }
         }

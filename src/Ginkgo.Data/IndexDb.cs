@@ -101,6 +101,33 @@ public sealed class IndexDb
         }
     }
 
+    /// <summary>
+    /// The library moved (a new drive letter, or copied elsewhere): every path is changed from the old folder to the new one, so files
+    /// are matched by their place inside the library and keep their thumbnails and everything else. Returns how many changed.
+    /// </summary>
+    public int Relocate(string oldRoot, string newRoot)
+    {
+        string a = System.IO.Path.GetFullPath(oldRoot).TrimEnd('\\', '/') + System.IO.Path.DirectorySeparatorChar;
+        string b = System.IO.Path.GetFullPath(newRoot).TrimEnd('\\', '/') + System.IO.Path.DirectorySeparatorChar;
+        if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase)) return 0;
+        using var c = Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "UPDATE OR IGNORE files SET path = $b || substr(path, length($a) + 1) WHERE substr(path, 1, length($a)) = $a COLLATE NOCASE";
+        cmd.Parameters.AddWithValue("$a", a); cmd.Parameters.AddWithValue("$b", b);
+        return cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>Hides every file in a removed folder at once (they come back, with their thumbnails, if the folder is restored).</summary>
+    public int HideFolder(string root, string relFolder, long now)
+    {
+        string p = System.IO.Path.GetFullPath(System.IO.Path.Combine(root, relFolder)).TrimEnd('\\', '/') + System.IO.Path.DirectorySeparatorChar;
+        using var c = Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "UPDATE files SET missing_since=$now WHERE missing_since=0 AND substr(path, 1, length($p)) = $p COLLATE NOCASE";
+        cmd.Parameters.AddWithValue("$p", p); cmd.Parameters.AddWithValue("$now", now);
+        return cmd.ExecuteNonQuery();
+    }
+
     public SqliteConnection Open()
     {
         var c = new SqliteConnection($"Data Source={Path}");

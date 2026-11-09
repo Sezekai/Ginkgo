@@ -24,7 +24,7 @@ public sealed class OptimisePanel : Border
     private readonly WrapPanel _capRow = new();
     private readonly System.Windows.Threading.DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(700) };
 
-    private static readonly Brush Dim = Frozen("#B5BAC0"), Txt = Frozen("#E4E4E8"), Line = Frozen("#2E2E36");
+    private static readonly Brush Dim = ThemeKit.Brush("Dim"), Txt = ThemeKit.Brush("Text"), Line = ThemeKit.Brush("Edge");
     private static Brush Frozen(string hex) { var b = (SolidColorBrush)new BrushConverter().ConvertFromString(hex)!; b.Freeze(); return b; }
 
     public static readonly double[] CapChoices = { 0, 0.5, 1, 2, 4, 8, 16 };
@@ -43,10 +43,10 @@ public sealed class OptimisePanel : Border
     public OptimisePanel(AppSettings s, CacheWarmer warmer)
     {
         _s = s; _warmer = warmer;
-        Background = Frozen("#1C1C20"); BorderBrush = Frozen("#3A3A42"); BorderThickness = new Thickness(1); CornerRadius = new CornerRadius(10);
+        Background = ThemeKit.Brush("Bar"); BorderBrush = ThemeKit.Brush("Edge"); BorderThickness = new Thickness(1); CornerRadius = new CornerRadius(10);
         Padding = new Thickness(16, 14, 16, 14); Width = 420;
         // the pop-out takes its font from the button it hangs from, which is an icon font: set the normal one
-        TextElement.SetFontFamily(this, new FontFamily("Segoe UI")); TextElement.SetFontSize(this, 12);
+        TextElement.SetFontFamily(this, (FontFamily)Application.Current.Resources["AppFont"]); TextElement.SetFontSize(this, 12);
         Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 14, ShadowDepth = 3, Opacity = 0.55 };
 
         var stack = new StackPanel();

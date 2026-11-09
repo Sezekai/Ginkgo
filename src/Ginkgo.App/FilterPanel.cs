@@ -21,15 +21,15 @@ public sealed class FilterPanel : Border
     private List<(string ext, int count)> _formatList = new();
     private bool _syncing;
 
-    private static readonly Brush Dim = Frozen("#B5BAC0"), Txt = Frozen("#E4E4E8"), Line = Frozen("#2E2E36");
+    private static readonly Brush Dim = ThemeKit.Brush("Dim"), Txt = ThemeKit.Brush("Text"), Line = ThemeKit.Brush("Edge");
     private static Brush Frozen(string hex) { var b = (SolidColorBrush)new BrushConverter().ConvertFromString(hex)!; b.Freeze(); return b; }
 
     public FilterPanel(FilterSet f)
     {
         _f = f;
-        Background = Frozen("#1C1C20"); BorderBrush = Frozen("#3A3A42"); BorderThickness = new Thickness(1); CornerRadius = new CornerRadius(10);
+        Background = ThemeKit.Brush("Bar"); BorderBrush = ThemeKit.Brush("Edge"); BorderThickness = new Thickness(1); CornerRadius = new CornerRadius(10);
         Width = 460;
-        TextElement.SetFontFamily(this, new FontFamily("Segoe UI")); TextElement.SetFontSize(this, 12);
+        TextElement.SetFontFamily(this, (FontFamily)Application.Current.Resources["AppFont"]); TextElement.SetFontSize(this, 12);
         Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 14, ShadowDepth = 3, Opacity = 0.55 };
         var stack = new StackPanel { Margin = new Thickness(16, 14, 16, 14) };
         Child = new ScrollViewer { Content = stack, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = 700 };

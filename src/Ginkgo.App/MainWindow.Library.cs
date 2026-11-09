@@ -116,7 +116,7 @@ public partial class MainWindow
         {
             var row = new StackPanel { Orientation = Orientation.Horizontal };
             row.Children.Add(new TextBlock { Text = text, Foreground = (Brush)FindResource("Text"), VerticalAlignment = VerticalAlignment.Center });
-            var x = new TextBlock { Text = "", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 9, Margin = new Thickness(8, 1, 0, 0), VerticalAlignment = VerticalAlignment.Center, Foreground = (Brush)FindResource("Dim") };
+            var x = new TextBlock { Text = "", FontFamily = ThemeKit.IconFamily, FontSize = 9, Margin = new Thickness(8, 1, 0, 0), VerticalAlignment = VerticalAlignment.Center, Foreground = (Brush)FindResource("Dim") };
             row.Children.Add(x);
             var chip = new Border
             {

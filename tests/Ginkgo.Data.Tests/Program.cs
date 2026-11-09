@@ -727,6 +727,41 @@ Check(again.BackfillTotal == 0, "backfill has nothing left");
     Check(vr.IsLow(true, 640, 360, 1, 10) && !vr.IsLow(true, 1280, 720, 1, 10) && !vr.IsLow(false, 10, 10, 1, 0), "video resolution tests videos only");
 }
 
+
+// ---- removed folders, a moved library, moving the cache ----
+{
+    var rlib = Path.Combine(tmp, "RemLib");
+    void W(string rel) { var p = Path.Combine(rlib, rel); Directory.CreateDirectory(Path.GetDirectoryName(p)!); File.WriteAllBytes(p, new byte[100 + rel.Length]); }
+    W("Average & LQ/Real/Photos/a.jpg"); W("Average & LQ/Real/b.jpg"); W("Average & LQ/c.jpg"); W("Games/d.jpg");
+    for (int k = 0; k < 300; k++) W($"Big/f{k}.jpg");
+    var rdb = new IndexDb(Path.Combine(tmp, "remdata", "index.db"));
+    var opts = new ScanOptions { FileIds = null };
+    LibraryScanner.Scan(rdb, rlib, Array.Empty<string>(), null, CancellationToken.None, opts);
+    long Shown() { using var c = rdb.Open(); return IndexDb.Scalar(c, "SELECT COUNT(*) FROM files WHERE missing_since=0"); }
+    Check(Shown() == 304, "all files at first");
+    var r1 = LibraryScanner.Scan(rdb, rlib, new[] { @"Average & LQ\Real" }, null, CancellationToken.None, opts);
+    Check(Shown() == 302 && r1.Added == 0, $"a removed subfolder's files are hidden, the rest stay ({Shown()})");
+    var r2 = LibraryScanner.Scan(rdb, rlib, new[] { "Big" }, null, CancellationToken.None, opts);
+    Check(!r2.SafetyTripped && Shown() == 4, $"removing a big folder on purpose doesn't trip the safety check ({Shown()})");
+    LibraryScanner.Scan(rdb, rlib, Array.Empty<string>(), null, CancellationToken.None, opts);
+    Check(Shown() == 304, "restored folders come back");
+    Check(rdb.HideFolder(rlib, "Games", 1) == 1 && Shown() == 303, "a folder can be hidden at once");
+
+    // the library on a new drive letter: paths move, nothing is added again
+    var moved = Path.Combine(tmp, "RemLib2");
+    Directory.Move(rlib, moved);
+    Check(rdb.Relocate(rlib, moved) == 304, "every path moves to the new place");
+    var r3 = LibraryScanner.Scan(rdb, moved, Array.Empty<string>(), null, CancellationToken.None, opts);
+    Check(r3.Added == 0 && r3.Restored == 1, $"a scan of the new place finds the same files ({r3.Added} added, {r3.Restored} back)");
+
+    // the cache moves as a whole
+    var c1 = Path.Combine(tmp, "cacheA"); var c2 = Path.Combine(tmp, "cacheB");
+    Directory.CreateDirectory(Path.Combine(c1, "sub"));
+    File.WriteAllBytes(Path.Combine(c1, "full-00000.bin"), new byte[5000]); File.WriteAllBytes(Path.Combine(c1, "sub", "x.json"), new byte[10]);
+    long last = 0; CacheMigration.MoveAll(c1, c2, (d, t) => last = t, CancellationToken.None);
+    Check(File.Exists(Path.Combine(c2, "full-00000.bin")) && File.Exists(Path.Combine(c2, "sub", "x.json")) && !File.Exists(Path.Combine(c1, "full-00000.bin")) && last == 5010, "the cache moves whole, with progress");
+}
+
 // ---- videos (only where ffmpeg and ffprobe are available, as on the build machine) ----
 VideoTools.Disabled = false;
 if (VideoTools.Available)

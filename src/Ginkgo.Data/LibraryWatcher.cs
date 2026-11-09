@@ -57,6 +57,8 @@ public sealed class LibraryWatcher : IDisposable
         if (rel == ".") rel = "";
         string top = rel.Split('\\', '/')[0];
         if (_excluded.Contains(top) && rel.Length > 0) return;
+        string relB = rel.Replace('/', '\\');
+        foreach (var e in _excluded) if (e.Contains('\\') && (relB.Equals(e, StringComparison.OrdinalIgnoreCase) || relB.StartsWith(e + "\\", StringComparison.OrdinalIgnoreCase))) return;
         // something that no longer exists could have been a file or a folder: look at it as a folder and at its parent
         bool exists = isDir.HasValue || Directory.Exists(full) || File.Exists(full);
         bool dir = isDir ?? (Directory.Exists(full) || !exists);

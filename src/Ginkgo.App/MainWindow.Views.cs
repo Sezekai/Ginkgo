@@ -255,7 +255,7 @@ public partial class MainWindow
             var v = _saved[k]; int at = k;
             var item = new ToggleButton { Style = (Style)FindResource("SideItem"), ToolTip = Describe(v) };
             var dp = new DockPanel();
-            dp.Children.Add(new TextBlock { Text = "", FontFamily = new FontFamily("Segoe MDL2 Assets"), Width = 30, FontSize = 14, VerticalAlignment = VerticalAlignment.Center, Foreground = new SolidColorBrush(Color.FromRgb(0xB8, 0xB8, 0xC2)) });
+            dp.Children.Add(new TextBlock { Text = "", FontFamily = ThemeKit.IconFamily, Width = 30, FontSize = 14, VerticalAlignment = VerticalAlignment.Center, Foreground = new SolidColorBrush(Color.FromRgb(0xB8, 0xB8, 0xC2)) });
             dp.Children.Add(new TextBlock { Text = v.Name, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
             item.Content = dp;
             item.Click += async (_, _) => { item.IsChecked = false; SetSidebar(false); await ApplyView(_saved[at].Copy(), go: true); StatusText.Text = $"“{_saved[at].Name}”"; };
@@ -301,7 +301,7 @@ public partial class MainWindow
         var w = new Window
         {
             Title = title, Content = panel, SizeToContent = SizeToContent.WidthAndHeight, ResizeMode = ResizeMode.NoResize, Owner = this,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner, Background = new SolidColorBrush(Color.FromRgb(0x1C, 0x1C, 0x20)), ShowInTaskbar = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner, Background = ThemeKit.Brush("Bar"), ShowInTaskbar = false,
         };
         Theme.DarkTitleBar(w);
         ok.Click += (_, _) => w.DialogResult = true;

@@ -46,14 +46,14 @@ public sealed class FolderPanel : Border
     private bool _painting, _paintOn;
 
     private static readonly Brush On = Frozen("#3E7A48"), OnHover = Frozen("#4B9058"), OffB = Frozen("#2A2A30"), OffHover = Frozen("#36363E"),
-        Part = Frozen("#8A6A2A"), PartHover = Frozen("#A07C31"), Txt = Frozen("#E4E4E8"), TxtOff = Frozen("#8D939A"), Dim = Frozen("#B5BAC0");
+        Part = Frozen("#8A6A2A"), PartHover = Frozen("#A07C31"), Txt = ThemeKit.Brush("Text"), TxtOff = Frozen("#8D939A"), Dim = ThemeKit.Brush("Dim");
     private static readonly Brush[] DepthEdge = { Frozen("#00000000"), Frozen("#6C9BD2"), Frozen("#B58BD6"), Frozen("#D6AC6C"), Frozen("#6CC4B4") };
     private static Brush Frozen(string hex) { var b = (SolidColorBrush)new BrushConverter().ConvertFromString(hex)!; b.Freeze(); return b; }
 
     public FolderPanel(string sort, bool reverse)
     {
         _sort = sort; _reverse = reverse;
-        Background = Frozen("#1C1C20"); BorderBrush = Frozen("#3A3A42"); BorderThickness = new Thickness(1); CornerRadius = new CornerRadius(6);
+        Background = ThemeKit.Brush("Bar"); BorderBrush = ThemeKit.Brush("Edge"); BorderThickness = new Thickness(1); CornerRadius = new CornerRadius(6);
         Padding = new Thickness(12); Width = 640;
 
         foreach (var (label, key) in new[] { ("Name", "Name"), ("Number of files", "Files"), ("Size on disk", "Size"), ("Newest added", "Newest") })
@@ -292,7 +292,7 @@ public sealed class FolderPanel : Border
         {
             var arrow = new TextBlock
             {
-                Text = open ? "\uE70D" : "\uE76C", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 10, Foreground = Txt,
+                Text = open ? "\uE70D" : "\uE76C", FontFamily = ThemeKit.IconFamily, FontSize = 10, Foreground = Txt,
                 VerticalAlignment = VerticalAlignment.Center, Padding = new Thickness(7, 6, 7, 6), Margin = new Thickness(-8, -4, 2, -4),
                 Background = Brushes.Transparent, Cursor = Cursors.Hand, ToolTip = open ? "Close subfolders" : "Show subfolders"
             };

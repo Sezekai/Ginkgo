@@ -41,7 +41,21 @@ public static class LibraryScanner
         var opt = options ?? new ScanOptions();
         var started = DateTime.UtcNow;
         if (!Directory.Exists(root)) return new ScanResult(0, 0, 0, 0, 0, RootMissing: true);   // drive unplugged: change nothing
-        var excluded = new HashSet<string>(excludedTop, StringComparer.OrdinalIgnoreCase);
+        // removed folders: top-level names, or deeper paths relative to the library ("Average & LQ\Real\Photos")
+        var excludedAll = excludedTop.Select(e => e.Replace('/', '\\').Trim('\\')).Where(e => e.Length > 0).ToList();
+        var excluded = new HashSet<string>(excludedAll.Where(e => !e.Contains('\\')), StringComparer.OrdinalIgnoreCase);
+        var excludedDeep = excludedAll.Where(e => e.Contains('\\')).Select(e => e + "\\").ToList();
+        string rootFull = Path.GetFullPath(root).TrimEnd('\\', '/') + Path.DirectorySeparatorChar;
+        bool Excluded(string fullPath)
+        {
+            if (excludedDeep.Count == 0 && excluded.Count == 0) return false;
+            if (!fullPath.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase)) return false;
+            string rel = fullPath.Substring(rootFull.Length).Replace('/', '\\');
+            int cut = rel.IndexOf('\\');
+            if (cut > 0 && excluded.Contains(rel[..cut])) return true;
+            foreach (var d in excludedDeep) if (rel.StartsWith(d, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
         using var conn = db.Open();
 
         string sep = Path.DirectorySeparatorChar.ToString();
@@ -105,6 +119,7 @@ public static class LibraryScanner
         void Visit(FileInfo fi)
         {
             if (!MediaTypes.TryGetKind(fi.Extension, out var kind)) return;
+            if (excludedDeep.Count > 0 && Excluded(fi.FullName)) return;
             string full = fi.FullName;
             seen.Add(full);
             long size = fi.Length, mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
@@ -166,13 +181,14 @@ public static class LibraryScanner
         }
 
         // ---- what disappeared
-        var gone = new List<Row>();
+        var gone = new List<Row>(); var removedOnPurpose = new List<Row>();
         int activeInScope = 0;
         foreach (var row in existing.Values)
         {
             if (!InScope(row.Path)) continue;
             if (row.MissingSince == 0) activeInScope++;
-            if (!seen.Contains(row.Path) && !claimed.Contains(row.Id) && row.MissingSince == 0) gone.Add(row);
+            // a removed folder's files are hidden as gone, but don't count towards the safety check (they were removed on purpose)
+            if (!seen.Contains(row.Path) && !claimed.Contains(row.Id) && row.MissingSince == 0) { if (Excluded(row.Path)) removedOnPurpose.Add(row); else gone.Add(row); }
         }
         bool trip = !opt.AcceptLargeRemoval && activeInScope > 0 &&
             ((gone.Count >= opt.SafetyMinCount && gone.Count > opt.SafetyFraction * activeInScope) || (scopeFull is null && seen.Count == 0));
@@ -254,7 +270,7 @@ public static class LibraryScanner
                 cmd.CommandText = "UPDATE files SET missing_since=$now WHERE id=$id AND missing_since=0";
                 cmd.Parameters.AddWithValue("$now", now);
                 var pi = cmd.Parameters.Add("$id", SqliteType.Integer);
-                foreach (var g in gone) { pi.Value = g.Id; cmd.ExecuteNonQuery(); }
+                foreach (var g in gone.Concat(removedOnPurpose)) { pi.Value = g.Id; cmd.ExecuteNonQuery(); }
             }
 
             // confirmed gone: missing for longer than the grace period, and only judged on a trustworthy full scan
