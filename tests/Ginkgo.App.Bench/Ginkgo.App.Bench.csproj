@@ -20,6 +20,7 @@
     <Compile Include="..\..\src\Ginkgo.App\GifPlayer.cs" Link="GifPlayer.cs" />
     <Compile Include="..\..\src\Ginkgo.App\VideoEngine.cs" Link="VideoEngine.cs" />
     <Compile Include="..\..\src\Ginkgo.App\AudioMix.cs" Link="AudioMix.cs" />
+    <Compile Include="..\..\src\Ginkgo.App\Mp4Probe.cs" Link="Mp4Probe.cs" />
     <Compile Include="..\..\src\Ginkgo.App\VideoTimeline.cs" Link="VideoTimeline.cs" />
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="LibVLCSharp" Version="3.9.1" />
