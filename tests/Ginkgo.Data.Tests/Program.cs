@@ -591,7 +591,7 @@ Check(again.BackfillTotal == 0, "backfill has nothing left");
     W("Favourites/lonely.jpg", Bytes(4000, 4));        // a favourite with no original
     var fdb = new IndexDb(Path.Combine(tmp, "favdata", "index.db"));
     LibraryScanner.Scan(fdb, flib, Array.Empty<string>(), null, CancellationToken.None, new ScanOptions { FileIds = null });
-    long IdOf(string rel) { using var c = fdb.Open(); using var cmd = c.CreateCommand(); cmd.CommandText = "SELECT id FROM files WHERE path=$p"; cmd.Parameters.AddWithValue("$p", Path.Combine(flib, rel)); return (long)cmd.ExecuteScalar()!; }
+    long IdOf(string rel) { using var c = fdb.Open(); using var cmd = c.CreateCommand(); cmd.CommandText = "SELECT id FROM files WHERE path=$p"; cmd.Parameters.AddWithValue("$p", Path.GetFullPath(Path.Combine(flib, rel.Replace('/', Path.DirectorySeparatorChar)))); return (long)cmd.ExecuteScalar()!; }
 
     var prog = new FavProgress();
     var st = FavouriteIndex.Sync(fdb, fav, prog);
