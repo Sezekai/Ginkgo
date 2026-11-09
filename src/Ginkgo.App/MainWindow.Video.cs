@@ -22,7 +22,6 @@ public partial class MainWindow
     {
         public int Index; public long Id; public VideoEngine E = null!; public long Order;
         public bool HoverPlay;               // playing only while the mouse is on it (it was paused)
-        public bool MutedBefore;             // its own sound setting, put back when the hover ends
         public bool SoundTouched;            // you changed its sound during the hover: that stays
     }
     private readonly List<GridVid> _gridVids = new();
@@ -84,10 +83,20 @@ public partial class MainWindow
     {
         ThreadPool.QueueUserWorkItem(_ => { VideoEngine.Warm(); AudioDevice.Start(); });   // the player and the sound output, ready early
         View.VideoMuteClicked += i => { if (i == _previewIdx) _previewSoundTouched = true; if (_hoverPlay is { } hp && hp.Index == i) hp.SoundTouched = true; if (EngineAt(i) is { } e) { e.Muted = !e.Muted; if (!e.Muted && e.Volume == 0) e.Volume = _vpos.Volume; View.Refresh(); } };
-        View.VideoVolume += (i, v) => { if (i == _previewIdx) _previewSoundTouched = true; if (_hoverPlay is { } hp && hp.Index == i) hp.SoundTouched = true; if (EngineAt(i) is { } e) { e.Volume = v; if (e.Muted && v > 0) e.Muted = false; View.Refresh(); } };
+        View.VideoVolume += (i, v) =>
+        {
+            if (i == _previewIdx) _previewSoundTouched = true;
+            if (_hoverPlay is { } hp && hp.Index == i) hp.SoundTouched = true;
+            if (EngineAt(i) is { } e) { e.Volume = v; if (e.Muted && v > 0) e.Muted = false; View.Refresh(); }
+            _vpos.SetVolumeOf(TileId(i), v);           // this video plays at this volume from now on (grid or preview)
+        };
         View.VideoSeek += (i, f, final) =>
         {
-            if (EngineAt(i) is { } e && e.LengthSec > 0) e.Seek(f * e.LengthSec);
+            if (EngineAt(i) is { } e && e.LengthSec > 0)
+            {
+                if (!final) { e.BeginScrub(); e.Seek(f * e.LengthSec); }
+                else e.EndScrub(f * e.LengthSec);
+            }
             View.Refresh();
         };
         View.VideoInfo = i =>
@@ -108,7 +117,12 @@ public partial class MainWindow
         CompositionTarget.Rendering += OnVideoRendering;
         SyncVolumeSlider();
         VTimeline.Source = () => (_vEngine is { } e && e.LengthSec > 0 ? e.SmoothPositionSec / e.LengthSec : 0, _vEngine?.LengthSec ?? 0);
-        VTimeline.SeekTo += (f, final) => { if (_vEngine is { } e && e.LengthSec > 0) e.Seek(f * e.LengthSec); };
+        VTimeline.SeekTo += (f, final) =>
+        {
+            if (_vEngine is not { } e || e.LengthSec <= 0) return;
+            if (!final) { e.BeginScrub(); e.Seek(f * e.LengthSec); }
+            else e.EndScrub(f * e.LengthSec);
+        };
         ViewerRoot.PreviewMouseMove += (_, e) =>
         {
             var p = e.GetPosition(ViewerRoot);
@@ -126,6 +140,10 @@ public partial class MainWindow
             AudioDevice.Stop();
         };
     }
+
+    /// <summary>A video's own volume if you've set one on its tile, else the volume set in the viewer.</summary>
+    private int VolumeOf(long id) => _vpos.VolumeOf(id) ?? _vpos.Volume;
+    private long PixelsOf(int i) => _model is not null && i >= 0 && i < _order.Length && _order[i] >= 0 ? (long)_model.W[_order[i]] * _model.H[_order[i]] : 0;
 
     /// <summary>The player showing in tile i (a grid video or the preview).</summary>
     private VideoEngine? EngineAt(int i) => _gridVids.Find(x => x.Index == i)?.E ?? (_previewIdx == i ? _preview : null);
@@ -200,7 +218,6 @@ public partial class MainWindow
 
     private void PauseGrid(GridVid g)
     {
-        if (g.HoverPlay && !g.SoundTouched) g.E.Muted = g.MutedBefore;     // a hover ending this way gets its own sound back too
         // not carrying on where you left off: pausing stops it, and the tile is a thumbnail like the rest again
         if (!_settings.ResumeVideos) { ReleaseGrid(g); return; }
         if (g.E.Playing) g.E.SetPaused(true);
@@ -213,8 +230,10 @@ public partial class MainWindow
     {
         MakeRoom(g);
         g.Order = ++_vidOrder;
+        bool keepSound = g.HoverPlay && g.SoundTouched;     // sound you set while hovering stays
         g.HoverPlay = false;
         _sessPaused.Remove(g.Id);
+        if (!keepSound) { g.E.Muted = _settings.GridStartMuted; g.E.Volume = VolumeOf(g.Id); }
         if (g.E.Paused) g.E.TogglePause();
     }
 
@@ -229,7 +248,7 @@ public partial class MainWindow
         var g = _gridVids.Find(x => x.Index == i);
         if (g is not null)
         {
-            if (g.HoverPlay) { if (_hoverPlay == g) _hoverPlay = null; if (!g.SoundTouched) g.E.Muted = g.MutedBefore; PlayGrid(g); }          // playing because the mouse is on it: keep it playing
+            if (g.HoverPlay) { if (_hoverPlay == g) _hoverPlay = null; PlayGrid(g); }          // playing because the mouse is on it: keep it playing
             else if (g.E.Playing) { PauseGrid(g); _clickPausedAt = Stopwatch.GetTimestamp(); _clickPausedIdx = i; }
             else PlayGrid(g);
             UpdateVideoButtons(); View.Refresh();
@@ -251,9 +270,10 @@ public partial class MainWindow
             if (_previewIdx >= 0) StopPreview();
             e = NewEngine();
             e.Loop = true;
-            if (!e.Play(id, _model!.Path[_order[i]], saved, _settings.GridStartMuted, 1280, 1280, preview: false)) { OnVideoFailed(e, id); return; }
+            e.Volume = VolumeOf(id);
+            if (!e.Play(id, _model!.Path[_order[i]], saved, _settings.GridStartMuted, 1280, 1280, preview: false, srcPixels: PixelsOf(i))) { OnVideoFailed(e, id); return; }
         }
-        if (!keepSound) e.Muted = _settings.GridStartMuted;
+        if (!keepSound) { e.Muted = _settings.GridStartMuted; e.Volume = VolumeOf(id); }
         g = new GridVid { Index = i, Id = id, E = e, Order = ++_vidOrder };
         _sessPaused.Remove(id);
         MakeRoom(g);
@@ -323,8 +343,9 @@ public partial class MainWindow
             if (!g.E.Playing && !g.E.AtEnd)
             {
                 // it plays like a preview: with or without sound as Quick toggles says for previews
-                g.MutedBefore = g.E.Muted; g.SoundTouched = false;
+                g.SoundTouched = false;
                 g.E.Muted = !_settings.PreviewSound;
+                g.E.Volume = VolumeOf(g.Id);
                 g.E.SetPaused(false); g.HoverPlay = true; _hoverPlay = g; _sessPaused.Remove(g.Id); View.Refresh();
             }
             return;
@@ -339,7 +360,6 @@ public partial class MainWindow
     {
         var g = _hoverPlay; _hoverPlay = null;
         if (g is null || !g.HoverPlay || !_gridVids.Contains(g)) return;
-        if (!g.SoundTouched) g.E.Muted = g.MutedBefore;
         PauseGrid(g);
         View.Refresh();
     }
@@ -352,10 +372,10 @@ public partial class MainWindow
         long id = TileId(i);
         _preview ??= NewEngine();
         _preview.Loop = true;
-        _preview.Volume = _vpos.Volume;
+        _preview.Volume = VolumeOf(id);
         // a video paused earlier carries on from where it was paused; others from the start
         double from = _settings.ResumeVideos && _sessPaused.TryGetValue(id, out var p) ? p : 0;
-        if (!_preview.Play(id, _model!.Path[_order[i]], from, muted: !_settings.PreviewSound, 960, 960, preview: true)) return;
+        if (!_preview.Play(id, _model!.Path[_order[i]], from, muted: !_settings.PreviewSound, 960, 960, preview: true, srcPixels: PixelsOf(i))) return;
         _previewIdx = i; _previewId = id; _previewSoundTouched = false;
         View.SetVideo(i, _preview, controls: true);
     }
@@ -532,7 +552,8 @@ public partial class MainWindow
             {
                 var e = NewEngine();
                 e.Loop = true;
-                if (e.Play(id, _model!.Path[_order[idx]], at, _settings.GridStartMuted, 1280, 1280, preview: false, startPaused: true))
+                e.Volume = VolumeOf(id);
+                if (e.Play(id, _model!.Path[_order[idx]], at, _settings.GridStartMuted, 1280, 1280, preview: false, startPaused: true, srcPixels: PixelsOf(idx)))
                 {
                     g = new GridVid { Index = idx, Id = id, E = e, Order = ++_vidOrder };
                     MakeRoom(g);
@@ -571,7 +592,7 @@ public partial class MainWindow
         _vEngine.SetRate(_viewerRate);
         _vEngine.Volume = _vpos.Volume;
         _viewerVideo = true; _vSeq = -1; _vBmp = null;
-        if (!_vEngine.Play(id, path, start, _viewerMuted, fw, fh, preview: false)) { OnVideoFailed(_vEngine, id); return; }
+        if (!_vEngine.Play(id, path, start, _viewerMuted, fw, fh, preview: false, srcPixels: (long)m.W[row] * m.H[row])) { OnVideoFailed(_vEngine, id); return; }
         VideoBar.Visibility = Visibility.Visible;
         long now = Stopwatch.GetTimestamp();
         _ctrlFlashUntil = now + Ms(1); _infoFlashUntil = now + Ms(1);

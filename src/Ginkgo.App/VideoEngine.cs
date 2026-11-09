@@ -53,6 +53,7 @@ public sealed class VideoEngine : IDisposable
     /// <summary>Frames shown since the file started (to tell "watched a bit" from "passed by").</summary>
     public int FramesShown => _frameSeq - _seqAtStart;
     private int _seqAtStart;
+    private long _srcPixels;
     private volatile bool _trustFirstReport;
     private long _startTick;
 
@@ -141,8 +142,9 @@ public sealed class VideoEngine : IDisposable
     /// Plays a file from <paramref name="startSec"/>, decoding at most <paramref name="maxW"/> x <paramref name="maxH"/> (a tile
     /// doesn't need full HD frames). Replaces whatever this player was playing. Returns at once; the file opens on the player's thread.
     /// </summary>
-    public bool Play(long fileId, string path, double startSec, bool muted, int maxW, int maxH, bool preview, bool startPaused = false)
+    public bool Play(long fileId, string path, double startSec, bool muted, int maxW, int maxH, bool preview, bool startPaused = false, long srcPixels = 0)
     {
+        _srcPixels = srcPixels;
         if (!Ensure()) return false;
         int g = ++_gen;
         _maxW = Math.Max(64, maxW); _maxH = Math.Max(64, maxH);
@@ -165,6 +167,9 @@ public sealed class VideoEngine : IDisposable
             try { mp.Stop(); } catch { }
             _media?.Dispose();
             _media = new Media(s_vlc!, path, FromType.FromPath);
+            // up to full HD the processor decodes (quick to restart after a jump, and the frames come to memory anyway); bigger
+            // videos use the graphics card
+            if (_srcPixels > 0 && _srcPixels <= 1920L * 1088) _media.AddOption(":avcodec-hw=none");
             if (StartSec > 0.5)
             {
                 // starting part way: LibVLC opens the file, shows its very first picture, then jumps. That first picture is kept off
@@ -227,6 +232,8 @@ public sealed class VideoEngine : IDisposable
         ResetClock(now, pause);
         int g = _gen;
         if (!pause) _pauseOnFirstFrame = false;
+        // the sound stops (and starts) now, not when LibVLC gets to it; LibVLC's own word on it then changes nothing
+        if (pause) _audio.Pause(AudioMixer.Now()); else _audio.Resume(AudioMixer.Now());
         Post(() => { if (g == _gen && _runningGen == g) _mp!.SetPause(pause); });
     }
     public void TogglePause()
@@ -326,7 +333,7 @@ public sealed class VideoEngine : IDisposable
             if (mp.State == VLCState.Ended) { mp.Stop(); _media?.AddOption($":start-time={_seekTo.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)}"); mp.Play(_media!); if (_pausedWanted) mp.SetPause(true); return; }
             double to = _seekTo;
             if (_pausedWanted) ShowFrameAt(mp, g, to);
-            else mp.Time = (long)(to * 1000);
+            else JumpPlaying(mp, g, to);
         });
     }
     /// <summary>
@@ -342,7 +349,7 @@ public sealed class VideoEngine : IDisposable
             long t0 = Stopwatch.GetTimestamp();
             mp.Time = (long)(to * 1000);
             mp.SetPause(false);
-            long until = t0 + Stopwatch.Frequency * 3 / 2;
+            long until = t0 + Stopwatch.Frequency * 4;
             int seqAfter = -1;
             while (Stopwatch.GetTimestamp() < until && g == _gen && _pausedWanted)
             {
@@ -358,6 +365,52 @@ public sealed class VideoEngine : IDisposable
         }
         finally { _peeking = false; ApplySound(); }
     }
+    /// <summary>
+    /// Player thread. A jump while playing: the sound waits (silent) until the picture from the new time is up, so you never hear
+    /// the new place over the old picture.
+    /// </summary>
+    private void JumpPlaying(MediaPlayer mp, int g, double to)
+    {
+        _peeking = true; ApplySound();
+        try
+        {
+            int fl0 = Volatile.Read(ref _flushes);
+            long t0 = Stopwatch.GetTimestamp();
+            mp.Time = (long)(to * 1000);
+            int seqAfter = -1;
+            while (Stopwatch.GetTimestamp() - t0 < Stopwatch.Frequency * 3 && g == _gen && !_pausedWanted)
+            {
+                Thread.Sleep(3);
+                bool jumped = Volatile.Read(ref _flushes) != fl0 || Stopwatch.GetTimestamp() - t0 > Stopwatch.Frequency / 4;
+                if (jumped && seqAfter < 0) seqAfter = _frameSeq;
+                if (seqAfter >= 0 && _frameSeq > seqAfter) break;
+                if (_seekQueued == 1) break;
+            }
+        }
+        finally { _peeking = false; ApplySound(); }
+    }
+
+    // ---- dragging along the progress line: the video holds still (silent) while you drag, and carries on when you let go ----
+    private bool _scrubResume;
+    public bool Scrubbing { get; private set; }
+    public void BeginScrub()
+    {
+        if (Scrubbing || FileId < 0) return;
+        Scrubbing = true;
+        _scrubResume = Playing;
+        if (_scrubResume) SetPaused(true);
+    }
+    public void EndScrub(double sec)
+    {
+        if (!Scrubbing) return;
+        Scrubbing = false;
+        // the picture is already at the last place dragged to: only a different place needs another jump (a second jump to
+        // the same place is what made a word play twice)
+        bool again = Math.Abs(sec - _seekTo) > 0.02;
+        if (_scrubResume) SetPaused(false);
+        if (again) Seek(sec);
+    }
+
     private volatile bool _peeking;
     private int _flushes, _flushAtStart;
     private long _hideUntil;
@@ -531,7 +584,7 @@ public sealed class VideoPositions
             if (System.IO.File.Exists(_path))
             {
                 var d = System.Text.Json.JsonSerializer.Deserialize<Saved>(System.IO.File.ReadAllText(_path));
-                if (d is not null) { _pos = d.Positions ?? new(); _volume = d.Volume; _watched = d.Watched is null ? new() : new HashSet<long>(d.Watched); }
+                if (d is not null) { _pos = d.Positions ?? new(); _volume = d.Volume; _watched = d.Watched is null ? new() : new HashSet<long>(d.Watched); _vols = d.Volumes ?? new(); }
             }
         }
         catch { }
@@ -542,9 +595,15 @@ public sealed class VideoPositions
         public Dictionary<long, double>? Positions { get; set; }
         public int Volume { get; set; } = 80;
         public List<long>? Watched { get; set; }
+        public Dictionary<long, int>? Volumes { get; set; }
     }
 
     public double Get(long id) => _pos.TryGetValue(id, out var s) ? s : 0;
+
+    private Dictionary<long, int> _vols = new();
+    /// <summary>The volume you set on this video's tile (null: none set).</summary>
+    public int? VolumeOf(long id) => _vols.TryGetValue(id, out var v) ? v : null;
+    public void SetVolumeOf(long id, int v) { if (id < 0) return; _vols[id] = Math.Clamp(v, 0, 100); _dirty = true; }
     public bool Started(long id) => _pos.ContainsKey(id) || _watched.Contains(id);
     public bool Watched(long id) => _watched.Contains(id);
     public void MarkWatched(long id) { if (id >= 0 && _watched.Add(id)) _dirty = true; }
@@ -566,7 +625,7 @@ public sealed class VideoPositions
         try
         {
             System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(_path)!);
-            System.IO.File.WriteAllText(_path, System.Text.Json.JsonSerializer.Serialize(new Saved { Positions = _pos, Volume = _volume, Watched = _watched.ToList() }));
+            System.IO.File.WriteAllText(_path, System.Text.Json.JsonSerializer.Serialize(new Saved { Positions = _pos, Volume = _volume, Watched = _watched.ToList(), Volumes = _vols }));
             _dirty = false;
         }
         catch { }

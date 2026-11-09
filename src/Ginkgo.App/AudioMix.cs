@@ -111,6 +111,8 @@ public sealed class AudioStream
     {
         float g1 = _gain, g0 = _lastGain;
         _lastGain = g1;
+        // turned silent: silent straight away (a fade down from an older volume let a moment of sound through)
+        if (g1 == 0) g0 = 0;
         lock (_lock)
         {
             if (_paused) return;
