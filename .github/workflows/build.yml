@@ -27,7 +27,11 @@ jobs:
             if (-not $asset) { $asset = $rel.assets | Where-Object { $_.name -match 'win64-lgpl-shared' -and $_.name -like '*.zip' } | Select-Object -First 1 }
             if (-not $asset) { Write-Host "::error::no ffmpeg asset; have: $(($rel.assets | ForEach-Object name) -join ', ')"; exit 1 }
             Write-Host "::notice::ffmpeg from $($asset.name)"
-            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile ffmpeg.zip
+            # the download host sometimes times out: try a few times
+            for ($try = 1; $try -le 6; $try++) {
+              try { Invoke-WebRequest -Uri $asset.browser_download_url -OutFile ffmpeg.zip; break }
+              catch { if ($try -eq 6) { throw }; Write-Host "download attempt $try failed: $($_.Exception.Message); trying again"; Start-Sleep -Seconds (20 * $try) }
+            }
             Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-x
             $bin = Get-ChildItem ffmpeg-x -Recurse -Directory -Filter bin | Select-Object -First 1
             New-Item -ItemType Directory -Force tools | Out-Null
