@@ -739,10 +739,10 @@ Check(again.BackfillTotal == 0, "backfill has nothing left");
     LibraryScanner.Scan(rdb, rlib, Array.Empty<string>(), null, CancellationToken.None, opts);
     long Shown() { using var c = rdb.Open(); return IndexDb.Scalar(c, "SELECT COUNT(*) FROM files WHERE missing_since=0"); }
     Check(Shown() == 304, "all files at first");
-    var r1 = LibraryScanner.Scan(rdb, rlib, new[] { @"Average & LQ\Real" }, null, CancellationToken.None, opts);
-    Check(Shown() == 302 && r1.Added == 0, $"a removed subfolder's files are hidden, the rest stay ({Shown()})");
-    var r2 = LibraryScanner.Scan(rdb, rlib, new[] { "Big" }, null, CancellationToken.None, opts);
-    Check(!r2.SafetyTripped && Shown() == 4, $"removing a big folder on purpose doesn't trip the safety check ({Shown()})");
+    var remr1 = LibraryScanner.Scan(rdb, rlib, new[] { @"Average & LQ\Real" }, null, CancellationToken.None, opts);
+    Check(Shown() == 302 && remr1.Added == 0, $"a removed subfolder's files are hidden, the rest stay ({Shown()})");
+    var remr2 = LibraryScanner.Scan(rdb, rlib, new[] { "Big" }, null, CancellationToken.None, opts);
+    Check(!remr2.SafetyTripped && Shown() == 4, $"removing a big folder on purpose doesn't trip the safety check ({Shown()})");
     LibraryScanner.Scan(rdb, rlib, Array.Empty<string>(), null, CancellationToken.None, opts);
     Check(Shown() == 304, "restored folders come back");
     Check(rdb.HideFolder(rlib, "Games", 1) == 1 && Shown() == 303, "a folder can be hidden at once");
@@ -751,8 +751,8 @@ Check(again.BackfillTotal == 0, "backfill has nothing left");
     var moved = Path.Combine(tmp, "RemLib2");
     Directory.Move(rlib, moved);
     Check(rdb.Relocate(rlib, moved) == 304, "every path moves to the new place");
-    var r3 = LibraryScanner.Scan(rdb, moved, Array.Empty<string>(), null, CancellationToken.None, opts);
-    Check(r3.Added == 0 && r3.Restored == 1, $"a scan of the new place finds the same files ({r3.Added} added, {r3.Restored} back)");
+    var remr3 = LibraryScanner.Scan(rdb, moved, Array.Empty<string>(), null, CancellationToken.None, opts);
+    Check(remr3.Added == 0 && remr3.Restored == 1, $"a scan of the new place finds the same files ({remr3.Added} added, {remr3.Restored} back)");
 
     // the cache moves as a whole
     var c1 = Path.Combine(tmp, "cacheA"); var c2 = Path.Combine(tmp, "cacheB");
