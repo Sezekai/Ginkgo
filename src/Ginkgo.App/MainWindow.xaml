@@ -41,6 +41,7 @@
                 <TextBlock x:Name="DiagText" DockPanel.Dock="Right" TextTrimming="CharacterEllipsis" Foreground="#E0B060" FontFamily="Consolas" Margin="12,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
                 <TextBlock x:Name="CountText" DockPanel.Dock="Right" Foreground="{StaticResource Text}" Margin="12,0,0,0" VerticalAlignment="Center"/>
                 <ProgressBar x:Name="IdBar" DockPanel.Dock="Right" Width="120" Minimum="0" Maximum="1" Margin="12,0,0,0" Visibility="Collapsed" VerticalAlignment="Center"/>
+                <ProgressBar x:Name="FavBar" DockPanel.Dock="Right" Width="120" Minimum="0" Maximum="1" Margin="12,0,0,0" Visibility="Collapsed" VerticalAlignment="Center" ToolTip="Favourites: checking or copying"/>
                 <TextBlock x:Name="StatusText" Foreground="{StaticResource Dim}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
             </DockPanel>
         </Border>
@@ -255,6 +256,12 @@
             <Border x:Name="ViewerOsd" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,18,22,0" Padding="12,6" CornerRadius="6"
                     Background="#B4000000" IsHitTestVisible="False" Opacity="0">
                 <TextBlock x:Name="ViewerOsdText" Foreground="White" FontSize="18" FontFamily="Segoe UI Semibold"/>
+            </Border>
+            <!-- the star: add the open file to Favourites, or take it out (comes and goes with the information box) -->
+            <Border x:Name="FavHost" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="18,18,0,0" CornerRadius="8" Background="#8C1C1C20"
+                    BorderBrush="#5A3A3A42" BorderThickness="1"
+                    Visibility="{Binding Visibility, ElementName=InfoBox}" Opacity="{Binding Opacity, ElementName=InfoBox}">
+                <Button x:Name="FavBtn" Style="{StaticResource VBtn}" Content="&#xE734;" FontSize="18" Height="41" Click="OnViewerFav" ToolTip="Add to Favourites"/>
             </Border>
             <Border x:Name="InfoBox" HorizontalAlignment="Left" VerticalAlignment="Bottom" Padding="10,6" CornerRadius="5"
                     Background="#8C000000" IsHitTestVisible="False">

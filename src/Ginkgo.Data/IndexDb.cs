@@ -61,9 +61,13 @@ public sealed class IndexDb
         if (!have.Contains("file_id")) Exec(c, "ALTER TABLE files ADD COLUMN file_id TEXT");
         if (!have.Contains("duration")) Exec(c, "ALTER TABLE files ADD COLUMN duration REAL NOT NULL DEFAULT 0");     // videos: length in seconds
         if (!have.Contains("missing_since")) Exec(c, "ALTER TABLE files ADD COLUMN missing_since INTEGER NOT NULL DEFAULT 0");
+        // content hashes (0 = not worked out): only made where needed, such as files the same size as a favourite
+        if (!have.Contains("phash")) Exec(c, "ALTER TABLE files ADD COLUMN phash INTEGER NOT NULL DEFAULT 0");
+        if (!have.Contains("fhash")) Exec(c, "ALTER TABLE files ADD COLUMN fhash INTEGER NOT NULL DEFAULT 0");
         Exec(c, """
             CREATE INDEX IF NOT EXISTS ix_files_fileid ON files(file_id);
             CREATE INDEX IF NOT EXISTS ix_files_missing ON files(missing_since);
+            CREATE INDEX IF NOT EXISTS ix_files_size ON files(size);
             CREATE TABLE IF NOT EXISTS folders (
               id INTEGER PRIMARY KEY,
               path TEXT NOT NULL UNIQUE,          -- relative to the library folder

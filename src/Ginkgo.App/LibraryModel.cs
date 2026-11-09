@@ -36,12 +36,25 @@ public sealed class LibraryModel
     public byte[] VLevel = Array.Empty<byte>();
     public long[] VSize = Array.Empty<long>(), VFirstSeen = Array.Empty<long>();
 
-    /// <summary>All files that have thumbnails and are not missing, in Home order (newest first seen).</summary>
-    public static LibraryModel Load(IndexDb db)
+    /// <summary>True for the Favourites section's model (only the Favourites folder); false for everything else.</summary>
+    public bool Favourites;
+
+    /// <summary>
+    /// All files that have thumbnails and are not missing, in Home order (newest first seen). <paramref name="favourites"/>: only the
+    /// Favourites folder; otherwise everything but it (favourites show once, in their own section).
+    /// </summary>
+    public static LibraryModel Load(IndexDb db, string favRoot, bool favourites)
     {
-        var m = new LibraryModel();
+        var m = new LibraryModel { Favourites = favourites };
         using var c = db.Open();
-        long n = IndexDb.Scalar(c, "SELECT COUNT(*) FROM files WHERE " + Visible.Shown + " AND kind<3");
+        string where = (favourites ? " AND " : " AND NOT ") + "(" + FavouritePlaces.InsideSql + ")";
+        long n;
+        using (var cc = c.CreateCommand())
+        {
+            cc.CommandText = "SELECT COUNT(*) FROM files WHERE " + Visible.Shown + " AND kind<3" + where;
+            FavouritePlaces.Bind(cc, favRoot);
+            n = Convert.ToInt64(cc.ExecuteScalar());
+        }
         int cap = (int)n;
         m.Id = new long[cap]; m.Path = new string[cap]; m.Folder = new string[cap]; m.Level = new byte[cap]; m.Kind = new byte[cap];
         m.W = new int[cap]; m.H = new int[cap]; m.Duration = new float[cap]; m.Size = new long[cap]; m.Mtime = new long[cap]; m.FirstSeen = new long[cap];
@@ -52,7 +65,8 @@ public sealed class LibraryModel
         using var cmd = c.CreateCommand();
         cmd.CommandText = "SELECT id, path, folder, level, kind, w, h, size, mtime, first_seen, thumb_pack, thumb_off, thumb_len, " +
                           "s_pack, s_off, s_len, m_pack, m_off, m_len, l_pack, l_off, l_len, duration FROM files WHERE " + Visible.Shown +
-                          " AND kind<3 ORDER BY first_seen DESC, mtime DESC, id";
+                          " AND kind<3" + where + " ORDER BY first_seen DESC, mtime DESC, id";
+        FavouritePlaces.Bind(cmd, favRoot);
         using var r = cmd.ExecuteReader();
         int i = 0;
         while (r.Read() && i < cap)
@@ -78,7 +92,8 @@ public sealed class LibraryModel
         var vd = new List<string>(); var vl = new List<byte>(); var vs = new List<long>(); var vf = new List<long>();
         using (var vc = c.CreateCommand())
         {
-            vc.CommandText = "SELECT folder, level, size, first_seen FROM files WHERE missing_since=0 AND state NOT IN (1,3) AND kind=2";     // not in the grid yet
+            vc.CommandText = "SELECT folder, level, size, first_seen FROM files WHERE missing_since=0 AND state NOT IN (1,3) AND kind=2" + where;     // not in the grid yet
+            FavouritePlaces.Bind(vc, favRoot);
             using var vr = vc.ExecuteReader();
             while (vr.Read()) { vd.Add(D(vr.GetString(0))); vl.Add((byte)vr.GetInt32(1)); vs.Add(vr.GetInt64(2)); vf.Add(vr.GetInt64(3)); }
         }

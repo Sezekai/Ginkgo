@@ -574,6 +574,80 @@ Check(again.BackfillTotal == 0, "backfill has nothing left");
     Check(CacheMigration.IsDone(empty), "empty move is marked");
 }
 
+// ---- favourites: content hashes, stars, copying ----
+{
+    var flib = Path.Combine(tmp, "FavLib");
+    var fav = Path.Combine(flib, "Favourites");
+    void W(string rel, byte[] data) { var p = Path.Combine(flib, rel); Directory.CreateDirectory(Path.GetDirectoryName(p)!); File.WriteAllBytes(p, data); }
+    byte[] Bytes(int n, int seed) { var b = new byte[n]; new Random(seed).NextBytes(b); return b; }
+    var big = Bytes(300_000, 1);                       // bigger than the two 64 KB ends
+    var bigTwin = (byte[])big.Clone(); bigTwin[150_000] ^= 0xFF;   // same size and same ends, different middle
+    W("Games/a.jpg", big);
+    W("God of War/a copy.jpg", big);                   // the same image in a second folder: both get the star
+    W("Games/near.jpg", bigTwin);                      // looks the same to the partial hash only
+    W("Games/other.png", Bytes(5000, 2));
+    W("Games/NSFW/n.jpg", Bytes(7000, 3));
+    W("Favourites/a.jpg", big);
+    W("Favourites/lonely.jpg", Bytes(4000, 4));        // a favourite with no original
+    var fdb = new IndexDb(Path.Combine(tmp, "favdata", "index.db"));
+    LibraryScanner.Scan(fdb, flib, Array.Empty<string>(), null, CancellationToken.None, new ScanOptions { FileIds = null });
+    long IdOf(string rel) { using var c = fdb.Open(); using var cmd = c.CreateCommand(); cmd.CommandText = "SELECT id FROM files WHERE path=$p"; cmd.Parameters.AddWithValue("$p", Path.Combine(flib, rel)); return (long)cmd.ExecuteScalar()!; }
+
+    var prog = new FavProgress();
+    var st = FavouriteIndex.Sync(fdb, fav, prog);
+    Check(st.FavIds.Count == 2, $"two favourites found ({st.FavIds.Count})");
+    Check(st.Starred.Contains(IdOf("Games/a.jpg")) && st.Starred.Contains(IdOf("God of War/a copy.jpg")), "identical files in two folders both get the star");
+    Check(!st.Starred.Contains(IdOf("Games/near.jpg")), "same size and same ends but different content: no star");
+    Check(!st.Starred.Contains(IdOf("Games/other.png")), "a different file: no star");
+    Check(st.Linked == 1, $"one favourite linked to an original ({st.Linked})");
+    Check(!prog.Running, "the check says when it has finished");
+    using (var c = fdb.Open())
+    {
+        Check(IndexDb.Scalar(c, "SELECT COUNT(*) FROM files WHERE fhash<>0") == 4, "full hashes only for the files that needed them");
+        Check(IndexDb.Scalar(c, $"SELECT phash FROM files WHERE id={IdOf("Games/other.png")}") == 0, "a file no favourite's size is never read");
+    }
+    Check(FavouriteIndex.CopiesOf(fdb, st, IdOf("Games/a.jpg")).Count == 1, "un-favouriting an original finds its copy in Favourites");
+    Check(FavouriteIndex.CopiesOf(fdb, st, IdOf("Favourites/lonely.jpg")).Count == 1, "a favourite with no original finds itself");
+
+    // a changed file loses its hashes and its star
+    var edited = (byte[])big.Clone(); edited[10] ^= 1;
+    File.WriteAllBytes(Path.Combine(flib, "God of War/a copy.jpg"), edited);
+    File.SetLastWriteTimeUtc(Path.Combine(flib, "God of War/a copy.jpg"), DateTime.UtcNow.AddMinutes(1));
+    LibraryScanner.Scan(fdb, flib, Array.Empty<string>(), null, CancellationToken.None, new ScanOptions { FileIds = null });
+    st = FavouriteIndex.Sync(fdb, fav);
+    Check(!st.Starred.Contains(IdOf("God of War/a copy.jpg")) && st.Starred.Contains(IdOf("Games/a.jpg")), "an edited copy is a different image: its star goes");
+
+    // where favourites go
+    Check(FavouritePlaces.SubFolder(MediaKind.Image, ContentLevel.General) == "", "general image: Favourites root");
+    Check(FavouritePlaces.SubFolder(MediaKind.Image, ContentLevel.Very) == Path.Combine("NSFW", "Very"), "very image: NSFW\\Very");
+    Check(FavouritePlaces.SubFolder(MediaKind.Video, ContentLevel.Nsfw) == Path.Combine("Videos", "NSFW"), "nsfw video: Videos\\NSFW");
+    Check(FavouritePlaces.SubFolder(MediaKind.Gif, ContentLevel.General) == "Gifs", "general GIF: Gifs");
+
+    // copying
+    string log = Path.Combine(tmp, "favdata", "favourites-log.txt");
+    var nsfwSrc = Path.Combine(flib, "Games/NSFW/n.jpg");
+    var r = FavouriteCopier.Copy(nsfwSrc, Path.Combine(fav, "NSFW"), log, prog);
+    Check(r.Outcome == CopyOutcome.Copied && File.Exists(Path.Combine(fav, "NSFW", "n.jpg")), $"copied into Favourites\\NSFW ({r.Outcome} {r.Message})");
+    Check(File.ReadAllBytes(Path.Combine(fav, "NSFW", "n.jpg")).SequenceEqual(File.ReadAllBytes(nsfwSrc)) && File.Exists(nsfwSrc), "the copy matches and the original stays");
+    Check(r.Hash == ContentHash.Full(nsfwSrc), "the copy's hash is reported (for the star straight away)");
+    Check(!Directory.EnumerateFiles(fav, "*.part", SearchOption.AllDirectories).Any() && !Directory.EnumerateFiles(fav, ".*", SearchOption.AllDirectories).Any(), "no temporary file left behind");
+    var copyAgain = FavouriteCopier.Copy(nsfwSrc, Path.Combine(fav, "NSFW"), log);
+    Check(copyAgain.Outcome == CopyOutcome.AlreadyThere && Directory.GetFiles(Path.Combine(fav, "NSFW")).Length == 1, "the same name with the same content: nothing copied");
+    var clash = Path.Combine(flib, "Games/other dir/n.jpg"); Directory.CreateDirectory(Path.GetDirectoryName(clash)!); File.WriteAllBytes(clash, Bytes(7000, 9));
+    var numbered = FavouriteCopier.Copy(clash, Path.Combine(fav, "NSFW"), log);
+    Check(numbered.Outcome == CopyOutcome.Copied && Path.GetFileName(numbered.Path) == "n (2).jpg", $"the same name with different content gets a number ({Path.GetFileName(numbered.Path)})");
+    Check(File.ReadAllBytes(Path.Combine(fav, "NSFW", "n.jpg")).SequenceEqual(File.ReadAllBytes(nsfwSrc)), "an existing favourite is never overwritten");
+    var missing = FavouriteCopier.Copy(Path.Combine(flib, "nope.jpg"), fav, log);
+    Check(missing.Outcome == CopyOutcome.Failed && missing.Message.Length > 0, "a missing file fails with a reason");
+    Check(File.Exists(log) && File.ReadAllLines(log).Length == 2, "every copy is logged");
+    Check(!prog.Running && prog.Fraction == 1, "copy progress reaches 100% and stops");
+
+    LibraryScanner.Scan(fdb, flib, Array.Empty<string>(), null, CancellationToken.None, new ScanOptions { FileIds = null });
+    st = FavouriteIndex.Sync(fdb, fav);
+    Check(st.Starred.Contains(IdOf("Games/NSFW/n.jpg")) && st.Starred.Contains(IdOf("Games/other dir/n.jpg")), "the originals of new favourites have the star");
+    Check(st.FavIds.Count == 4, $"the Favourites section has the new copies ({st.FavIds.Count})");
+}
+
 // ---- videos (only where ffmpeg and ffprobe are available, as on the build machine) ----
 VideoTools.Disabled = false;
 if (VideoTools.Available)

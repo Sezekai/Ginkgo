@@ -17,7 +17,6 @@ public partial class MainWindow : Window
     private readonly AppSettings _settings = AppSettings.Load();
     private GifAnimator _gifs = null!;
     private readonly Engine _engine;
-    private LibraryModel? _model;
     private ThumbLoader? _loader;
     private int[] _order = Array.Empty<int>();       // model rows shown, in order
     private string[] _paths = Array.Empty<string>();
@@ -103,6 +102,7 @@ public partial class MainWindow : Window
         View.ItemActivated += i => { if (RecentlyNavigated() || (Stopwatch.GetTimestamp() - _viewerClosedAt) * 1000 < 500 * Stopwatch.Frequency) return; if (IsFolderTile(i)) OpenFolder(_page!.Tiles[i].Path); else OpenViewer(i); };
         InitBrowse();
         InitVideo();
+        InitFavourites();
         _gifs = new GifAnimator(i => i >= 0 && i < _paths.Length ? _paths[i] : null, () => Dispatcher.BeginInvoke(View.Refresh));
         View.Gifs = _gifs;
         _gifs.Limit = _settings.GifLimit;
@@ -178,9 +178,12 @@ public partial class MainWindow : Window
         _engine.SaveLargeBatch();
         StatusText.Text = "loading the library...";
         var sw = Stopwatch.StartNew();
-        var m = await Task.Run(() => LibraryModel.Load(db));
-        _model = m;
+        string favRoot = _settings.FavRoot;
+        var m = await Task.Run(() => LibraryModel.Load(db, favRoot, favourites: false));
+        var fm = await Task.Run(() => LibraryModel.Load(db, favRoot, favourites: true));
+        _libModel = m; _favModel = fm;
         MigrateFolderRules(m);
+        _fav.RequestSync();
         _engine.ViewRefreshed();
         UpdateChangeIndicator();
         await BuildViewAsync(keepPosition);
@@ -218,6 +221,7 @@ public partial class MainWindow : Window
         int version = ++_buildVersion;
         var q = CurrentQuery();
         bool browse = InBrowse;
+        if (InFavourites) q.OffFolders.Clear();                   // Select folders shapes Home; Favourites shows the whole folder
         string folder = _folder; bool own = _settings.BrowseOwnOnly;
         var prefs = Prefs(_folder);
         string fsort = prefs.FolderSort; bool frev = prefs.FolderReverse;
@@ -274,7 +278,9 @@ public partial class MainWindow : Window
         _covers.Save();
         EmptyNote.Visibility = _order.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
         if (_order.Length == 0)
-            EmptyNote.Text = model.Count == 0
+            EmptyNote.Text = InFavourites && model.Count == 0
+                ? "No favourites yet.\nClick the star in a picture's top-left corner (or in the viewer) to copy it into your Favourites folder."
+                : model.Count == 0
                 ? "Nothing to show yet.\nGinkgo is looking through your library and making thumbnails. Pictures appear here as they become ready."
                 : "No files match the current filters.";
         CountText.Text = result.page is { } pg
@@ -348,7 +354,7 @@ public partial class MainWindow : Window
 
     private void OnFolders(object s, RoutedEventArgs e)
     {
-        if (_model is null) return;
+        if (_libModel is null) return;
         if (_folderPopup.IsOpen) { _folderPopup.IsOpen = false; return; }
         // clicking the button while the pop-out is open closes it (the pop-out closes itself on that same click)
         if ((Stopwatch.GetTimestamp() - _popupClosedAt) / (double)Stopwatch.Frequency < 0.25) return;
@@ -356,7 +362,7 @@ public partial class MainWindow : Window
         // keep the pop-out inside the window: slide it left if it would reach past the right edge
         double x0 = FoldersBtn.TranslatePoint(new Point(0, 0), this).X;
         _folderPopup.HorizontalOffset = Math.Min(0, ActualWidth - 10 - (_folders.Width + 26) - x0);
-        _folders.Load(_model.FolderStats(CurrentQuery()), _settings.OffFolders);
+        _folders.Load(_libModel.FolderStats(CurrentQuery()), _settings.OffFolders);
         _folderPopup.IsOpen = true;
     }
 
@@ -476,6 +482,8 @@ public partial class MainWindow : Window
     private string StatusLine()
     {
         var p = _engine.Pipe;
+        string fav = FavStatus();
+        if (fav.Length > 0) return fav;
         if (_engine.IdsRunning && _engine.IdsTotal > 0)
             return $"Reading file IDs from the drive (this is the disk noise, it only happens once): {_engine.IdsDone:N0} of {_engine.IdsTotal:N0}";
         string pipe = p.Running || p.Total > 0 && p.Done < p.Total
@@ -527,11 +535,12 @@ public partial class MainWindow : Window
         }
         double tilePx = View.TileTarget * VisualTreeHelper.GetDpi(View).PixelsPerDip;
         _engine.Warmer.Preferred = tilePx <= 120 ? 0 : tilePx <= 200 ? 1 : 2;
-        if (View.HoverIndex < 0) StatusText.Text = StatusLine();
+        TickFavourites();
+        if (View.HoverIndex < 0 && Stopwatch.GetTimestamp() > _favMessageUntil) StatusText.Text = StatusLine();
         if (_diag)
         {
             var (mr, _) = View.TakeWorst();
-            DiagText.Text = $"{_fps:F0} fps | worst gap {_worstGap:F0} ms | slow {_slowFrames} (gc {_slowGc}, ours {_slowOurs}, other {_slowOther}) | gc pause {(GC.GetTotalPauseDuration() - _gcAtTick).TotalMilliseconds:F0} ms | draw {mr:F1} (prep {Perf.PrepMax:F1}, paint {Perf.PaintMax:F1}/{Perf.PaintedBands}) drain {Perf.DrainMax:F1} | {View.LastVisibleCount} tiles, cached {_loader?.CachedCount ?? 0}, pending {_loader?.PendingCount ?? 0} | GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)} | read {_loader?.AvgReadMs ?? 0:F1} ms, decode {_loader?.AvgDecodeMs ?? 0:F1} ms{(_engine.FastCacheNote.Length > 0 ? " | " + _engine.FastCacheNote : "")} | thumbs in memory {_engine.Warmer.InMemory / 1073741824.0:F1} GB ({(_engine.Warmer.Total > 0 ? _engine.Warmer.Done * 100 / _engine.Warmer.Total : 0)}%{(_engine.Warmer.Running ? ", loading" : "")}) {_engine.Warmer.Note} | free RAM {CacheWarmer.AvailableBytes() / 1073741824.0:F1} GB" + GpuDiag() + VideoDiag();
+            DiagText.Text = $"{_fps:F0} fps | worst gap {_worstGap:F0} ms | slow {_slowFrames} (gc {_slowGc}, ours {_slowOurs}, other {_slowOther}) | gc pause {(GC.GetTotalPauseDuration() - _gcAtTick).TotalMilliseconds:F0} ms | draw {mr:F1} (prep {Perf.PrepMax:F1}, paint {Perf.PaintMax:F1}/{Perf.PaintedBands}) drain {Perf.DrainMax:F1} | {View.LastVisibleCount} tiles, cached {_loader?.CachedCount ?? 0}, pending {_loader?.PendingCount ?? 0} | GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)} | read {_loader?.AvgReadMs ?? 0:F1} ms, decode {_loader?.AvgDecodeMs ?? 0:F1} ms{(_engine.FastCacheNote.Length > 0 ? " | " + _engine.FastCacheNote : "")} | thumbs in memory {_engine.Warmer.InMemory / 1073741824.0:F1} GB ({(_engine.Warmer.Total > 0 ? _engine.Warmer.Done * 100 / _engine.Warmer.Total : 0)}%{(_engine.Warmer.Running ? ", loading" : "")}) {_engine.Warmer.Note} | free RAM {CacheWarmer.AvailableBytes() / 1073741824.0:F1} GB" + GpuDiag() + VideoDiag() + FavDiag();
             if (DiagFull.Visibility == Visibility.Visible) FillFullStatus();
             _slowAtLastTick = 0;
             _worstGap = 0; _slowFrames = _slowGc = _slowOurs = _slowOther = 0; _gcAtTick = GC.GetTotalPauseDuration(); Perf.Reset();
@@ -959,7 +968,7 @@ public partial class MainWindow : Window
     private void Navigate(string where)
     {
         SetSidebar(false);
-        if (where is "Home" or "Browse") { if (where != _section || (where == "Browse" && _folder.Length > 0)) _ = Go(where, ""); else UpdateNavUi(); return; }
+        if (where is "Home" or "Browse" or "Favourites") { if (where != _section || (where == "Browse" && _folder.Length > 0)) _ = Go(where, ""); else UpdateNavUi(); return; }
         UpdateNavUi();
         StatusText.Text = $"{where} is coming in a later build.";
     }
@@ -1214,6 +1223,7 @@ public partial class MainWindow : Window
         ResetZoom();
         int row = _order[_vIndex];
         UpdateInfo(row);
+        UpdateViewerStar();
         Interlocked.Exchange(ref _engine.Pipe.LastUiActivity, Stopwatch.GetTimestamp());      // keep the drive free for the picture
         _ = LoadPicture(_vIndex, full: false);
     }

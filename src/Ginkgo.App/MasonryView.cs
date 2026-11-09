@@ -48,6 +48,12 @@ public sealed class MasonryView : FrameworkElement
     public event Action<int>? ItemClicked;
     /// <summary>A tile was right-clicked.</summary>
     public event Action<int>? ItemContextRequested;
+    /// <summary>Whether tile i is a favourite (shows the gold star).</summary>
+    public Func<int, bool>? Starred { get; set; }
+    /// <summary>The star in a tile's top-left corner was clicked.</summary>
+    public event Action<int>? StarClicked;
+    public static readonly Brush StarFill = Freeze(new SolidColorBrush(Color.FromRgb(0xFF, 0xC8, 0x3D)));
+    private (int index, Rect rect) _starHit = (-1, Rect.Empty);
     private int _downIndex = -1;
     /// <summary>Optional per-tile badge: 1 = GIF.</summary>
     public byte[]? Badges { get; set; }
@@ -338,6 +344,12 @@ public sealed class MasonryView : FrameworkElement
         {
             Focus();
             var mp = e.GetPosition(this);
+            if (_starHit.index >= 0 && _starHit.index == _hoverIndex && _starHit.rect.Contains(mp))
+            {
+                _downIndex = -1;
+                if (e.ClickCount == 1) StarClicked?.Invoke(_starHit.index);
+                e.Handled = true; return;
+            }
             foreach (var (vi, vt) in _videos)
             {
                 if (!vt.Controls) continue;
@@ -443,6 +455,7 @@ public sealed class MasonryView : FrameworkElement
         var p = e.GetPosition(this);
         if (_autoScroll) { _autoMouseY = p.Y; return; }
         if (Math.Abs(p.X - _mouse.X) + Math.Abs(p.Y - _mouse.Y) > 1) { _mouseMovedAt = Stopwatch.GetTimestamp(); if (_videos.Count > 0) InvalidateVisual(); }
+        if (_starHit.index >= 0 && _starHit.rect.Contains(p) != _starHit.rect.Contains(_mouse)) InvalidateVisual();     // the star lights up under the mouse
         _mouse = p;
         if (_volDragIndex >= 0 && _videos.TryGetValue(_volDragIndex, out var vv)) { VolFromY(vv, _volDragIndex, p.Y); return; }
         if (_dragIndex >= 0 && _videos.TryGetValue(_dragIndex, out var dv) && dv.Bar.Width > 0)
@@ -615,7 +628,8 @@ public sealed class MasonryView : FrameworkElement
             bool gif = e is not null && Badges is { } bd && i < bd.Length && bd[i] != 0;
             int below = i < CoverCount ? (int)(CaptionHeight * dpi) : 0;
             bool labelled = _labels is { } lb && i < lb.Length && lb[i] is not null && y < offPx + ph && y + hPx + below > offPx;
-            if (i == _hoverIndex || gif || labelled) _overlay.Add((new Rect(x / dpi, (y - offPx) / dpi, wPx / dpi, hPx / dpi), i == _hoverIndex, gif, labelled ? i : -1, i));
+            bool starred = e is not null && Starred is { } stf && stf(i);
+            if (i == _hoverIndex || gif || labelled || starred) _overlay.Add((new Rect(x / dpi, (y - offPx) / dpi, wPx / dpi, hPx / dpi), i == _hoverIndex, gif, labelled ? i : -1, i));
         }
         (_sigPrev, _sigNow) = (_sigNow, _sigPrev);
         if (Gifs is not null)
@@ -641,6 +655,7 @@ public sealed class MasonryView : FrameworkElement
                 dc.DrawImage(kv.Bmp, new Rect(0, (kv.K * BandH - offPx) / dpi, pw / dpi, BandH / dpi));
         }
         Perf.PaintMax = Math.Max(Perf.PaintMax, Perf.Ms(Stopwatch.GetTimestamp() - pt0));
+        _starHit = (-1, Rect.Empty);
         foreach (var (r, hovered, gif, label, index) in _overlay)
         {
             if (label >= 0) { if (label < CoverCount) DrawCaptionBelow(dc, r, label, dpi); else DrawCaption(dc, r, label, dpi); }
@@ -652,6 +667,7 @@ public sealed class MasonryView : FrameworkElement
             if (playingHere) DrawVideoBar(dc, r, index, vt!);
             else if (isVideo && info.Item2 >= 0) DrawPausedLabel(dc, r, index, info.Item2);
             else if (gif && r.Width > 70 && (!isVideo || LabelsFit(r))) DrawBadge(dc, r, index);
+            if (label < 0 || index >= CoverCount) DrawStar(dc, r, index, hovered);
         }
         UpdateCursor();
         _fadingNow = fading;
@@ -1049,6 +1065,32 @@ public sealed class MasonryView : FrameworkElement
     }
 
     private readonly Dictionary<string, FormattedText> _badgeCache = new();
+
+    /// <summary>
+    /// The favourite star in the top-left corner: gold on favourites, and on the tile under the mouse an outline to click (a click
+    /// on a gold one takes it out of Favourites).
+    /// </summary>
+    private void DrawStar(DrawingContext dc, Rect r, int i, bool hovered)
+    {
+        if (Starred is null || r.Width < 48 || r.Height < 40) return;
+        bool on = Starred(i);
+        if (!on && !hovered) return;
+        double k = UiScale(r);
+        double sz = Math.Round(26 * k);
+        var box = new Rect(r.Left + 6 * k, r.Top + 6 * k, sz, sz);
+        bool over = hovered && box.Contains(_mouse);
+        if (hovered || over) dc.DrawEllipse(SpeakerBack, null, new Point(box.Left + sz / 2, box.Top + sz / 2), sz / 2, sz / 2);
+        double ppd = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        string glyph = on || over ? "\uE735" : "\uE734";
+        double fs = 15 * k;
+        var shadow = new FormattedText(glyph, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, IconFace, fs, IconShadow, ppd);
+        var ft = new FormattedText(glyph, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, IconFace, fs, on ? StarFill : over ? StarHover : Brushes.White, ppd);
+        var at = new Point(box.Left + (sz - ft.Width) / 2, box.Top + (sz - ft.Height) / 2);
+        if (!hovered) dc.DrawText(shadow, new Point(at.X + 1, at.Y + 1));
+        dc.DrawText(ft, at);
+        if (hovered) _starHit = (i, box);
+    }
+    private static readonly Brush StarHover = Freeze(new SolidColorBrush(Color.FromArgb(200, 0xFF, 0xC8, 0x3D)));
 
     /// <summary>"GIF", or a video's play mark and length, in the bottom-left corner of the tile.</summary>
     private void DrawBadge(DrawingContext dc, Rect r, int i)

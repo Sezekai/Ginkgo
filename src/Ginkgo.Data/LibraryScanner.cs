@@ -215,7 +215,7 @@ public static class LibraryScanner
             using (var cmd = conn.CreateCommand())
             {
                 cmd.Transaction = tx;
-                cmd.CommandText = "UPDATE files SET size=$s, mtime=$m, l_pack=0, l_off=0, l_len=0, " +
+                cmd.CommandText = "UPDATE files SET size=$s, mtime=$m, l_pack=0, l_off=0, l_len=0, phash=0, fhash=0, " +
                                   "state=CASE state WHEN 1 THEN 3 WHEN 2 THEN 0 ELSE state END WHERE id=$id";
                 var ps = cmd.Parameters.Add("$s", SqliteType.Integer); var pm = cmd.Parameters.Add("$m", SqliteType.Integer);
                 var pi = cmd.Parameters.Add("$id", SqliteType.Integer);

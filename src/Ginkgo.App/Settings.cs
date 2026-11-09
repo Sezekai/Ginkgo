@@ -8,6 +8,10 @@ public sealed class AppSettings
 {
     public string LibraryRoot { get; set; } = @"E:\Pictures\IMGs";
     public string CacheDir { get; set; } = @"E:\GinkgoCache";
+    /// <summary>The Favourites folder ("" = the folder named Favourites in the library).</summary>
+    public string FavouritesFolder { get; set; } = "";
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string FavRoot => string.IsNullOrWhiteSpace(FavouritesFolder) ? System.IO.Path.Combine(LibraryRoot, "Favourites") : FavouritesFolder;
     /// <summary>The small thumbnails are kept here, on the computer's own (fast) drive: a hard drive manages only a few dozen random lookups a second, which is what a shuffled grid needs.</summary>
     public string FastCacheDir { get; set; } = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ginkgo", "fast");
     public bool UseFastCache { get; set; }
@@ -110,6 +114,9 @@ public sealed class AppSettings
 
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ginkgo", "settings.json");
+    /// <summary>Every copy into Favourites is recorded here.</summary>
+    public static string FavouritesLogPath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ginkgo", "favourites-log.txt");
     public static string IndexPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ginkgo", "index.db");
 

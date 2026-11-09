@@ -175,9 +175,9 @@ public partial class MainWindow
 
     private void UpdateNavUi()
     {
-        NavHome.IsChecked = _section == "Home"; NavBrowse.IsChecked = InBrowse; NavFav.IsChecked = NavTools.IsChecked = false;
+        NavHome.IsChecked = _section == "Home"; NavBrowse.IsChecked = InBrowse; NavFav.IsChecked = InFavourites; NavTools.IsChecked = false;
         BrowseBar.Visibility = InBrowse ? Visibility.Visible : Visibility.Collapsed;
-        FoldersBtn.Visibility = InBrowse ? Visibility.Collapsed : Visibility.Visible;     // Select folders shapes Home; Browse shows every folder
+        FoldersBtn.Visibility = InBrowse || InFavourites ? Visibility.Collapsed : Visibility.Visible;     // Select folders shapes Home; Browse shows every folder
         UpdateNavButtons(); UpBtn.IsEnabled = InBrowse && _folder.Length > 0;
         OwnOnlyBtn.Visibility = InBrowse && _folder.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         SearchBox.ToolTip = InBrowse ? "Search this folder: folder and file names (/ or Ctrl+F)" : "Search file and folder names (/ or Ctrl+F)";
@@ -309,7 +309,10 @@ public partial class MainWindow
             if (row >= 0)
             {
                 menu.Items.Add(new Separator());
-                Item("Open its folder in Browse", () => OpenFolder(_model.Display[row]));
+                bool starred = _fav.IsStarred(_model.Id[row]);
+                Item(starred ? "Remove from Favourites" : "Add to Favourites", () => ToggleFavourite(row), _fav.Ready);
+                menu.Items.Add(new Separator());
+                if (!InFavourites) Item("Open its folder in Browse", () => OpenFolder(_model.Display[row]));
                 Item("Show in Explorer", () => ShowInExplorer(_model.Path[row], folder: false));
             }
         }
