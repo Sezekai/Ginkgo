@@ -67,6 +67,8 @@ public sealed class IndexDb
         // dates: created (from the file system, filled in by the next scan) and taken (from a photo's EXIF; 0 = not read yet, -1 = none)
         if (!have.Contains("ctime")) Exec(c, "ALTER TABLE files ADD COLUMN ctime INTEGER NOT NULL DEFAULT 0");
         if (!have.Contains("taken")) Exec(c, "ALTER TABLE files ADD COLUMN taken INTEGER NOT NULL DEFAULT 0");
+        // a picture's visual fingerprint (from its smallest thumbnail; 0 = not made yet), for near copies in the duplicate finder
+        if (!have.Contains("vhash")) Exec(c, "ALTER TABLE files ADD COLUMN vhash INTEGER NOT NULL DEFAULT 0");
         Exec(c, """
             CREATE INDEX IF NOT EXISTS ix_files_fileid ON files(file_id);
             CREATE INDEX IF NOT EXISTS ix_files_missing ON files(missing_since);

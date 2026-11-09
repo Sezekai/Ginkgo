@@ -250,5 +250,18 @@ Check(nat.SequenceEqual(new[] { "a.jpg", "Page 1.jpg", "page 2.jpg", "page 02.jp
     Check(Math.Abs(JustifiedLayout.Compute(tail, 1200, 200, 8).TotalHeight - 200) < 0.01, "hidden members at the end add no empty row");
 }
 
+// ---- the Grid layout ----
+{
+    var gs = new[] { new ItemSpec(2f), new ItemSpec(0.5f), new ItemSpec(1f), new ItemSpec(1f, Hidden: true), new ItemSpec(1f), new ItemSpec(1.5f) };
+    var crop = UniformGrid.Compute(gs, 620, 3, 10, fit: false);
+    Check(crop.W.Where((v, i) => !gs[i].Hidden).All(v => Math.Abs(v - 200) < 0.01) && Math.Abs(crop.TotalHeight - 410) < 0.01, "grid: square cells, two rows");
+    Check(crop.X[4] == 0 && Math.Abs(crop.Y[4] - 210) < 0.01 && crop.W[3] == 0, "a hidden item takes no cell");
+    var fitG = UniformGrid.Compute(gs, 620, 3, 10, fit: true);
+    Check(Math.Abs(fitG.W[0] - 200) < 0.01 && Math.Abs(fitG.H[0] - 100) < 0.01 && Math.Abs(fitG.Y[0] - 50) < 0.01, "fit: a wide picture keeps its shape, centred");
+    Check(Math.Abs(fitG.W[1] - 100) < 0.01 && Math.Abs(fitG.X[1] - (210 + 50)) < 0.01, "fit: a tall one too");
+    var gv = new List<int>(); fitG.GetVisible(0, fitG.TotalHeight, gv);
+    Check(gv.Count == 5 && !gv.Contains(3), "every grid tile is found once, hidden ones never");
+}
+
 Console.WriteLine($"{pass} passed, {fail} failed");
 return fail == 0 ? 0 : 1;

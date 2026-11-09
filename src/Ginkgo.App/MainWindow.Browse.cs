@@ -178,7 +178,8 @@ public partial class MainWindow
 
     private void UpdateNavUi()
     {
-        NavHome.IsChecked = _section == "Home"; NavBrowse.IsChecked = InBrowse; NavFav.IsChecked = InFavourites; NavTools.IsChecked = false;
+        NavHome.IsChecked = _section == "Home"; NavBrowse.IsChecked = InBrowse; NavFav.IsChecked = InFavourites; NavTools.IsChecked = InTools;
+        ToolsBar.Visibility = InTools ? Visibility.Visible : Visibility.Collapsed;
         BrowseBar.Visibility = InBrowse ? Visibility.Visible : Visibility.Collapsed;
         FoldersBtn.Visibility = InBrowse || InFavourites ? Visibility.Collapsed : Visibility.Visible;     // Select folders shapes Home; Browse shows every folder
         UpdateNavButtons(); UpBtn.IsEnabled = InBrowse && _folder.Length > 0;

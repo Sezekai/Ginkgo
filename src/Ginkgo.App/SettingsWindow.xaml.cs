@@ -29,6 +29,7 @@ public partial class SettingsWindow : Window
         WarmBox.IsChecked = s.WarmCache;
         BuildGpu();
         BuildSets();
+        BuildView();
         _init = false;
         OnMeasure(this, new RoutedEventArgs());
     }
@@ -116,6 +117,32 @@ public partial class SettingsWindow : Window
         DockPanel.SetDock(control, Dock.Right); d.Children.Add(control);
         d.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) });
         return d;
+    }
+
+    /// <summary>Space between tiles, details on the tile under the mouse, and the slideshow's timing and order.</summary>
+    private void BuildView()
+    {
+        var gap = new Slider { Width = 160, Minimum = 0, Maximum = 20, IsSnapToTickEnabled = true, TickFrequency = 1, Value = Math.Clamp(_s.Spacing, 0, 20), VerticalAlignment = VerticalAlignment.Center };
+        var gapText = new TextBlock { Text = $"{_s.Spacing:0} px" };
+        gap.ValueChanged += (_, e) => { gapText.Text = $"{e.NewValue:0} px"; if (_init) return; _s.Spacing = (float)e.NewValue; _main.ApplySpacing(); _main.ApplySettings(); };
+        ViewPanel.Children.Add(Row("Space between pictures", gap, null, gapText));
+        var hover = new CheckBox { Content = "Show size and dimensions in the corner of the picture under the mouse", Foreground = Brush("#E4E4E8"), IsChecked = _s.HoverDetails, Margin = new Thickness(0, 0, 0, 10) };
+        hover.Click += (_, _) => { _s.HoverDetails = hover.IsChecked == true; _main.ApplySettings(); };
+        ViewPanel.Children.Add(hover);
+        var secs = new Slider { Width = 160, Minimum = 1, Maximum = 60, IsSnapToTickEnabled = true, TickFrequency = 1, Value = Math.Clamp(_s.SlideSeconds, 1, 60), VerticalAlignment = VerticalAlignment.Center };
+        var secsText = new TextBlock { Text = $"{_s.SlideSeconds:0} s" };
+        secs.ValueChanged += (_, e) => { secsText.Text = $"{e.NewValue:0} s"; if (_init) return; _s.SlideSeconds = e.NewValue; _main.ApplySettings(); };
+        ViewPanel.Children.Add(Row("Slideshow: each picture shows for", secs, null, secsText));
+        CheckBox Box(string text, bool on, Action<bool> set)
+        {
+            var b = new CheckBox { Content = text, Foreground = Brush("#E4E4E8"), IsChecked = on, Margin = new Thickness(0, 0, 0, 6) };
+            b.Click += (_, _) => { set(b.IsChecked == true); _main.ApplySettings(); };
+            ViewPanel.Children.Add(b);
+            return b;
+        }
+        Box("Shuffle (otherwise the view's own order)", _s.SlideShuffle, v => _s.SlideShuffle = v);
+        Box("Start again from the beginning at the end", _s.SlideLoop, v => _s.SlideLoop = v);
+        Box("Play each video to its end before moving on (otherwise videos get the same time as pictures)", _s.SlideVideosToEnd, v => _s.SlideVideosToEnd = v);
     }
 
     /// <summary>How sets show (a block up to a size, a stacked tile above it), how they sort, and whether copies of a file show once.</summary>

@@ -697,6 +697,36 @@ Check(again.BackfillTotal == 0, "backfill has nothing left");
     Check(DuplicateHashes.Run(ddb, wp, () => false, CancellationToken.None) == 0 && !wp.Running, "a second run reads nothing and says it has stopped");
 }
 
+
+// ---- near copies and the low-resolution rule ----
+{
+    SkiaSharp.SKBitmap Pic(int w, int h, int seed, int tweak = 0)
+    {
+        var b = new SkiaSharp.SKBitmap(w, h);
+        var r = new Random(seed);
+        using var cv = new SkiaSharp.SKCanvas(b);
+        for (int k = 0; k < 12; k++)
+            cv.DrawRect(r.Next(w), r.Next(h), w / 3, h / 3, new SkiaSharp.SKPaint { Color = new SkiaSharp.SKColor((byte)r.Next(256), (byte)r.Next(256), (byte)r.Next(256)) });
+        if (tweak > 0) cv.DrawRect(0, 0, tweak, tweak, new SkiaSharp.SKPaint { Color = SkiaSharp.SKColors.White });
+        return b;
+    }
+    long a = VisualHash.FromBitmap(Pic(400, 300, 1)), aSmall = VisualHash.FromBitmap(Pic(400, 300, 1).Resize(new SkiaSharp.SKImageInfo(200, 150), SkiaSharp.SKFilterQuality.High)),
+         aTweak = VisualHash.FromBitmap(Pic(400, 300, 1, 12)), other = VisualHash.FromBitmap(Pic(400, 300, 2));
+    Check(VisualHash.Distance(a, aSmall) <= 4, $"a resized copy is near ({VisualHash.Distance(a, aSmall)} bits)");
+    Check(VisualHash.Distance(a, aTweak) <= 8, $"a slightly edited copy is near ({VisualHash.Distance(a, aTweak)} bits)");
+    Check(VisualHash.Distance(a, other) > 10, $"a different picture is far ({VisualHash.Distance(a, other)} bits)");
+    var groups = NearGroups.Find(new[] { a, aSmall, other, a, aTweak }, new[] { "Games", "Games", "Games", "God of War", "Games" }, 8);
+    Check(groups.Count == 1 && groups[0].OrderBy(x => x).SequenceEqual(new[] { 0, 1, 4 }), "near copies group within a top folder, never across: " + string.Join(" | ", groups.Select(g => string.Join(",", g))));
+    var rule = new LowResRule { UseWidth = true, MinWidth = 800, UseMegapixels = false };
+    Check(rule.IsLow(false, 640, 2000, 1000, 0) && !rule.IsLow(false, 1200, 400, 1000, 0), "below the minimum width is low");
+    rule.UseHeight = true; rule.MinHeight = 800;
+    Check(!rule.IsLow(false, 640, 2000, 1000, 0) && rule.IsLow(false, 640, 600, 1000, 0), "AND: below every minimum switched on");
+    rule.Any = true;
+    Check(rule.IsLow(false, 640, 2000, 1000, 0), "OR: below any of them");
+    var vr = new LowResRule { UseMegapixels = false, UseVideoHeight = true, MinVideoHeight = 480 };
+    Check(vr.IsLow(true, 640, 360, 1, 10) && !vr.IsLow(true, 1280, 720, 1, 10) && !vr.IsLow(false, 10, 10, 1, 0), "video resolution tests videos only");
+}
+
 // ---- videos (only where ffmpeg and ffprobe are available, as on the build machine) ----
 VideoTools.Disabled = false;
 if (VideoTools.Available)

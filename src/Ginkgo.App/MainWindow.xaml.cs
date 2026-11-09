@@ -63,6 +63,7 @@ public partial class MainWindow : Window
         GeneralBtn.IsChecked = _settings.ShowGeneral; NsfwBtn.IsChecked = false; VeryBtn.IsChecked = false;
         ImagesBtn.IsChecked = _settings.ShowImages; GifsBtn.IsChecked = _settings.ShowGifs; VideosBtn.IsChecked = _settings.ShowVideos;
         RowsBtn.IsChecked = _settings.RowsLayout; View.RowsMode = _settings.RowsLayout;
+        View.Gap = _settings.Spacing;
         SizeSlider.Value = SizeToSlider(_settings.TileSize); View.TileTarget = _settings.TileSize;
         View.TileTargetChanged += size =>
         {
@@ -106,6 +107,9 @@ public partial class MainWindow : Window
         InitVideo();
         InitFavourites();
         InitLibraryTools();
+        InitViews();
+        InitSlideshow();
+        InitTools();
         _gifs = new GifAnimator(i => i >= 0 && i < _paths.Length ? _paths[i] : null, () => Dispatcher.BeginInvoke(View.Refresh));
         View.Gifs = _gifs;
         _gifs.Limit = _settings.GifLimit;
@@ -185,6 +189,7 @@ public partial class MainWindow : Window
         var m = await Task.Run(() => LibraryModel.Load(db, favRoot, favourites: false));
         var fm = await Task.Run(() => LibraryModel.Load(db, favRoot, favourites: true));
         _libModel = m; _favModel = fm;
+        _dupResult = null;                                         // the duplicate finder's rows belong to the old list
         MigrateFolderRules(m);
         _fav.RequestSync();
         _engine.ViewRefreshed();
@@ -254,11 +259,14 @@ public partial class MainWindow : Window
         bool grid = _settings.BrowseCoverGrid;
         var details = BrowseDetails();
         q.RowFilter = VideoRowFilter();
+        bool tools = InTools; var dupResult = _dupResult; string tool = _settings.Tool;
+        if (tools && tool == "LowRes") { var low = LowResFilter(model); var vf0 = q.RowFilter; q.RowFilter = vf0 is null ? low : r => low(r) && vf0(r); q.HideCopies = false; }
         var result = await Task.Run(() =>
         {
             BrowsePage? page = null;
             int[] order; List<SetBlock> sets; Dictionary<int, List<int>> copies;
-            if (browse)
+            if (tools && tool == "Duplicates") { order = dupResult?.Order ?? Array.Empty<int>(); sets = dupResult?.Blocks ?? new(); copies = new(); }
+            else if (browse)
             {
                 q.OffFolders.Clear();                               // Browse shows every folder; Select folders shapes Home
                 page = BrowsePage.Build(model, q, folder, own, fsort, frev, _covers, details);
@@ -289,12 +297,18 @@ public partial class MainWindow : Window
         _loader = new ThumbLoader(result.slice.tiers, _paths, result.slice.origW, stores.Large, Engine.NoCap,
             (i, loc) => _engine.QueueLarge(ids[i], loc.Pack, loc.Off, loc.Len), Dispatcher, () => View.Refresh(), decoded, encoded)
         { FadeEnabled = _settings.FadeSharpening };
+        ThumbLoader.Crop?[] covers = Array.Empty<ThumbLoader.Crop?>();
         if (result.page is { } cp && grid && cp.FirstFile > 0)
         {
-            var crops = new ThumbLoader.Crop?[cp.FirstFile];
-            for (int k = 0; k < crops.Length; k++) crops[k] = CropForTile(cp, k, result.order);
-            _loader.CropFor = i => i < crops.Length ? crops[i] : null;
+            covers = new ThumbLoader.Crop?[cp.FirstFile];
+            for (int k = 0; k < covers.Length; k++) covers[k] = CropForTile(cp, k, result.order);
         }
+        // the Grid layout without Fit crops every picture to its square cell
+        _cropApplied = _settings.GridLayout && !_settings.GridFit;
+        var gridOrder = result.order; var gridModel = model; int gridFirst = _firstFile; bool gridCrop = _cropApplied;
+        double gridTilePx = View.TileTarget * VisualTreeHelper.GetDpi(View).PixelsPerDip;
+        if (covers.Length > 0 || gridCrop)
+            _loader.CropFor = i => i < covers.Length ? covers[i] : gridCrop ? GridCrop(i, gridOrder, gridModel, gridFirst, gridTilePx) : null;
         View.PrefetchBudgetBytes = decoded * 36 / 100;
         _gifs.Clear();
         View.Badges = result.slice.badges;
@@ -316,6 +330,11 @@ public partial class MainWindow : Window
             ? $"{pg.Tiles.Count:N0} folder{(pg.Tiles.Count == 1 ? "" : "s")}, {_order.Length - pg.Tiles.Count:N0} files"
             : $"{_order.Length:N0} shown of {model.Count:N0}";
         if (result.page is { } pp && _order.Length == 0) EmptyNote.Text = "Nothing in this folder matches the current switches and search.";
+        if (InTools && _order.Length == 0)
+            EmptyNote.Text = _settings.Tool == "Duplicates"
+                ? (_dupResult is null ? "Press Find to look for copies of the same file in each top-level folder." : "No copies found with these options.")
+                : "Nothing falls below these minimums in the folders chosen in Select folders.";
+        if (InTools && _settings.Tool == "Duplicates" && _dupResult is { } dr) CountText.Text = $"{dr.Blocks.Count:N0} groups, {_order.Length:N0} files";
     }
 
     /// <summary>The length shown on video tiles.</summary>
@@ -357,8 +376,7 @@ public partial class MainWindow : Window
     private void OnLayoutChanged(object s, RoutedEventArgs e)
     {
         if (_loading) return;
-        _settings.RowsLayout = RowsBtn.IsChecked == true;
-        View.RowsMode = _settings.RowsLayout;
+        SetLayout(RowsBtn.IsChecked == true ? "Rows" : "Masonry");
     }
 
     private void OnSearchChanged(object s, TextChangedEventArgs e) { if (_loading) return; _searchDelay.Stop(); _searchDelay.Start(); }
@@ -1026,7 +1044,7 @@ public partial class MainWindow : Window
     private void Navigate(string where)
     {
         SetSidebar(false);
-        if (where is "Home" or "Browse" or "Favourites") { if (where != _section || (where == "Browse" && _folder.Length > 0)) _ = Go(where, ""); else UpdateNavUi(); return; }
+        if (where is "Home" or "Browse" or "Favourites" or "Tools") { if (where != _section || (where == "Browse" && _folder.Length > 0)) _ = Go(where, ""); else UpdateNavUi(); return; }
         UpdateNavUi();
         StatusText.Text = $"{where} is coming in a later build.";
     }
@@ -1059,6 +1077,7 @@ public partial class MainWindow : Window
         ("Space  or  click the video", "Video: play / pause"), (",   .", "Video: back / forward 3 seconds"), ("Shift + Left   Right", "Video: back / forward 5 seconds"),
         ("9   0", "Video: back / forward a frame"), ("Up   Down", "Video: volume (3% a press, hold to keep going)"), ("M", "Video: sound on / off"),
         ("[   ]", "Video: slower / faster"), ("L", "Video: loop on / off"),
+        ("Space   Left   Right   Esc", "Slideshow: pause or carry on, step, stop (start it with the button beside the star)"),
     };
 
     private void OnKeysClick(object s, RoutedEventArgs e) => ShowKeys(false);
@@ -1134,6 +1153,7 @@ public partial class MainWindow : Window
 
     private void CloseViewer(bool fromUser)
     {
+        StopSlideshow();
         if (fromUser) ForgetViewerSteps();
         _viewerClosedAt = Stopwatch.GetTimestamp();
         _vToken++;
@@ -1456,6 +1476,7 @@ public partial class MainWindow : Window
 
     private void ViewerKey(KeyEventArgs e)
     {
+        if (SlideKey(e)) { e.Handled = true; return; }
         if (VideoKey(e)) { e.Handled = true; return; }
         switch (e.Key)
         {

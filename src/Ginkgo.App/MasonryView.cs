@@ -22,7 +22,9 @@ public sealed class MasonryView : FrameworkElement
     private string?[]? _labels;
     private double _offset;
     private float _tileTarget = 220;
-    private const float Gap = 3;
+    private float _gap = 3;
+    /// <summary>The space between tiles (screen units).</summary>
+    public float Gap { get => _gap; set { value = Math.Clamp(value, 0, 40); if (Math.Abs(_gap - value) < 0.01) return; _gap = value; Relayout(); } }
     private readonly List<int> _visible = new();
     private readonly Typeface _face = new("Segoe UI");
     private readonly Brush[] _palette;
@@ -258,6 +260,22 @@ public sealed class MasonryView : FrameworkElement
     private bool _rows;
     /// <summary>false = equal-width columns; true = rows of equal height (the size is then the row height).</summary>
     public bool RowsMode { get => _rows; set { if (_rows == value) return; _rows = value; Relayout(); } }
+    private bool _grid, _gridFit;
+    /// <summary>The Grid layout: square cells of one size (<see cref="GridFit"/>: pictures keep their shape inside; otherwise cropped to fill).</summary>
+    public bool GridMode { get => _grid; set { if (_grid == value) return; _grid = value; Relayout(); } }
+    public bool GridFit { get => _gridFit; set { if (_gridFit == value) return; _gridFit = value; Relayout(); } }
+    /// <summary>Short details for the tile under the mouse ("1920 x 1080  ·  2.4 MB"), drawn in its top-right corner (null: none).</summary>
+    public Func<int, string?>? HoverDetails { get; set; }
+
+    /// <summary>The tile at a point in the content (scroll offset + y), for the scrubber's label (-1: none).</summary>
+    public int TileAtContent(double y)
+    {
+        if (_layout is null || _layout.Count == 0) return -1;
+        var l = new List<int>();
+        _layout.GetVisible((float)y, (float)y + 1, l);
+        if (l.Count == 0) _layout.GetVisible((float)y - 400, (float)y + 400, l);
+        return l.Count == 0 ? -1 : l[0];
+    }
 
     /// <summary>How many leading items are folder covers, shown as a grid of equal book-cover tiles with their names underneath.</summary>
     public int CoverCount { get; private set; }
@@ -304,7 +322,7 @@ public sealed class MasonryView : FrameworkElement
     /// Tiles big enough for a video's time and Paused label: columns at least 200 wide (about 12 across a 2560 screen), or equal
     /// rows at least 140 tall.
     /// </summary>
-    private bool LabelsFit(Rect r) => _rows ? r.Height >= 140 : r.Width >= 200;
+    private bool LabelsFit(Rect r) => _rows && !_grid ? r.Height >= 140 : r.Width >= 200;
 
     private void RelayoutCore()
     {
@@ -313,6 +331,7 @@ public sealed class MasonryView : FrameworkElement
         double frac = TotalHeight > 0 ? _offset / TotalHeight : 0;
         MasonryResult Files(ItemSpec[] items)
         {
+            if (_grid) return UniformGrid.Compute(items, (float)ActualWidth, MasonryLayout.ColumnsFor((float)ActualWidth, _tileTarget, Gap), Gap, _gridFit);
             if (_rows) return JustifiedLayout.Compute(items, (float)ActualWidth, _tileTarget, Gap);
             int cols = MasonryLayout.ColumnsFor((float)ActualWidth, _tileTarget, Gap);
             return MasonryLayout.Compute(items, (float)ActualWidth, cols, Gap);
@@ -680,6 +699,7 @@ public sealed class MasonryView : FrameworkElement
             else if (isVideo && info.Item2 >= 0) DrawPausedLabel(dc, r, index, info.Item2);
             else if (gif && r.Width > 70 && (!isVideo || LabelsFit(r))) DrawBadge(dc, r, index);
             if (label < 0 || index >= CoverCount) DrawStar(dc, r, index, hovered);
+            if (hovered && index >= CoverCount && !playingHere && HoverDetails is { } hd && r.Width >= 150 && r.Height >= 60 && hd(index) is { Length: > 0 } det) DrawHoverDetails(dc, r, det);
             if (CopiesOf is { } co && index >= CoverCount && r.Width >= 60 && co(index) is int nc and > 0) DrawCopies(dc, r, nc, isVideo && playingHere);
         }
         DrawSets(dc, offPx, dpi);
@@ -1128,7 +1148,8 @@ public sealed class MasonryView : FrameworkElement
             {
                 if (_layout.W[k] <= 0) continue;
                 var rk = new Rect(_layout.X[k], _layout.Y[k] - offPx / dpi, _layout.W[k], _layout.H[k]);
-                if (parts.Count > 0 && (!_rows || Math.Abs(parts[^1].Top - rk.Top) < 0.5)) parts[^1] = Rect.Union(parts[^1], rk);
+                // in rows and the grid a set can wrap: one outline per row (tiles in the same row overlap vertically)
+                if (parts.Count > 0 && (!(_rows || _grid) || (rk.Top < parts[^1].Bottom - 0.5 && rk.Bottom > parts[^1].Top + 0.5))) parts[^1] = Rect.Union(parts[^1], rk);
                 else parts.Add(rk);
             }
             if (parts.Count == 0) continue;
@@ -1160,6 +1181,16 @@ public sealed class MasonryView : FrameworkElement
             dc.DrawText(ft, new Point(box.Left + 6, box.Top + (box.Height - ft.Height) / 2));
             if (b.Collapsed || b.Large) _setLabels.Add((b.First, box));
         }
+    }
+
+    private void DrawHoverDetails(DrawingContext dc, Rect r, string text)
+    {
+        double ppd = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        var ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 10.5, Brushes.White, ppd)
+        { MaxTextWidth = Math.Max(10, r.Width - 56), MaxLineCount = 1, Trimming = TextTrimming.CharacterEllipsis };
+        var box = new Rect(r.Right - ft.Width - 16, r.Top + 6, ft.Width + 10, 17);
+        dc.DrawRoundedRectangle(BadgeBack, null, box, 3, 3);
+        dc.DrawText(ft, new Point(box.Left + 5, box.Top + (17 - ft.Height) / 2));
     }
 
     /// <summary>"+1": the same file is in another folder too (it shows once).</summary>

@@ -83,6 +83,34 @@ public sealed class AppSettings
     public bool FolderSortReverse { get; set; }
     /// <summary>true = rows of equal height; false = equal-width columns.</summary>
     public bool RowsLayout { get; set; }
+    /// <summary>The Grid layout (square cells of one size), which wins over <see cref="RowsLayout"/>; in it, pictures fit inside their cell or are cropped to fill it.</summary>
+    public bool GridLayout { get; set; }
+    public bool GridFit { get; set; }
+    /// <summary>Space between tiles, in screen units.</summary>
+    public float Spacing { get; set; } = 3;
+    /// <summary>Size and dimensions in the corner of the tile under the mouse.</summary>
+    public bool HoverDetails { get; set; } = true;
+
+    // ---- slideshow ----
+    public double SlideSeconds { get; set; } = 5;
+    public bool SlideShuffle { get; set; }
+    public bool SlideLoop { get; set; } = true;
+    /// <summary>A video plays to its end before the slideshow moves on (otherwise it gets the same time as a picture).</summary>
+    public bool SlideVideosToEnd { get; set; } = true;
+
+    // ---- Tools ----
+    public string Tool { get; set; } = "Duplicates";
+    public bool DupNear { get; set; }
+    public int DupBits { get; set; } = 6;
+    public double DupMinMB { get; set; }
+    public bool DupVideos { get; set; } = true;
+    public bool DupGifs { get; set; } = true;
+    public string DupOrder { get; set; } = "Copies";
+    public Ginkgo.Data.LowResRule LowRes { get; set; } = new();
+    public List<Ginkgo.Data.LowResRule> LowResPresets { get; set; } = new();
+
+    /// <summary>Each section's default view ("Home", "Browse", "Folder", "Favourites"), saved with Save as default.</summary>
+    public Dictionary<string, ViewState> Defaults { get; set; } = new();
     public bool BarHidden { get; set; }
     /// <summary>The bottom bar is hidden too (second press of H).</summary>
     public bool StatusHidden { get; set; }
