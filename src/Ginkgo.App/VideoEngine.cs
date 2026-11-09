@@ -170,7 +170,7 @@ public sealed class VideoEngine : IDisposable
             _media = new Media(s_vlc!, path, FromType.FromPath);
             // MP4s whose pictures are stamped seconds ahead of their sound (some phone and Twitter files): LibVLC's own MP4 reader
             // shows them seconds late (a still picture, then a skip); FFmpeg's reader plays them right
-            if (Mp4Probe.PicturesStampedAhead(path)) _media.AddOption(":demux=avformat");
+            if (Mp4Probe.PicturesStampedAhead(path)) _media.AddOption(":demux=avformat,any");       // (",any": LibVLC's own if that reader were missing)
             // up to full HD the processor decodes (quick to restart after a jump, and the frames come to memory anyway); bigger
             // videos use the graphics card
             if (_srcPixels > 0 && _srcPixels <= 1920L * 1088) _media.AddOption(":avcodec-hw=none");
