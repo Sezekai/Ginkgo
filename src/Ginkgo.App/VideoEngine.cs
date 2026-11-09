@@ -157,7 +157,8 @@ public sealed class VideoEngine : IDisposable
         _pauseOnFirstFrame = false;
         _trustFirstReport = false;
         ResetClock(StartSec, startPaused);
-        _floorSec = StartSec; _floorUntil = 0;          // a start part way begins at the key frame there: its own time is right
+        _floorSec = StartSec; _floorUntil = 0;
+        _selfClock = StartSec > 0.5;          // a start part way begins at the key frame there: its own time is right
         _seqAtStart = _frameSeq;
         _startTick = Stopwatch.GetTimestamp();
         Post(() =>
@@ -289,6 +290,10 @@ public sealed class VideoEngine : IDisposable
                     // just after a jump LibVLC reports the key frame before the target for a moment (the picture is already the
                     // target's): that report is ignored, so 0:31 stays 0:31
                     if (_floorUntil != 0 && now < _floorUntil && rep < _floorSec - 0.08) { }
+                    // after a jump (or a start part way) the clock keeps its own time: some files make LibVLC report the key
+                    // frame it decoded from (which can be 20 seconds back) for as long as they play on. Only a report close to the
+                    // clock is taken as a correction
+                    else if (_selfClock && Math.Abs(rep - est) > 1.0) { }
                     // starting part way, LibVLC says 0 for a moment before it has got there
                     else if (StartSec > 0.5 && rep < 0.05 && now - _startTick < 3 * Stopwatch.Frequency) { }
                     // then it says where it really started (the key frame before the time asked for)
@@ -308,7 +313,15 @@ public sealed class VideoEngine : IDisposable
             return len > 0 ? Math.Clamp(p, 0, len) : Math.Max(0, p);
         }
     }
-    private double Estimate(long now) => _clockBase + (now - _clockTick) / (double)Stopwatch.Frequency * (_mp?.IsPlaying == true ? Rate : 0);
+    private double Estimate(long now)
+    {
+        // if pictures stop coming (the drive is slow), the clock waits for them rather than running on alone
+        long lf = Volatile.Read(ref _lastFrameTick);
+        if (_selfClock && lf > _clockTick && now - lf > Stopwatch.Frequency * 3 / 10) now = lf + Stopwatch.Frequency * 3 / 10;
+        return _clockBase + (now - _clockTick) / (double)Stopwatch.Frequency * (_mp?.IsPlaying == true ? Rate : 0);
+    }
+    private volatile bool _selfClock;
+    private long _lastFrameTick;
 
     public double PositionSec => SmoothPositionSec;
 
@@ -321,6 +334,7 @@ public sealed class VideoEngine : IDisposable
         bool paused = _pausedWanted;
         _ended = false;
         ResetClock(sec, paused);
+        _selfClock = true;
         _floorSec = sec; _floorUntil = Stopwatch.GetTimestamp() + 3 * Stopwatch.Frequency;
         _seekTo = sec;
         if (Interlocked.Exchange(ref _seekQueued, 1) == 1) return;           // one already waiting: it'll use the newest time
@@ -460,6 +474,7 @@ public sealed class VideoEngine : IDisposable
         {
             // again from the start: the player can't be restarted from inside its own event, so it's done here, on its thread
             ResetClock(0, false);
+            _selfClock = false;
             _mp.Stop();
             _media.AddOption(":start-time=0");
             _mp.Play(_media);
@@ -511,6 +526,7 @@ public sealed class VideoEngine : IDisposable
     {
         lock (_lock) { _ready = _write; _write ^= 1; _bufGen = _runningGen; }
         _frameSeq++;
+        Volatile.Write(ref _lastFrameTick, Stopwatch.GetTimestamp());
         if (_pauseOnFirstFrame)
         {
             // started paused: the first picture is up, make sure it stays there
