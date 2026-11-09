@@ -28,6 +28,7 @@ public partial class SettingsWindow : Window
         RadiusSlider.Value = s.CoverRadius; RadiusSlider.IsEnabled = s.CoverRounded; RadiusText.Text = $"{s.CoverRadius} px";
         WarmBox.IsChecked = s.WarmCache;
         BuildGpu();
+        BuildSets();
         _init = false;
         OnMeasure(this, new RoutedEventArgs());
     }
@@ -115,6 +116,21 @@ public partial class SettingsWindow : Window
         DockPanel.SetDock(control, Dock.Right); d.Children.Add(control);
         d.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) });
         return d;
+    }
+
+    /// <summary>How sets show (a block up to a size, a stacked tile above it), how they sort, and whether copies of a file show once.</summary>
+    private void BuildSets()
+    {
+        var limit = new Slider { Width = 160, Minimum = 1, Maximum = 20, IsSnapToTickEnabled = true, TickFrequency = 1, Value = Math.Clamp(_s.SetLimit, 1, 20), VerticalAlignment = VerticalAlignment.Center };
+        var limitText = new TextBlock { Text = $"{_s.SetLimit}" };
+        limit.ValueChanged += (_, e) => { limitText.Text = $"{(int)e.NewValue}"; if (_init) return; _s.SetLimit = (int)e.NewValue; _main.ApplySettings(); _main.RebuildView(); };
+        SetsPanel.Children.Add(Row("Sets with up to this many images show as one block; bigger ones as a stacked tile that opens with a click", limit, null, limitText));
+        var first = new CheckBox { Content = "Sort every set by its first image (otherwise: name by the set's folder, size by its total, dates by its newest file)", Foreground = Brush("#E4E4E8"), IsChecked = _s.SetsByFirst, Margin = new Thickness(0, 0, 0, 6) };
+        first.Click += (_, _) => { _s.SetsByFirst = first.IsChecked == true; _main.ApplySettings(); _main.RebuildView(); };
+        SetsPanel.Children.Add(first);
+        var copies = new CheckBox { Content = "Show a file once when the exact same file is in several folders (a +1 in its corner; right-click lists the other places)", Foreground = Brush("#E4E4E8"), IsChecked = _s.HideCopies, Margin = new Thickness(0, 0, 0, 6) };
+        copies.Click += (_, _) => { _s.HideCopies = copies.IsChecked == true; _main.ApplySettings(); _main.RebuildView(); };
+        SetsPanel.Children.Add(copies);
     }
 
     private void BuildGpu()

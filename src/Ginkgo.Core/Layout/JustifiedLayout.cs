@@ -22,26 +22,31 @@ public static class JustifiedLayout
             bool full = false;
             while (end < n)
             {
+                if (items[end].Hidden) { end++; continue; }
                 float a = items[end].Aspect > 0.01f ? items[end].Aspect : 1f;
                 sum += a; end++;
-                rowH = (width - gap * (end - start - 1)) / sum;
+                int shown = 0; for (int k = start; k < end; k++) if (!items[k].Hidden) shown++;
+                rowH = (width - gap * (shown - 1)) / sum;
                 if (rowH <= targetRowHeight) { full = true; break; }      // as many as fit while staying at or under the target height
             }
+            while (end < n && items[end].Hidden) end++;                     // a collapsed set's hidden members stay with its tile
             if (!full) rowH = targetRowHeight;                             // a short last row keeps the target height, left aligned
+            bool any = false; for (int k = start; k < end; k++) if (!items[k].Hidden) { any = true; break; }
             float cx = 0;
             for (int i = start; i < end; i++)
             {
+                if (items[i].Hidden) { x[i] = i > 0 ? x[i - 1] : 0; y[i] = i > 0 ? y[i - 1] : top; continue; }
                 float a = items[i].Aspect > 0.01f ? items[i].Aspect : 1f;
                 x[i] = cx; y[i] = top; h[i] = rowH; w[i] = a * rowH;
                 cx += w[i] + gap;
             }
-            top += rowH + gap;
+            if (any) top += rowH + gap;
             start = end;
         }
         float total = n > 0 ? top - gap : 0;
         // one "column" holding everything in reading order lets the same fast visible-range search work
-        var all = new int[n];
-        for (int i = 0; i < n; i++) all[i] = i;
-        return new MasonryResult(n, 1, width, gap, total, x, y, w, h, new ushort[n], new[] { all });
+        var all = new List<int>(n);
+        for (int i = 0; i < n; i++) if (!items[i].Hidden) all.Add(i);
+        return new MasonryResult(n, 1, width, gap, total, x, y, w, h, new ushort[n], new[] { all.ToArray() });
     }
 }

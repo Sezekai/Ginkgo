@@ -31,6 +31,7 @@ public partial class MainWindow
         View.ItemClicked += i =>
         {
             if (RecentlyNavigated()) return;
+            if (CollapsedSetAt(i) is not null) { ToggleSet(i); return; }        // a stacked set opens with a click
             if (IsFolderTile(i)) OpenFolder(_page!.Tiles[i].Path);
             else if (IsVideoTile(i)) ClickVideoTile(i);          // a video plays in its tile
             else if (InBrowse && i >= 0) OpenViewer(i);           // inside a folder one click opens a picture
@@ -63,11 +64,11 @@ public partial class MainWindow
         bool was = _loading; _loading = true;
         try
         {
-            string fileSort = _settings.Sort;
+            string fileSort = _settings.Sort; bool fileRev = _settings.SortReverse;
             if (InBrowse)
             {
                 var p = Prefs(_folder);
-                fileSort = p.FileSort;
+                fileSort = p.FileSort; fileRev = p.FileReverse;
                 foreach (ComboBoxItem it in FolderSortBox.Items) if ((string)it.Tag == p.FolderSort) FolderSortBox.SelectedItem = it;
                 if (FolderSortBox.SelectedItem is null) FolderSortBox.SelectedIndex = 0;
                 FolderRevBtn.IsChecked = p.FolderReverse;
@@ -75,6 +76,8 @@ public partial class MainWindow
             SortBox.SelectedItem = null;
             foreach (ComboBoxItem it in SortBox.Items) if ((string)it.Tag == fileSort) SortBox.SelectedItem = it;
             if (SortBox.SelectedItem is null) SortBox.SelectedIndex = 0;
+            SortRevBtn.IsChecked = fileRev;
+            UpdateSortTip();
             ShuffleBtn.Visibility = fileSort == "Random" ? Visibility.Visible : Visibility.Collapsed;
         }
         finally { _loading = was; }
@@ -314,6 +317,13 @@ public partial class MainWindow
                 menu.Items.Add(new Separator());
                 if (!InFavourites) Item("Open its folder in Browse", () => OpenFolder(_model.Display[row]));
                 Item("Show in Explorer", () => ShowInExplorer(_model.Path[row], folder: false));
+                Item("Copy path", () => { try { Clipboard.SetText(_model.Path[row]); } catch { } });
+                AddCopiesMenu(menu, row);
+                if (_sets.FirstOrDefault(b => index >= b.First && index < b.First + b.Count && b.Large) is { } sb)
+                {
+                    menu.Items.Add(new Separator());
+                    Item(sb.Collapsed ? $"Open the set “{sb.Name}”" : $"Close the set “{sb.Name}”", () => ToggleSet(sb.First));
+                }
             }
         }
         menu.IsOpen = true;

@@ -41,6 +41,7 @@
                 <TextBlock x:Name="DiagText" DockPanel.Dock="Right" TextTrimming="CharacterEllipsis" Foreground="#E0B060" FontFamily="Consolas" Margin="12,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
                 <TextBlock x:Name="CountText" DockPanel.Dock="Right" Foreground="{StaticResource Text}" Margin="12,0,0,0" VerticalAlignment="Center"/>
                 <ProgressBar x:Name="IdBar" DockPanel.Dock="Right" Width="120" Minimum="0" Maximum="1" Margin="12,0,0,0" Visibility="Collapsed" VerticalAlignment="Center"/>
+                <ProgressBar x:Name="DetailsBar" DockPanel.Dock="Right" Width="120" Minimum="0" Maximum="1" Margin="12,0,0,0" Visibility="Collapsed" VerticalAlignment="Center" ToolTip="Reading photo dates or looking for copies of the same file"/>
                 <ProgressBar x:Name="FavBar" DockPanel.Dock="Right" Width="120" Minimum="0" Maximum="1" Margin="12,0,0,0" Visibility="Collapsed" VerticalAlignment="Center" ToolTip="Favourites: checking or copying"/>
                 <TextBlock x:Name="StatusText" Foreground="{StaticResource Dim}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
             </DockPanel>
@@ -61,18 +62,33 @@
                                     VerticalAlignment="Center" ToolTip="Which videos to show: watched, paused, not watched" Click="OnVideosMore"/>
                         </StackPanel>
                         <ToggleButton x:Name="GeneralBtn" Style="{StaticResource ContentToggle}" Content="General" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged" ToolTip="Show General files (G)"/>
-                        <ToggleButton x:Name="NsfwBtn" Style="{StaticResource ContentToggle}" Content="NSFW" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnFilterChanged" ToolTip="Show NSFW files (N)"/>
-                        <ToggleButton x:Name="VeryBtn" Style="{StaticResource ContentToggle}" Content="Very" Height="{DynamicResource KeyHeight}" Margin="0,3,17,3" VerticalAlignment="Center" Click="OnFilterChanged" ToolTip="Show Very files (V)"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,3,9,3" VerticalAlignment="Center">
+                            <ToggleButton x:Name="NsfwBtn" Style="{StaticResource ContentToggle}" Content="NSFW" Height="{DynamicResource KeyHeight}" VerticalAlignment="Center" Click="OnFilterChanged" ToolTip="Show NSFW files (N)"/>
+                            <Button x:Name="NsfwMoreBtn" Style="{StaticResource IconButton}" Content="&#xE70D;" FontSize="10" Width="22" Height="{DynamicResource KeyHeight}" Margin="1,0,0,0"
+                                    VerticalAlignment="Center" ToolTip="NSFW folder by folder" Click="OnNsfwMore"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,3,17,3" VerticalAlignment="Center">
+                            <ToggleButton x:Name="VeryBtn" Style="{StaticResource ContentToggle}" Content="Very" Height="{DynamicResource KeyHeight}" VerticalAlignment="Center" Click="OnFilterChanged" ToolTip="Show Very files (V)"/>
+                            <Button x:Name="VeryMoreBtn" Style="{StaticResource IconButton}" Content="&#xE70D;" FontSize="10" Width="22" Height="{DynamicResource KeyHeight}" Margin="1,0,0,0"
+                                    VerticalAlignment="Center" ToolTip="Very folder by folder" Click="OnVeryMore"/>
+                        </StackPanel>
                         <TextBox x:Name="SearchBox" local:BarPanel.PreferredWidth="170" MinWidth="90" Height="{DynamicResource KeyHeight}" Margin="0,3,17,3" VerticalAlignment="Center" VerticalContentAlignment="Center" TextChanged="OnSearchChanged" ToolTip="Search file and folder names (/ or Ctrl+F)"/>
-                        <ComboBox x:Name="SortBox" local:BarPanel.PreferredWidth="150" MinWidth="104" Margin="0,3,9,3" Height="{DynamicResource KeyHeight}" VerticalAlignment="Center" SelectionChanged="OnSortChanged">
-                            <ComboBoxItem Content="Newest first seen" Tag="FirstSeen"/>
-                            <ComboBoxItem Content="Newest modified" Tag="Modified"/>
-                            <ComboBoxItem Content="Name A to Z" Tag="Name"/>
-                            <ComboBoxItem Content="Largest file" Tag="SizeDesc"/>
-                            <ComboBoxItem Content="Smallest file" Tag="SizeAsc"/>
-                            <ComboBoxItem Content="Most pixels" Tag="Largest"/>
+                        <Button x:Name="FiltersBtn" Content="Filters" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnFilters" ToolTip="Format, size, dimensions, shape, video length, dates, favourites, sets"/>
+                        <ComboBox x:Name="SortBox" local:BarPanel.PreferredWidth="130" MinWidth="96" Margin="0,3,2,3" Height="{DynamicResource KeyHeight}" VerticalAlignment="Center" SelectionChanged="OnSortChanged" ToolTip="Order">
+                            <ComboBoxItem Content="First seen" Tag="FirstSeen"/>
+                            <ComboBoxItem Content="Modified" Tag="Modified"/>
+                            <ComboBoxItem Content="Created" Tag="Created"/>
+                            <ComboBoxItem Content="Date taken" Tag="Taken"/>
+                            <ComboBoxItem Content="Name" Tag="Name"/>
+                            <ComboBoxItem Content="Folder" Tag="Folder"/>
+                            <ComboBoxItem Content="File size" Tag="Size"/>
+                            <ComboBoxItem Content="Width" Tag="Width"/>
+                            <ComboBoxItem Content="Height" Tag="Height"/>
+                            <ComboBoxItem Content="Megapixels" Tag="Megapixels"/>
+                            <ComboBoxItem Content="Video length" Tag="Duration"/>
                             <ComboBoxItem Content="Random" Tag="Random"/>
                         </ComboBox>
+                        <ToggleButton x:Name="SortRevBtn" Content="&#xE8CB;" FontFamily="Segoe MDL2 Assets" Width="34" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnSortRev" ToolTip="Reverse the order"/>
                         <Button x:Name="ShuffleBtn" Content="Reshuffle" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Visibility="Collapsed" Click="OnReshuffle"/>
                         <Slider x:Name="SizeSlider" local:BarPanel.PreferredWidth="120" MinWidth="60" Minimum="0" Maximum="1" Margin="10,3,12,3" VerticalAlignment="Center" ValueChanged="OnSizeChanged" ToolTip="Picture size (Ctrl + mouse wheel, + and -)"/>
                         <ToggleButton x:Name="RowsBtn" Content="Equal rows" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnLayoutChanged" ToolTip="Rows of equal height instead of equal-width columns (L)"/>
@@ -84,6 +100,10 @@
                         <Button x:Name="MoreBtn" local:BarPanel.Pinned="True" Style="{StaticResource IconButton}" Content="&#xE712;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="More" Click="OnMoreBar"/>
                         <Button x:Name="HideBarBtn" local:BarPanel.Pinned="True" Style="{StaticResource IconButton}" Content="&#xE70E;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Hide this bar (H). Press H again to hide the bottom bar too, and once more to bring both back" Click="OnHideBar"/>
                     </local:BarPanel>
+            </Border>
+            <!-- the filters in use, each with an x, and Clear all -->
+            <Border x:Name="ChipBar" Background="#1C1C20" BorderBrush="#34343C" BorderThickness="0,0,0,1" Padding="14,6" Visibility="Collapsed">
+                <WrapPanel x:Name="Chips" Orientation="Horizontal"/>
             </Border>
             <Border x:Name="BrowseBar" Background="#1C1C20" BorderBrush="#34343C" BorderThickness="0,0,0,1" Padding="14,7" Visibility="Collapsed"
                     MouseLeftButtonDown="OnTitleDown" MouseMove="OnTitleMove" MouseLeftButtonUp="OnTitleUp">

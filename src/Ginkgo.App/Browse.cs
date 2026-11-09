@@ -142,6 +142,10 @@ public sealed class BrowsePage
         ("Images", "Image count"), ("Videos", "Video count"), ("Gifs", "GIF count"), ("Size", "Total size"), ("Updated", "Last updated"), ("Subfolders", "Subfolder count"),
     };
 
+    /// <summary>The Connected Art sets among the files (positions in <see cref="Order"/>), and copies of files shown once.</summary>
+    public List<SetBlock> Sets = new();
+    public Dictionary<int, List<int>> Copies = new();
+
     public static BrowsePage Build(LibraryModel m, ViewQuery q, string folder, bool ownOnly, string folderSort, bool folderReverse,
         CoverStore covers, ISet<string> details)
     {
@@ -183,9 +187,13 @@ public sealed class BrowsePage
             labels.Add(t.Name + "\n" + DetailLine(t, details));
         }
         p.Crops = crops.ToArray();
-        var sorted = m.SortRows(files.ToArray(), q);
-        order.AddRange(sorted);
-        for (int k = 0; k < sorted.Length; k++) labels.Add(null);
+        q.PreferFolder = p.Folder;                                 // of two copies of a file, the one in this folder shows
+        var arr = m.ArrangeFiltered(files, q);
+        int shift = order.Count;
+        p.Sets = arr.Sets.Select(b => b with { First = b.First + shift }).ToList();
+        p.Copies = arr.Copies;
+        order.AddRange(arr.Order);
+        for (int k = 0; k < arr.Order.Length; k++) labels.Add(null);
         p.Order = order.ToArray(); p.Labels = labels.ToArray();
         return p;
     }

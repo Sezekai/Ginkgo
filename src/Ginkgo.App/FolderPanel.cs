@@ -23,6 +23,14 @@ public sealed class FolderPanel : Border
     }
 
     public event Action<HashSet<string>>? Changed;
+    /// <summary>A folder was made standalone or put back, or sent to Rarely used or brought back.</summary>
+    public event Action<HashSet<string>, HashSet<string>>? PlacesChanged;
+    private readonly HashSet<string> _standalone = new(StringComparer.OrdinalIgnoreCase), _rarely = new(StringComparer.OrdinalIgnoreCase);
+    private readonly TextBlock _note;
+    /// <summary>Folders that stand on their own: a standalone or rarely used folder is left alone by its parent's switch.</summary>
+    private bool Independent(Node n) => n.Path.Length > 0 && (_standalone.Contains(n.Path) || _rarely.Contains(n.Path));
+    private static bool IsConnectedArt(Node n) => n.Parent is { Path.Length: 0 } && n.Name.Equals(Ginkgo.Core.ConnectedArt.FolderName, StringComparison.OrdinalIgnoreCase);
+    private IEnumerable<Node> KidsOf(Node n) => IsConnectedArt(n) ? Enumerable.Empty<Node>() : n.Kids.Where(k => !Independent(k));
 
     private readonly JustifyPanel _flow = new();
     private readonly ComboBox _sortBox = new() { Width = 140, Margin = new Thickness(0, 0, 8, 0) };
@@ -65,22 +73,27 @@ public sealed class FolderPanel : Border
         head.Children.Add(all); head.Children.Add(none); head.Children.Add(fold); head.Children.Add(_summary);
 
         var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = 460, Content = _flow };
-        var note = new TextBlock
+        _note = new TextBlock
         {
-            Text = "Click a folder to show or hide it and everything inside it. The arrow opens its subfolders. Counts follow the General / NSFW / Very switches.",
+            Text = "Click a folder to show or hide it and everything inside it. The arrow opens its subfolders. Right-click a folder to make it standalone (its own row and switch) or send it to Rarely used. Counts follow the General / NSFW / Very switches.",
             Foreground = Dim, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 10, 0, 0), FontSize = 12
         };
         var stack = new StackPanel();
-        stack.Children.Add(head); stack.Children.Add(scroll); stack.Children.Add(note);
+        stack.Children.Add(head); stack.Children.Add(scroll); stack.Children.Add(_note);
         Child = stack;
     }
 
     public event Action<string, bool>? SortChanged;
 
-    /// <summary>Gives the panel the folders and which of them are hidden.</summary>
-    public void Load(Dictionary<string, LibraryModel.FolderStat> stats, IEnumerable<string> off)
+    /// <summary>The words under the folders (the NSFW and Very pop-outs say what their switches do).</summary>
+    public string NoteText { set => _note.Text = value; }
+
+    /// <summary>Gives the panel the folders, which of them are hidden, and which are standalone or rarely used.</summary>
+    public void Load(Dictionary<string, LibraryModel.FolderStat> stats, IEnumerable<string> off, IEnumerable<string>? standalone = null, IEnumerable<string>? rarely = null)
     {
         _off.Clear(); foreach (var o in off) _off.Add(o);
+        _standalone.Clear(); if (standalone is not null) foreach (var x in standalone) _standalone.Add(x);
+        _rarely.Clear(); if (rarely is not null) foreach (var x in rarely) _rarely.Add(x);
         _nodes.Clear(); _roots = new();
         var root = new Node { Path = "", Name = "(files directly in the library)" };
         _nodes[""] = root;
@@ -92,7 +105,7 @@ public sealed class FolderPanel : Border
         foreach (var (key, st) in stats)
             if (_nodes.TryGetValue(key, out var n)) { n.Own = st.Own; n.OwnSize = st.Size; n.OwnNewest = st.Newest; }
         Tally(root);
-        _roots = root.Kids.Where(k => k.Sub > 0).ToList();
+        _roots = root.Kids.Where(k => k.Sub > 0 && !Independent(k)).ToList();
         if (root.Own > 0) _roots.Insert(0, new Node { Path = "", Name = root.Name, Own = root.Own, Sub = root.Own, SubSize = root.OwnSize, SubNewest = root.OwnNewest });
         Rebuild();
     }
@@ -107,10 +120,16 @@ public sealed class FolderPanel : Border
         return n;
     }
 
-    private static void Tally(Node n)
+    /// <summary>Totals include everything beneath, except standalone and rarely used folders (they count on their own row).</summary>
+    private void Tally(Node n)
     {
         n.Sub = n.Own; n.SubSize = n.OwnSize; n.SubNewest = n.OwnNewest;
-        foreach (var k in n.Kids) { Tally(k); n.Sub += k.Sub; n.SubSize += k.SubSize; n.SubNewest = Math.Max(n.SubNewest, k.SubNewest); }
+        foreach (var k in n.Kids)
+        {
+            Tally(k);
+            if (Independent(k)) continue;
+            n.Sub += k.Sub; n.SubSize += k.SubSize; n.SubNewest = Math.Max(n.SubNewest, k.SubNewest);
+        }
     }
 
     private IEnumerable<Node> Sorted(IEnumerable<Node> nodes)
@@ -135,7 +154,7 @@ public sealed class FolderPanel : Border
         void Walk(Node x)
         {
             if (x.Own > 0) { if (_off.Contains(x.Path)) hidden++; else shown++; }
-            foreach (var k in x.Kids) Walk(k);
+            foreach (var k in x.Kids) if (!Independent(k)) Walk(k);
         }
         Walk(n);
         return shown > 0 && hidden > 0 ? 2 : shown > 0 ? 1 : 0;
@@ -143,14 +162,16 @@ public sealed class FolderPanel : Border
 
     private void SetSubtree(Node n, bool on)
     {
-        void Walk(Node x) { if (on) _off.Remove(x.Path); else _off.Add(x.Path); foreach (var k in x.Kids) Walk(k); }
+        void Walk(Node x) { if (on) _off.Remove(x.Path); else _off.Add(x.Path); foreach (var k in x.Kids) if (!Independent(k)) Walk(k); }
         if (n.Path.Length == 0 && n.Kids.Count == 0) { if (on) _off.Remove(""); else _off.Add(""); return; }
         Walk(n);
     }
 
+    /// <summary>Every folder on or off, except Rarely used ones (they are switched one by one).</summary>
     private void SetAll(bool on)
     {
-        foreach (var n in _nodes.Values) { if (on) _off.Remove(n.Path); else _off.Add(n.Path); }
+        bool InRarely(Node n) { for (var x = n; x is not null; x = x.Parent) if (x.Path.Length > 0 && _rarely.Contains(x.Path)) return true; return false; }
+        foreach (var n in _nodes.Values) { if (InRarely(n)) continue; if (on) _off.Remove(n.Path); else _off.Add(n.Path); }
         Rebuild(); Changed?.Invoke(new HashSet<string>(_off, StringComparer.OrdinalIgnoreCase));
     }
 
@@ -158,7 +179,42 @@ public sealed class FolderPanel : Border
     {
         _flow.Children.Clear(); _btns.Clear();
         foreach (var n in Sorted(_roots)) Add(n, 0, _flow);
+        // standalone folders: rows of their own, labelled with their path
+        var alone = _standalone.Where(p => !_rarely.Contains(p) && _nodes.TryGetValue(p, out var x) && x.Sub > 0).Select(p => _nodes[p]);
+        foreach (var n in Sorted(alone)) Add(n, 0, _flow, pathLabel: true);
+        var rare = _rarely.Where(p => _nodes.TryGetValue(p, out var x) && x.Sub > 0).Select(p => _nodes[p]).ToList();
+        if (rare.Count > 0)
+        {
+            var title = new TextBlock { Text = "Rarely used  (off unless switched on here; All on and All off leave them alone)", Foreground = Dim, FontSize = 11.5, FontWeight = FontWeights.SemiBold, Margin = new Thickness(2, 10, 0, 2) };
+            JustifyPanel.SetFullRow(title, true);
+            _flow.Children.Add(title);
+            foreach (var n in Sorted(rare)) Add(n, 0, _flow, pathLabel: true);
+        }
         UpdateSummary();
+    }
+
+    private static string PathLabel(string path) => path.Replace("\\", "  ›  ");
+
+    private void ShowMenu(Node n)
+    {
+        if (n.Path.Length == 0) return;
+        var menu = new ContextMenu();
+        void Item(string text, Action act) { var it = new MenuItem { Header = text }; it.Click += (_, _) => { act(); Rebuild(); PlacesChanged?.Invoke(new(_standalone, StringComparer.OrdinalIgnoreCase), new(_rarely, StringComparer.OrdinalIgnoreCase)); }; menu.Items.Add(it); }
+        bool top = n.Parent is { Path.Length: 0 };
+        if (_rarely.Contains(n.Path)) Item("Move back from Rarely used", () => _rarely.Remove(n.Path));
+        else
+        {
+            Item("Send to Rarely used (switches it off)", () =>
+            {
+                _rarely.Add(n.Path);
+                void Off(Node x) { _off.Add(x.Path); foreach (var k in x.Kids) Off(k); }
+                Off(n);
+                Changed?.Invoke(new HashSet<string>(_off, StringComparer.OrdinalIgnoreCase));
+            });
+            if (_standalone.Contains(n.Path)) Item($"Put back inside {n.Parent?.Name}", () => _standalone.Remove(n.Path));
+            else if (!top) Item("Make standalone (its own row and switch)", () => _standalone.Add(n.Path));
+        }
+        menu.IsOpen = true;
     }
 
     private void UpdateSummary()
@@ -171,19 +227,26 @@ public sealed class FolderPanel : Border
     private static readonly Brush[] GroupFill = { Frozen("#1F2733"), Frozen("#2A2033"), Frozen("#332C1F"), Frozen("#1F3330") };
 
     /// <summary>A folder's button; when it is open, its subfolders sit in a tinted, outlined box right below it.</summary>
-    private void Add(Node n, int depth, JustifyPanel into)
+    private void Add(Node n, int depth, JustifyPanel into, bool pathLabel = false)
     {
-        bool hasKids = n.Kids.Any(k => k.Sub > 0);
+        bool hasKids = KidsOf(n).Any(k => k.Sub > 0);
         bool open = hasKids && _open.Contains(n.Path);
-        into.Children.Add(MakeButton(n, depth, hasKids, open, ownOnly: false));
+        into.Children.Add(MakeButton(n, depth, hasKids, open, ownOnly: false, pathLabel));
         if (!open) return;
         int d = Math.Min(depth, 3);
         var inner = new JustifyPanel { Gap = 5 };
-        var head = new TextBlock { Text = "Inside " + n.Name, Foreground = DepthEdge[d + 1], FontSize = 11.5, FontWeight = FontWeights.SemiBold, Margin = new Thickness(2, 0, 0, 6), TextTrimming = TextTrimming.CharacterEllipsis };
+        var head = new DockPanel { Margin = new Thickness(2, 0, 0, 6) };
+        var subsOn = new Button { Content = "Subfolders on", Padding = new Thickness(6, 0, 6, 0), FontSize = 11, Margin = new Thickness(6, 0, 0, 0) };
+        var subsOff = new Button { Content = "Subfolders off", Padding = new Thickness(6, 0, 6, 0), FontSize = 11, Margin = new Thickness(6, 0, 0, 0) };
+        void Subs(bool on) { foreach (var k in KidsOf(n)) SetSubtree(k, on); Recolor(); Changed?.Invoke(new HashSet<string>(_off, StringComparer.OrdinalIgnoreCase)); }
+        subsOn.Click += (_, _) => Subs(true); subsOff.Click += (_, _) => Subs(false);
+        DockPanel.SetDock(subsOff, Dock.Right); DockPanel.SetDock(subsOn, Dock.Right);
+        head.Children.Add(subsOff); head.Children.Add(subsOn);
+        head.Children.Add(new TextBlock { Text = "Inside " + n.Name, Foreground = DepthEdge[d + 1], FontSize = 11.5, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
         var stack = new StackPanel();
         stack.Children.Add(head); stack.Children.Add(inner);
         if (n.Own > 0) inner.Children.Add(MakeButton(n, depth + 1, false, false, ownOnly: true));
-        foreach (var k in Sorted(n.Kids)) Add(k, depth + 1, inner);
+        foreach (var k in Sorted(KidsOf(n))) Add(k, depth + 1, inner);
         var box = new Border
         {
             Child = stack, Background = GroupFill[d], BorderBrush = DepthEdge[d + 1], BorderThickness = new Thickness(3, 1, 1, 1),
@@ -221,7 +284,7 @@ public sealed class FolderPanel : Border
 
     protected override void OnPreviewMouseLeftButtonUp(MouseButtonEventArgs e) { _painting = false; base.OnPreviewMouseLeftButtonUp(e); }
 
-    private FrameworkElement MakeButton(Node n, int depth, bool hasKids, bool open, bool ownOnly)
+    private FrameworkElement MakeButton(Node n, int depth, bool hasKids, bool open, bool ownOnly, bool pathLabel = false)
     {
         var x = new Btn { N = n, Own = ownOnly };
         var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
@@ -239,7 +302,7 @@ public sealed class FolderPanel : Border
             arrow.MouseLeave += (_, _) => arrow.Background = Brushes.Transparent;
             row.Children.Add(arrow);
         }
-        string name = ownOnly ? "files here" : n.Name;
+        string name = ownOnly ? "files here" : pathLabel ? PathLabel(n.Path) : n.Name;
         int count = ownOnly ? n.Own : n.Sub;
         x.Name = new TextBlock { Text = name, Foreground = Txt, VerticalAlignment = VerticalAlignment.Center, FontStyle = ownOnly ? FontStyles.Italic : FontStyles.Normal, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 520 };
         row.Children.Add(x.Name);
@@ -269,6 +332,7 @@ public sealed class FolderPanel : Border
             }
         };
         x.B.MouseLeave += (_, _) => x.B.Background = x.Fill;
+        if (!ownOnly) x.B.MouseRightButtonUp += (_, e) => { ShowMenu(n); e.Handled = true; };
         ColorOne(x);
         return x.B;
     }

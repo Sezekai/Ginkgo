@@ -19,7 +19,7 @@ public sealed class FavouritesService
     private readonly SemaphoreSlim _one = new(1, 1);          // one check or copy at a time (the drive does one thing at a time)
 
     /// <summary>The check or copy under way (for the progress bar).</summary>
-    public FavProgress Progress { get; } = new();
+    public WorkProgress Progress { get; } = new();
     /// <summary>The stars changed (raised on a background thread).</summary>
     public event Action? Changed;
     /// <summary>A copy or removal finished, with what to tell the person (raised on a background thread).</summary>

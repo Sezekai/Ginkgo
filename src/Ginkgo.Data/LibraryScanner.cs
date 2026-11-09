@@ -63,7 +63,7 @@ public static class LibraryScanner
         var byId = new Dictionary<string, Row>();
         using (var cmd = conn.CreateCommand())
         {
-            string cols = "SELECT id, path, size, mtime, file_id, missing_since FROM files";
+            string cols = "SELECT id, path, size, mtime, file_id, missing_since, ctime FROM files";
             if (scopeFull is null) cmd.CommandText = cols;
             else if (rel0.Length == 0) cmd.CommandText = cols + " WHERE folder=''";
             else
@@ -74,7 +74,7 @@ public static class LibraryScanner
             using var r = cmd.ExecuteReader();
             while (r.Read())
             {
-                var row = new Row(r.GetInt64(0), r.GetString(1), r.GetInt64(2), r.GetInt64(3), r.IsDBNull(4) ? null : r.GetString(4), r.GetInt64(5));
+                var row = new Row(r.GetInt64(0), r.GetString(1), r.GetInt64(2), r.GetInt64(3), r.IsDBNull(4) ? null : r.GetString(4), r.GetInt64(5), r.GetInt64(6));
                 if (!InScope(row.Path)) continue;
                 existing[row.Path] = row;
                 if (row.FileId is not null) byId.TryAdd(row.FileId, row);
@@ -84,10 +84,10 @@ public static class LibraryScanner
         {
             if (scopeFull is null) return byId.GetValueOrDefault(id);
             using var cmd = conn.CreateCommand();      // the file may have come from outside this folder
-            cmd.CommandText = "SELECT id, path, size, mtime, file_id, missing_since FROM files WHERE file_id=$f LIMIT 1";
+            cmd.CommandText = "SELECT id, path, size, mtime, file_id, missing_since, ctime FROM files WHERE file_id=$f LIMIT 1";
             cmd.Parameters.AddWithValue("$f", id);
             using var r = cmd.ExecuteReader();
-            return r.Read() ? new Row(r.GetInt64(0), r.GetString(1), r.GetInt64(2), r.GetInt64(3), r.GetString(4), r.GetInt64(5)) : null;
+            return r.Read() ? new Row(r.GetInt64(0), r.GetString(1), r.GetInt64(2), r.GetInt64(3), r.GetString(4), r.GetInt64(5), r.GetInt64(6)) : null;
         }
         bool firstScan = existing.Count == 0;
         DateTime nowUtc = opt.UtcNow();
@@ -98,6 +98,8 @@ public static class LibraryScanner
         var newFiles = new List<(string full, long size, long mtime, MediaKind kind)>();
         var edits = new List<(long id, long size, long mtime)>();
         var restores = new List<long>();
+        var created = new List<(long id, long ctime)>();          // creation dates the index doesn't have yet (or that changed)
+        var createdOf = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         int counted = 0, deferred = 0;
 
         void Visit(FileInfo fi)
@@ -106,10 +108,13 @@ public static class LibraryScanner
             string full = fi.FullName;
             seen.Add(full);
             long size = fi.Length, mtime = new DateTimeOffset(fi.LastWriteTimeUtc).ToUnixTimeSeconds();
+            long ctime; try { ctime = new DateTimeOffset(fi.CreationTimeUtc).ToUnixTimeSeconds(); } catch { ctime = mtime; }
+            createdOf[full] = ctime;
             bool recent = opt.SkipRecentSeconds > 0 && (nowUtc - fi.LastWriteTimeUtc).TotalSeconds < opt.SkipRecentSeconds;
             if (existing.TryGetValue(full, out var e))
             {
                 if (e.MissingSince > 0) restores.Add(e.Id);
+                if (e.Ctime != ctime) created.Add((e.Id, ctime));
                 if (e.Size != size || e.Mtime != mtime) { if (recent) deferred++; else edits.Add((e.Id, size, mtime)); }
             }
             else if (recent) deferred++;
@@ -179,14 +184,16 @@ public static class LibraryScanner
             using (var cmd = conn.CreateCommand())
             {
                 cmd.Transaction = tx;
-                cmd.CommandText = "INSERT OR IGNORE INTO files(path,folder,top,size,mtime,kind,level,first_seen,state,file_id) VALUES($p,$f,$t,$s,$m,$k,$l,$fs,0,$id)";
+                cmd.CommandText = "INSERT OR IGNORE INTO files(path,folder,top,size,mtime,kind,level,first_seen,state,file_id,ctime) VALUES($p,$f,$t,$s,$m,$k,$l,$fs,0,$id,$c)";
                 var p = cmd.Parameters;
                 var pp = p.Add("$p", SqliteType.Text); var pf = p.Add("$f", SqliteType.Text); var pt = p.Add("$t", SqliteType.Text);
                 var ps = p.Add("$s", SqliteType.Integer); var pm = p.Add("$m", SqliteType.Integer);
                 var pk = p.Add("$k", SqliteType.Integer); var pl = p.Add("$l", SqliteType.Integer); var pfs = p.Add("$fs", SqliteType.Integer);
                 var pid = p.Add("$id", SqliteType.Text);
+                var pc = p.Add("$c", SqliteType.Integer);
                 foreach (var i in inserts)
                 {
+                    pc.Value = createdOf.TryGetValue(i.path, out long ct0) ? ct0 : i.mtime;
                     pp.Value = i.path; pf.Value = i.folder; pt.Value = i.top; ps.Value = i.size; pm.Value = i.mtime;
                     pk.Value = (int)i.kind; pl.Value = (int)i.level;
                     pfs.Value = firstScan ? i.mtime : now; // very first scan: use the file date so "newest first" means something
@@ -215,11 +222,21 @@ public static class LibraryScanner
             using (var cmd = conn.CreateCommand())
             {
                 cmd.Transaction = tx;
-                cmd.CommandText = "UPDATE files SET size=$s, mtime=$m, l_pack=0, l_off=0, l_len=0, phash=0, fhash=0, " +
+                cmd.CommandText = "UPDATE files SET size=$s, mtime=$m, l_pack=0, l_off=0, l_len=0, phash=0, fhash=0, taken=0, " +
                                   "state=CASE state WHEN 1 THEN 3 WHEN 2 THEN 0 ELSE state END WHERE id=$id";
                 var ps = cmd.Parameters.Add("$s", SqliteType.Integer); var pm = cmd.Parameters.Add("$m", SqliteType.Integer);
                 var pi = cmd.Parameters.Add("$id", SqliteType.Integer);
                 foreach (var c in edits) { ps.Value = c.size; pm.Value = c.mtime; pi.Value = c.id; cmd.ExecuteNonQuery(); }
+            }
+
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.Transaction = tx;
+                cmd.CommandText = "UPDATE files SET ctime=$c WHERE id=$id";
+                var pc = cmd.Parameters.Add("$c", SqliteType.Integer); var pi = cmd.Parameters.Add("$id", SqliteType.Integer);
+                foreach (var c in created) { pc.Value = c.ctime; pi.Value = c.id; cmd.ExecuteNonQuery(); }
+                // a moved file keeps its row: its creation date comes from its new place
+                foreach (var m in moves) if (createdOf.TryGetValue(m.path, out long mc)) { pc.Value = mc; pi.Value = m.Old.Id; cmd.ExecuteNonQuery(); }
             }
 
             using (var cmd = conn.CreateCommand())
@@ -259,7 +276,7 @@ public static class LibraryScanner
         }
     }
 
-    private sealed record Row(long Id, string Path, long Size, long Mtime, string? FileId, long MissingSince);
+    private sealed record Row(long Id, string Path, long Size, long Mtime, string? FileId, long MissingSince, long Ctime);
 
     private static string RelFolder(string root, string full, out string top)
     {

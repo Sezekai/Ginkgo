@@ -202,5 +202,53 @@ var (f, e) = g.VisibleRange(1e9f, 2e9f); Check(e == 1003 && f <= e, "grid clampe
     Check(only.Count == 4 && Math.Abs(only.TotalHeight - (12f + pitch)) < 0.01, "covers only, with a margin below");
 }
 
+// ---- Connected Art sets, level owners, natural order ----
+Check(ConnectedArt.SetOf(@"Connected Art\Story") == (@"Connected Art\Story", "Story"), "a set folder");
+Check(ConnectedArt.SetOf(@"Connected Art\NSFW\Very\Story\extra") == (@"Connected Art\NSFW\Very\Story", "Story"), "a set behind NSFW\\Very, with a subfolder");
+Check(ConnectedArt.SetOf(@"Connected Art") is null && ConnectedArt.SetOf(@"Connected Art\NSFW") is null, "loose files are not a set");
+Check(ConnectedArt.SetOf(@"Artists\Story") is null, "outside Connected Art: no set");
+Check(LevelOwner.Of(@"Artists\A\NSFW\Sub") == @"Artists\A" && LevelOwner.Of(@"Artists\A\NSFW\Very") == @"Artists\A", "NSFW and Very follow the folder holding NSFW");
+Check(LevelOwner.Of(@"Artists\A") is null && LevelOwner.Of("NSFW") == "", "General has no owner; NSFW at the top belongs to the library");
+var nat = new[] { "page 10.jpg", "page 2.jpg", "Page 1.jpg", "page 02.jpg", "a.jpg" }.OrderBy(x => x, NaturalComparer.Instance).ToArray();
+Check(nat.SequenceEqual(new[] { "a.jpg", "Page 1.jpg", "page 2.jpg", "page 02.jpg", "page 10.jpg" }), "natural order: " + string.Join(", ", nat));
+
+// ---- blocks (sets) and hidden items in the layouts ----
+{
+    var bs = new List<ItemSpec>();
+    for (int i = 0; i < 10; i++) bs.Add(new ItemSpec(1f));
+    bs.Add(new ItemSpec(1.5f, Block: 3)); bs.Add(new ItemSpec(1f)); bs.Add(new ItemSpec(0.5f));     // a set of three: 3 columns wide
+    bs.Add(new ItemSpec(1f)); bs.Add(new ItemSpec(1f, Hidden: true)); bs.Add(new ItemSpec(1f, Hidden: true));   // a collapsed set
+    for (int i = 0; i < 10; i++) bs.Add(new ItemSpec(0.8f));
+    var arr = bs.ToArray();
+    var bm = MasonryLayout.Compute(arr, 1200, 6, 8);
+    float colW = (1200 - 40) / 6f;
+    Check(Math.Abs(bm.Y[10] - bm.Y[11]) < 0.01 && Math.Abs(bm.Y[11] - bm.Y[12]) < 0.01, "a small set sits in one row");
+    float bw = bm.X[12] + bm.W[12] - bm.X[10];
+    Check(Math.Abs(bw - (colW * 3 + 16)) < 0.1, $"the set spans exactly 3 columns ({bw:F1})");
+    Check(Math.Abs(bm.H[10] - bm.H[12]) < 0.01 && bm.W[10] / bm.H[10] > 1.49f, "set members share a height and keep their shapes");
+    Check(bm.W[14] == 0 && bm.H[14] == 0 && bm.Y[14] == bm.Y[13], "hidden members take no space and sit with their tile");
+    var bv = new List<int>(); bm.GetVisible(0, bm.TotalHeight, bv);
+    Check(!bv.Contains(14) && !bv.Contains(15) && bv.Count == arr.Length - 2 && bv.Distinct().Count() == bv.Count, "hidden members are never visible; the rest are found once");
+    bool ov = false;
+    for (int i = 0; i < arr.Length; i++) for (int j = i + 1; j < arr.Length; j++)
+        if (bm.W[i] > 0 && bm.W[j] > 0 && bm.X[i] < bm.X[j] + bm.W[j] - .01f && bm.X[j] < bm.X[i] + bm.W[i] - .01f && bm.Y[i] < bm.Y[j] + bm.H[j] - .01f && bm.Y[j] < bm.Y[i] + bm.H[i] - .01f) ov = true;
+    Check(!ov, "blocks don't overlap other tiles");
+    foreach (var (t, b) in new[] { (bm.Y[11] + 1, bm.Y[11] + 2), (0f, 50f), (bm.TotalHeight - 10, bm.TotalHeight) })
+    {
+        bm.GetVisible(t, b, bv);
+        var brute = Enumerable.Range(0, arr.Length).Where(i => bm.W[i] > 0 && bm.Y[i] <= b && bm.Y[i] + bm.H[i] >= t).ToList();
+        Check(bv.SequenceEqual(brute), $"visible search with a block at {t:F0}");
+    }
+    // a big expanded set: full width, several rows, nothing past the edge
+    var wideSet = new ItemSpec[40]; wideSet[0] = new ItemSpec(1f, Block: 40, Wide: true); for (int i = 1; i < 40; i++) wideSet[i] = new ItemSpec(0.7f + (i % 3) * 0.3f);
+    var gm = MasonryLayout.Compute(wideSet, 1200, 6, 8);
+    Check(gm.X.Zip(gm.W).All(p => p.First + p.Second <= 1200.05f) && gm.Y.Distinct().Count() > 2, "a wide set fills the width in rows");
+    var jm = JustifiedLayout.Compute(arr, 1200, 200, 8);
+    jm.GetVisible(0, jm.TotalHeight, bv);
+    Check(jm.W[14] == 0 && !bv.Contains(14) && bv.Count == arr.Length - 2, "equal rows skip hidden members too");
+    var tail = new[] { new ItemSpec(1f), new ItemSpec(1f, Hidden: true) };
+    Check(Math.Abs(JustifiedLayout.Compute(tail, 1200, 200, 8).TotalHeight - 200) < 0.01, "hidden members at the end add no empty row");
+}
+
 Console.WriteLine($"{pass} passed, {fail} failed");
 return fail == 0 ? 0 : 1;

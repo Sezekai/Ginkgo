@@ -71,6 +71,7 @@ public partial class MainWindow : Window
         };
         foreach (ComboBoxItem it in SortBox.Items) if ((string)it.Tag == _settings.Sort) SortBox.SelectedItem = it;
         if (SortBox.SelectedItem is null) SortBox.SelectedIndex = 0;
+        SortRevBtn.IsChecked = _settings.SortReverse;
         ShuffleBtn.Visibility = _settings.Sort == "Random" ? Visibility.Visible : Visibility.Collapsed;
         View.LookAheadWindows = _settings.LookAheadWindows;
         _barManual = _settings.BarHidden;
@@ -85,6 +86,7 @@ public partial class MainWindow : Window
             _folderDelay.Stop(); _folderDelay.Start();
         };
         _folders.SortChanged += (key, rev) => { _settings.FolderSort = key; _settings.FolderSortReverse = rev; };
+        _folders.PlacesChanged += (alone, rare) => { _settings.Standalone = alone.ToList(); _settings.RarelyUsed = rare.ToList(); SaveSettings(); };
         _folders.Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 14, ShadowDepth = 3, Opacity = 0.55 };
         _folderPopup = new System.Windows.Controls.Primitives.Popup
         {
@@ -103,6 +105,7 @@ public partial class MainWindow : Window
         InitBrowse();
         InitVideo();
         InitFavourites();
+        InitLibraryTools();
         _gifs = new GifAnimator(i => i >= 0 && i < _paths.Length ? _paths[i] : null, () => Dispatcher.BeginInvoke(View.Refresh));
         View.Gifs = _gifs;
         _gifs.Limit = _settings.GifLimit;
@@ -193,6 +196,7 @@ public partial class MainWindow : Window
     /// <summary>Old settings hid a folder together with everything inside it; each folder now stands alone, so spell the old rule out.</summary>
     private void MigrateFolderRules(LibraryModel m)
     {
+        if (_settings.FolderRulesVersion == 2) MigrateFolderRules3();
         if (_settings.FolderRulesVersion >= 2) return;
         var all = new HashSet<string>(m.Folder.Take(m.Count), StringComparer.OrdinalIgnoreCase);
         var off = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -201,7 +205,24 @@ public partial class MainWindow : Window
                 if (f.Equals(e, StringComparison.OrdinalIgnoreCase) || f.StartsWith(e + "\\", StringComparison.OrdinalIgnoreCase) || f.StartsWith(e + "/", StringComparison.OrdinalIgnoreCase)) { off.Add(f); break; }
         _settings.OffFolders = off.ToList();
         _settings.FolderRulesVersion = 2;
+        MigrateFolderRules3();
         UpdateFoldersLabel();
+    }
+
+    /// <summary>Folders are now switched as Browse shows them; a switched-off NSFW or Very folder becomes that folder's NSFW / Very switch.</summary>
+    private void MigrateFolderRules3()
+    {
+        var off = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var nsfw = new HashSet<string>(_settings.NsfwOff, StringComparer.OrdinalIgnoreCase);
+        var very = new HashSet<string>(_settings.VeryOff, StringComparer.OrdinalIgnoreCase);
+        foreach (var f in _settings.OffFolders)
+        {
+            var level = ContentClassifier.ClassifyRelativeFolder(f);
+            if (level != ContentLevel.General && LevelOwner.Of(f) is { } owner) (level == ContentLevel.Very ? very : nsfw).Add(owner);
+            else off.Add(FolderPaths.Display(f));
+        }
+        _settings.OffFolders = off.ToList(); _settings.NsfwOff = nsfw.ToList(); _settings.VeryOff = very.ToList();
+        _settings.FolderRulesVersion = 3;
     }
 
     private ViewQuery CurrentQuery() => new()
@@ -209,7 +230,12 @@ public partial class MainWindow : Window
         General = GeneralBtn.IsChecked == true, Nsfw = NsfwBtn.IsChecked == true, Very = VeryBtn.IsChecked == true,
         Images = ImagesBtn.IsChecked == true, Gifs = GifsBtn.IsChecked == true, Videos = VideosBtn.IsChecked == true,
         OffFolders = new HashSet<string>(_settings.OffFolders, StringComparer.OrdinalIgnoreCase),
-        Search = SearchBox.Text, Sort = (SortBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "FirstSeen", RandomSeed = _randomSeed,
+        NsfwOff = new HashSet<string>(_settings.NsfwOff, StringComparer.OrdinalIgnoreCase),
+        VeryOff = new HashSet<string>(_settings.VeryOff, StringComparer.OrdinalIgnoreCase),
+        Search = SearchBox.Text, Sort = (SortBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "FirstSeen", Reverse = SortRevBtn.IsChecked == true,
+        RandomSeed = _randomSeed, F = _settings.Filters.Copy(), IsFavourite = _fav.IsStarred,
+        SetLimit = Math.Max(1, _settings.SetLimit), OpenSets = new HashSet<string>(_openSets, StringComparer.OrdinalIgnoreCase),
+        SetsByFirst = _settings.SetsByFirst, HideCopies = _settings.HideCopies,
     };
 
     private async void BuildView(bool keepPosition) => await BuildViewAsync(keepPosition);
@@ -227,25 +253,26 @@ public partial class MainWindow : Window
         string fsort = prefs.FolderSort; bool frev = prefs.FolderReverse;
         bool grid = _settings.BrowseCoverGrid;
         var details = BrowseDetails();
-        var vf = VideoRowFilter();
+        q.RowFilter = VideoRowFilter();
         var result = await Task.Run(() =>
         {
             BrowsePage? page = null;
-            int[] order;
+            int[] order; List<SetBlock> sets; Dictionary<int, List<int>> copies;
             if (browse)
             {
                 q.OffFolders.Clear();                               // Browse shows every folder; Select folders shapes Home
                 page = BrowsePage.Build(model, q, folder, own, fsort, frev, _covers, details);
-                order = page.Order;
+                order = page.Order; sets = page.Sets; copies = page.Copies;
             }
-            else order = model.Select(q);
-            if (vf is not null)
+            else { var a = model.Select(q); order = a.Order; sets = a.Sets; copies = a.Copies; }
+            var slice = model.Slice(order, stores);
+            // Connected Art sets: a small set is one block; a large one is a stacked tile (its other images take no space) until opened
+            foreach (var b in sets)
             {
-                // the Videos filter: watched / paused / not watched yet (folder tiles stay)
-                int ff = page?.FirstFile ?? 0;
-                order = order.Take(ff).Concat(order.Skip(ff).Where(r => r < 0 || vf(r))).ToArray();
+                if (b.Collapsed) { for (int k = b.First + 1; k < b.First + b.Count; k++) slice.specs[k] = slice.specs[k] with { Hidden = true }; }
+                else if (b.Count > 1) slice.specs[b.First] = slice.specs[b.First] with { Block = b.Count, Wide = b.Count > q.SetLimit };
             }
-            return (order, page, slice: model.Slice(order, stores));
+            return (order, page, slice, sets, copies);
         });
         if (version != _buildVersion) return;                     // something newer was asked for meanwhile
         _page = result.page;
@@ -254,6 +281,8 @@ public partial class MainWindow : Window
         for (int k = 0; k < _firstFile; k++) result.slice.badges[k] = 0;
         _order = result.order;
         _paths = result.slice.paths;
+        _sets = result.sets; _copies = result.copies;
+        View.Sets = _sets;
         var ids = result.slice.ids;
         DetachLoader();
         var (decoded, encoded) = CacheBudgets();
@@ -340,8 +369,33 @@ public partial class MainWindow : Window
         string tag = (SortBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "FirstSeen";
         if (InBrowse) PrefsForEdit(_folder).FileSort = tag;          // each folder keeps its own order
         else _settings.Sort = tag;
+        UpdateSortTip();
         ShuffleBtn.Visibility = tag == "Random" ? Visibility.Visible : Visibility.Collapsed;
         BuildView(false);
+    }
+
+    private void OnSortRev(object s, RoutedEventArgs e)
+    {
+        if (_loading) return;
+        bool rev = SortRevBtn.IsChecked == true;
+        if (InBrowse) PrefsForEdit(_folder).FileReverse = rev; else _settings.SortReverse = rev;
+        UpdateSortTip();
+        BuildView(false);
+    }
+
+    /// <summary>The reverse button says which way the order runs now.</summary>
+    private void UpdateSortTip()
+    {
+        string tag = (SortBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "FirstSeen";
+        bool desc = LibraryModel.Descending(tag) != (SortRevBtn.IsChecked == true);
+        SortRevBtn.ToolTip = tag switch
+        {
+            "Name" or "Folder" => desc ? "Z to A (click for A to Z)" : "A to Z (click for Z to A)",
+            "Size" or "Width" or "Height" or "Megapixels" => desc ? "Largest first (click for smallest first)" : "Smallest first (click for largest first)",
+            "Duration" => desc ? "Longest first (click for shortest first)" : "Shortest first (click for longest first)",
+            "Random" => "Reverse the shuffled order",
+            _ => desc ? "Newest first (click for oldest first)" : "Oldest first (click for newest first)",
+        };
     }
 
     private void OnReshuffle(object s, RoutedEventArgs e) { _randomSeed = Environment.TickCount; BuildView(false); }
@@ -362,7 +416,7 @@ public partial class MainWindow : Window
         // keep the pop-out inside the window: slide it left if it would reach past the right edge
         double x0 = FoldersBtn.TranslatePoint(new Point(0, 0), this).X;
         _folderPopup.HorizontalOffset = Math.Min(0, ActualWidth - 10 - (_folders.Width + 26) - x0);
-        _folders.Load(_libModel.FolderStats(CurrentQuery()), _settings.OffFolders);
+        _folders.Load(_libModel.FolderStats(CurrentQuery()), _settings.OffFolders, _settings.Standalone, _settings.RarelyUsed);
         _folderPopup.IsOpen = true;
     }
 
@@ -439,6 +493,9 @@ public partial class MainWindow : Window
     private void SaveSettings() { _settings.Save(); }
 
     // called by the settings window
+    /// <summary>Lays the view out again (after a setting that changes what shows or its order).</summary>
+    public void RebuildView() => BuildView(true);
+
     public void ApplySettings()
     {
         View.LookAheadWindows = _settings.LookAheadWindows;
@@ -469,7 +526,7 @@ public partial class MainWindow : Window
         int row = _order[i];
         var m = _model!;
         string len = m.Kind[row] == (byte)MediaKind.Video ? "   " + Clock(m.Duration[row]) : "";
-        return $"{m.Path[row]}   {m.W[row]} x {m.H[row]}{len}   {m.Size[row] / 1048576.0:F1} MB";
+        return $"{m.Path[row]}   {m.W[row]} x {m.H[row]}{len}   {m.Size[row] / 1048576.0:F1} MB{CopiesText(row)}";
     }
 
     /// <summary>A video length as 0:42, 3:07 or 1:02:09.</summary>
@@ -493,9 +550,9 @@ public partial class MainWindow : Window
         string sharp = p.SharpTotal > 0 && p.SharpDone < p.SharpTotal ? $"  |  sharp versions {p.SharpDone:N0} of {p.SharpTotal:N0}" : "";
         string warm = _engine.Warmer.Running && _engine.Warmer.Total > 0 ? $"  |  loading thumbnails into memory {_engine.Warmer.Done * 100 / _engine.Warmer.Total}%" : "";
         pipe += warm;
-        bool busy = pipe.Length > 0 || back.Length > 0 || sharp.Length > 0 || p.Running || _engine.IdsRunning;
+        bool busy = pipe.Length > 0 || back.Length > 0 || sharp.Length > 0 || p.Running || _engine.IdsRunning || _engine.Details.Running;
         string idle = !busy && _engine.IdsFinished ? "  |  file IDs done, nothing running in the background" : "";
-        return _engine.Status + pipe + back + sharp + idle + (_engine.FastCacheNote.Length > 0 ? "  |  " + _engine.FastCacheNote : "");
+        return _engine.Status + pipe + back + sharp + DetailsStatus() + idle + (_engine.FastCacheNote.Length > 0 ? "  |  " + _engine.FastCacheNote : "");
     }
 
     private void UpdateChangeIndicator()
@@ -536,11 +593,12 @@ public partial class MainWindow : Window
         double tilePx = View.TileTarget * VisualTreeHelper.GetDpi(View).PixelsPerDip;
         _engine.Warmer.Preferred = tilePx <= 120 ? 0 : tilePx <= 200 ? 1 : 2;
         TickFavourites();
+        TickDetails();
         if (View.HoverIndex < 0 && Stopwatch.GetTimestamp() > _favMessageUntil) StatusText.Text = StatusLine();
         if (_diag)
         {
             var (mr, _) = View.TakeWorst();
-            DiagText.Text = $"{_fps:F0} fps | worst gap {_worstGap:F0} ms | slow {_slowFrames} (gc {_slowGc}, ours {_slowOurs}, other {_slowOther}) | gc pause {(GC.GetTotalPauseDuration() - _gcAtTick).TotalMilliseconds:F0} ms | draw {mr:F1} (prep {Perf.PrepMax:F1}, paint {Perf.PaintMax:F1}/{Perf.PaintedBands}) drain {Perf.DrainMax:F1} | {View.LastVisibleCount} tiles, cached {_loader?.CachedCount ?? 0}, pending {_loader?.PendingCount ?? 0} | GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)} | read {_loader?.AvgReadMs ?? 0:F1} ms, decode {_loader?.AvgDecodeMs ?? 0:F1} ms{(_engine.FastCacheNote.Length > 0 ? " | " + _engine.FastCacheNote : "")} | thumbs in memory {_engine.Warmer.InMemory / 1073741824.0:F1} GB ({(_engine.Warmer.Total > 0 ? _engine.Warmer.Done * 100 / _engine.Warmer.Total : 0)}%{(_engine.Warmer.Running ? ", loading" : "")}) {_engine.Warmer.Note} | free RAM {CacheWarmer.AvailableBytes() / 1073741824.0:F1} GB" + GpuDiag() + VideoDiag() + FavDiag();
+            DiagText.Text = $"{_fps:F0} fps | worst gap {_worstGap:F0} ms | slow {_slowFrames} (gc {_slowGc}, ours {_slowOurs}, other {_slowOther}) | gc pause {(GC.GetTotalPauseDuration() - _gcAtTick).TotalMilliseconds:F0} ms | draw {mr:F1} (prep {Perf.PrepMax:F1}, paint {Perf.PaintMax:F1}/{Perf.PaintedBands}) drain {Perf.DrainMax:F1} | {View.LastVisibleCount} tiles, cached {_loader?.CachedCount ?? 0}, pending {_loader?.PendingCount ?? 0} | GC {GC.CollectionCount(0)}/{GC.CollectionCount(1)}/{GC.CollectionCount(2)} | read {_loader?.AvgReadMs ?? 0:F1} ms, decode {_loader?.AvgDecodeMs ?? 0:F1} ms{(_engine.FastCacheNote.Length > 0 ? " | " + _engine.FastCacheNote : "")} | thumbs in memory {_engine.Warmer.InMemory / 1073741824.0:F1} GB ({(_engine.Warmer.Total > 0 ? _engine.Warmer.Done * 100 / _engine.Warmer.Total : 0)}%{(_engine.Warmer.Running ? ", loading" : "")}) {_engine.Warmer.Note} | free RAM {CacheWarmer.AvailableBytes() / 1073741824.0:F1} GB" + GpuDiag() + VideoDiag() + FavDiag() + DetailsDiag();
             if (DiagFull.Visibility == Visibility.Visible) FillFullStatus();
             _slowAtLastTick = 0;
             _worstGap = 0; _slowFrames = _slowGc = _slowOurs = _slowOther = 0; _gcAtTick = GC.GetTotalPauseDuration(); Perf.Reset();
@@ -821,7 +879,7 @@ public partial class MainWindow : Window
     // ---- top bar: slides away on scroll down, back on scroll up; H hides it for good until shown again ----
 
     private bool BarPinned =>
-        _folderPopup.IsOpen || (_optPopup?.IsOpen ?? false) || (_quickPopup?.IsOpen ?? false) || (_vfPopup?.IsOpen ?? false) || _sideOpen || BarRow.Expanded || Banner.Visibility == Visibility.Visible || SearchBox.IsKeyboardFocused ||
+        _folderPopup.IsOpen || (_optPopup?.IsOpen ?? false) || (_quickPopup?.IsOpen ?? false) || (_vfPopup?.IsOpen ?? false) || LibraryPopupOpen() || _sideOpen || BarRow.Expanded || Banner.Visibility == Visibility.Visible || SearchBox.IsKeyboardFocused ||
         (TopBar.IsMouseOver && Stopwatch.GetTimestamp() > _ignoreOverUntil) || HoverStrip.IsMouseOver;
 
     private void ApplyBar()

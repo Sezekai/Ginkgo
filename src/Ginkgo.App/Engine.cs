@@ -72,6 +72,7 @@ public sealed class Engine : IDisposable
             Opened?.Invoke();
             await Refresh(scan: true, confirmLargeRemoval: false);
             StartWatcher();
+            StartDetails();
         }
         catch (Exception ex) { Status = "problem: " + ex.Message; }
     }
@@ -151,6 +152,7 @@ public sealed class Engine : IDisposable
             try { FileIdBackfill.Run(Db, Settings.LibraryRoot, FileIdProviders.Default, (d, t) => { IdsDone = d; IdsTotal = t; }, ct); IdsFinished = true; }
             finally { IdsRunning = false; }
             await MakeThumbnails(ct);
+            _detailsWake.Set();                                    // new or changed files: their dates and copies are looked at next
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { Status = "problem: " + ex.Message; }
@@ -188,6 +190,42 @@ public sealed class Engine : IDisposable
         }
         catch (Exception ex) { Status += " | watcher problem: " + ex.Message; }
     }
+
+    // ---- details read in the background: when photos were taken, and copies of the same file (for showing each once) ----
+    /// <summary>What the details job is doing (for the progress bar).</summary>
+    public WorkProgress Details { get; } = new();
+    public volatile string DetailsProblem = "";
+    private readonly AutoResetEvent _detailsWake = new(false);
+    private Thread? _details;
+
+    private void StartDetails()
+    {
+        if (_details is not null || Db is null) return;
+        var ct = _cts.Token;
+        _details = new Thread(() =>
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                try
+                {
+                    int a = PhotoDates.Run(Db!, Details, DetailsHold, ct);
+                    int b = DuplicateHashes.Run(Db!, Details, DetailsHold, ct);
+                    DetailsProblem = "";
+                    if (a + b > 0) { Interlocked.Increment(ref _changesSinceView); DataChanged?.Invoke(); }
+                }
+                catch (OperationCanceledException) { return; }
+                catch (Exception ex) { DetailsProblem = ex.Message; }
+                finally { Details.Running = false; }
+                WaitHandle.WaitAny(new[] { _detailsWake, ct.WaitHandle }, TimeSpan.FromMinutes(15));
+            }
+        }) { IsBackground = true, Priority = ThreadPriority.Lowest, Name = "details" };
+        _details.Start();
+    }
+
+    /// <summary>The details job waits while you scroll or use the viewer, and while thumbnails are being made or the library scanned.</summary>
+    private bool DetailsHold() =>
+        Pipe.Running || _work.CurrentCount == 0 ||
+        Stopwatch.GetTimestamp() - Volatile.Read(ref Pipe.LastUiActivity) < Stopwatch.Frequency * 3 / 2;
 
     public Task Rescan() => Refresh(scan: true, confirmLargeRemoval: false);
     public Task ConfirmLargeRemoval() { SafetyStop = null; return Refresh(scan: true, confirmLargeRemoval: true); }

@@ -64,6 +64,9 @@ public sealed class IndexDb
         // content hashes (0 = not worked out): only made where needed, such as files the same size as a favourite
         if (!have.Contains("phash")) Exec(c, "ALTER TABLE files ADD COLUMN phash INTEGER NOT NULL DEFAULT 0");
         if (!have.Contains("fhash")) Exec(c, "ALTER TABLE files ADD COLUMN fhash INTEGER NOT NULL DEFAULT 0");
+        // dates: created (from the file system, filled in by the next scan) and taken (from a photo's EXIF; 0 = not read yet, -1 = none)
+        if (!have.Contains("ctime")) Exec(c, "ALTER TABLE files ADD COLUMN ctime INTEGER NOT NULL DEFAULT 0");
+        if (!have.Contains("taken")) Exec(c, "ALTER TABLE files ADD COLUMN taken INTEGER NOT NULL DEFAULT 0");
         Exec(c, """
             CREATE INDEX IF NOT EXISTS ix_files_fileid ON files(file_id);
             CREATE INDEX IF NOT EXISTS ix_files_missing ON files(missing_since);

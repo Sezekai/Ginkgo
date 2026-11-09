@@ -11,6 +11,9 @@ using Ginkgo.Core.Layout;
 
 namespace Ginkgo.App;
 
+/// <summary>A Connected Art set as the view shows it: where it starts among the tiles, how many, and whether it is a stacked tile.</summary>
+public sealed record SetBlock(int First, int Count, string Key, string Name, int Total, bool Collapsed, bool Large = false);
+
 /// <summary>Own-drawn virtual masonry: only tiles in view are drawn; scrolling is done by us, not by ScrollViewer.</summary>
 public sealed class MasonryView : FrameworkElement
 {
@@ -52,6 +55,13 @@ public sealed class MasonryView : FrameworkElement
     public Func<int, bool>? Starred { get; set; }
     /// <summary>The star in a tile's top-left corner was clicked.</summary>
     public event Action<int>? StarClicked;
+    /// <summary>Connected Art sets among the tiles (outlined blocks, or stacked tiles that open when clicked).</summary>
+    public List<SetBlock>? Sets { get; set; }
+    /// <summary>A set's name label was clicked (the first tile's index): open or close it.</summary>
+    public event Action<int>? SetLabelClicked;
+    /// <summary>How many other copies of tile i's file are hidden (shown as a small "+1" in the corner).</summary>
+    public Func<int, int>? CopiesOf { get; set; }
+    private readonly List<(int first, Rect rect)> _setLabels = new();
     public static readonly Brush StarFill = Freeze(new SolidColorBrush(Color.FromRgb(0xFF, 0xC8, 0x3D)));
     private (int index, Rect rect) _starHit = (-1, Rect.Empty);
     private int _downIndex = -1;
@@ -344,6 +354,8 @@ public sealed class MasonryView : FrameworkElement
         {
             Focus();
             var mp = e.GetPosition(this);
+            foreach (var (first, rect) in _setLabels)
+                if (rect.Contains(mp)) { _downIndex = -1; if (e.ClickCount == 1) SetLabelClicked?.Invoke(first); e.Handled = true; return; }
             if (_starHit.index >= 0 && _starHit.index == _hoverIndex && _starHit.rect.Contains(mp))
             {
                 _downIndex = -1;
@@ -628,7 +640,7 @@ public sealed class MasonryView : FrameworkElement
             bool gif = e is not null && Badges is { } bd && i < bd.Length && bd[i] != 0;
             int below = i < CoverCount ? (int)(CaptionHeight * dpi) : 0;
             bool labelled = _labels is { } lb && i < lb.Length && lb[i] is not null && y < offPx + ph && y + hPx + below > offPx;
-            bool starred = e is not null && Starred is { } stf && stf(i);
+            bool starred = e is not null && ((Starred is { } stf && stf(i)) || (CopiesOf is { } cof && cof(i) > 0));
             if (i == _hoverIndex || gif || labelled || starred) _overlay.Add((new Rect(x / dpi, (y - offPx) / dpi, wPx / dpi, hPx / dpi), i == _hoverIndex, gif, labelled ? i : -1, i));
         }
         (_sigPrev, _sigNow) = (_sigNow, _sigPrev);
@@ -668,7 +680,9 @@ public sealed class MasonryView : FrameworkElement
             else if (isVideo && info.Item2 >= 0) DrawPausedLabel(dc, r, index, info.Item2);
             else if (gif && r.Width > 70 && (!isVideo || LabelsFit(r))) DrawBadge(dc, r, index);
             if (label < 0 || index >= CoverCount) DrawStar(dc, r, index, hovered);
+            if (CopiesOf is { } co && index >= CoverCount && r.Width >= 60 && co(index) is int nc and > 0) DrawCopies(dc, r, nc, isVideo && playingHere);
         }
+        DrawSets(dc, offPx, dpi);
         UpdateCursor();
         _fadingNow = fading;
         LastRenderMs = sw.Elapsed.TotalMilliseconds;
@@ -1090,6 +1104,75 @@ public sealed class MasonryView : FrameworkElement
         dc.DrawText(ft, at);
         if (hovered) _starHit = (i, box);
     }
+    private static readonly Pen SetPen = MakeSetPen();
+    private static Pen MakeSetPen() { var p = new Pen(new SolidColorBrush(Color.FromArgb(220, 0xB8, 0x9C, 0xFF)), 1.5); p.Freeze(); return p; }
+    private static readonly Brush SetBack = Freeze(new SolidColorBrush(Color.FromArgb(215, 0x24, 0x1C, 0x3A)));
+
+    /// <summary>
+    /// Connected Art sets: an outline round each set's pictures with its name and size in the bottom-left corner. A large set that
+    /// isn't open is one stacked tile (edges of the cards behind it, and how many it holds); clicking its label opens it, and the
+    /// label of an open one closes it.
+    /// </summary>
+    private void DrawSets(DrawingContext dc, int offPx, double dpi)
+    {
+        _setLabels.Clear();
+        if (Sets is not { Count: > 0 } sets || _layout is null || _visible.Count == 0) return;
+        int lo = _visible[0], hi = _visible[^1];
+        double ppd = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        foreach (var b in sets)
+        {
+            if (b.First + b.Count - 1 < lo || b.First > hi || b.First >= _layout.Count) continue;
+            // the set's area, row by row in equal rows (it can wrap), as one box in columns
+            var parts = new List<Rect>();
+            for (int k = b.First; k < Math.Min(b.First + b.Count, _layout.Count); k++)
+            {
+                if (_layout.W[k] <= 0) continue;
+                var rk = new Rect(_layout.X[k], _layout.Y[k] - offPx / dpi, _layout.W[k], _layout.H[k]);
+                if (parts.Count > 0 && (!_rows || Math.Abs(parts[^1].Top - rk.Top) < 0.5)) parts[^1] = Rect.Union(parts[^1], rk);
+                else parts.Add(rk);
+            }
+            if (parts.Count == 0) continue;
+            foreach (var pr in parts)
+            {
+                var o = pr; o.Inflate(1.5, 1.5);
+                dc.DrawRoundedRectangle(null, SetPen, o, 4, 4);
+            }
+            var first = parts[0];
+            if (b.Collapsed)
+            {
+                // cards behind: two edges peeking out at the top right
+                for (int k = 1; k <= 2; k++)
+                {
+                    double d = 4 * k;
+                    var edge = new Rect(first.Left + d + 2, first.Top - d + 2, Math.Max(0, first.Width - d - 2), Math.Max(0, first.Height - d - 2));
+                    dc.PushOpacity(0.55 / k);
+                    dc.DrawRoundedRectangle(null, SetPen, edge, 4, 4);
+                    dc.Pop();
+                }
+            }
+            if (first.Width < 70 || first.Height < 36) continue;
+            string text = b.Collapsed ? $"{b.Name}  ·  {b.Total} images  ▸" : b.Large ? $"{b.Name}  ·  {b.Total}  ▴" : $"{b.Name}  ·  {b.Total}";
+            var ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 11, Brushes.White, ppd)
+            { MaxTextWidth = Math.Max(10, first.Width - 24), MaxLineCount = 1, Trimming = TextTrimming.CharacterEllipsis };
+            var at = parts[^1];                                    // the bottom-left corner of the set (its last row in equal rows)
+            var box = new Rect(at.Left + 6, at.Bottom - 22, ft.Width + 12, 17);
+            dc.DrawRoundedRectangle(SetBack, SetPen, box, 4, 4);
+            dc.DrawText(ft, new Point(box.Left + 6, box.Top + (box.Height - ft.Height) / 2));
+            if (b.Collapsed || b.Large) _setLabels.Add((b.First, box));
+        }
+    }
+
+    /// <summary>"+1": the same file is in another folder too (it shows once).</summary>
+    private void DrawCopies(DrawingContext dc, Rect r, int n, bool busyCorner)
+    {
+        if (busyCorner) return;
+        double ppd = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        var ft = new FormattedText("+" + n, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 10.5, Brushes.White, ppd);
+        var box = new Rect(r.Right - ft.Width - 16, r.Bottom - 22, ft.Width + 10, 16);
+        dc.DrawRoundedRectangle(BadgeBack, null, box, 3, 3);
+        dc.DrawText(ft, new Point(box.Left + 5, box.Top + (16 - ft.Height) / 2));
+    }
+
     private static readonly Brush StarHover = Freeze(new SolidColorBrush(Color.FromArgb(200, 0xFF, 0xC8, 0x3D)));
 
     /// <summary>"GIF", or a video's play mark and length, in the bottom-left corner of the tile.</summary>

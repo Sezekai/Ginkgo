@@ -86,7 +86,7 @@ public static class FavouritePlaces
 }
 
 /// <summary>Progress of a favourites check or copy, read by the screen while it runs.</summary>
-public sealed class FavProgress
+public sealed class WorkProgress
 {
     public volatile bool Running;
     public volatile string What = "";
@@ -151,7 +151,7 @@ public static class FavouriteIndex
 {
     private sealed class Row { public long Id; public string Path = ""; public long Size; public long PHash, FHash; public bool Fav; }
 
-    public static FavState Sync(IndexDb db, string favRoot, FavProgress? progress = null, CancellationToken ct = default)
+    public static FavState Sync(IndexDb db, string favRoot, WorkProgress? progress = null, CancellationToken ct = default)
     {
         var st = new FavState();
         var favs = new List<Row>();
@@ -283,7 +283,7 @@ public sealed record FavCopyResult(CopyOutcome Outcome, string Path, long Hash, 
 /// </summary>
 public static class FavouriteCopier
 {
-    public static FavCopyResult Copy(string src, string destDir, string? logPath, FavProgress? progress = null, CancellationToken ct = default)
+    public static FavCopyResult Copy(string src, string destDir, string? logPath, WorkProgress? progress = null, CancellationToken ct = default)
     {
         string? temp = null;
         try

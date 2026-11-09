@@ -593,7 +593,7 @@ Check(again.BackfillTotal == 0, "backfill has nothing left");
     LibraryScanner.Scan(fdb, flib, Array.Empty<string>(), null, CancellationToken.None, new ScanOptions { FileIds = null });
     long IdOf(string rel) { using var c = fdb.Open(); using var cmd = c.CreateCommand(); cmd.CommandText = "SELECT id FROM files WHERE path=$p"; cmd.Parameters.AddWithValue("$p", Path.GetFullPath(Path.Combine(flib, rel.Replace('/', Path.DirectorySeparatorChar)))); return (long)cmd.ExecuteScalar()!; }
 
-    var prog = new FavProgress();
+    var prog = new WorkProgress();
     var st = FavouriteIndex.Sync(fdb, fav, prog);
     Check(st.FavIds.Count == 2, $"two favourites found ({st.FavIds.Count})");
     Check(st.Starred.Contains(IdOf("Games/a.jpg")) && st.Starred.Contains(IdOf("God of War/a copy.jpg")), "identical files in two folders both get the star");
@@ -646,6 +646,55 @@ Check(again.BackfillTotal == 0, "backfill has nothing left");
     st = FavouriteIndex.Sync(fdb, fav);
     Check(st.Starred.Contains(IdOf("Games/NSFW/n.jpg")) && st.Starred.Contains(IdOf("Games/other dir/n.jpg")), "the originals of new favourites have the star");
     Check(st.FavIds.Count == 4, $"the Favourites section has the new copies ({st.FavIds.Count})");
+}
+
+
+// ---- photo dates (EXIF) and copies of the same file ----
+{
+    var dlib = Path.Combine(tmp, "DupLib");
+    void W(string rel, byte[] data) { var p = Path.Combine(dlib, rel); Directory.CreateDirectory(Path.GetDirectoryName(p)!); File.WriteAllBytes(p, data); }
+    byte[] ExifJpeg(string date)
+    {
+        // TIFF (little-endian): IFD0 with the Exif pointer, the Exif IFD with DateTimeOriginal, then the date text
+        var t = new List<byte>();
+        void U16(int v) { t.Add((byte)v); t.Add((byte)(v >> 8)); }
+        void U32(int v) { U16(v & 0xFFFF); U16(v >> 16); }
+        t.AddRange("II"u8.ToArray()); U16(42); U32(8);
+        U16(1); U16(0x8769); U16(4); U32(1); U32(26); U32(0);              // IFD0 at 8: one entry, next IFD 0 -> ends at 26
+        U16(1); U16(0x9003); U16(2); U32(20); U32(44); U32(0);             // Exif IFD at 26 -> ends at 44
+        t.AddRange(System.Text.Encoding.ASCII.GetBytes(date + "\0"));
+        var app1 = new List<byte>(); app1.AddRange("Exif\0\0"u8.ToArray()); app1.AddRange(t);
+        var j = new List<byte> { 0xFF, 0xD8, 0xFF, 0xE0, 0, 4, 0, 0, 0xFF, 0xE1, (byte)((app1.Count + 2) >> 8), (byte)(app1.Count + 2) };
+        j.AddRange(app1); j.AddRange(new byte[] { 0xFF, 0xDA, 0, 2, 0xFF, 0xD9 });
+        return j.ToArray();
+    }
+    W("Cam/a.jpg", ExifJpeg("2019:05:06 07:08:09"));
+    W("Cam/plain.jpg", new byte[] { 0xFF, 0xD8, 0xFF, 0xDA, 0, 2, 0xFF, 0xD9 });
+    W("Cam/b.png", new byte[300]);
+    var rnd2 = new Random(5); var blob = new byte[200_000]; rnd2.NextBytes(blob);
+    W("Games/x.jpg", blob); W("God of War/x.jpg", blob); W("Other/x copy.jpg", blob);
+    var near = (byte[])blob.Clone(); near[100_000] ^= 1; W("Games/near.jpg", near);
+    W("Games/unique.jpg", new byte[777]);
+    var ddb = new IndexDb(Path.Combine(tmp, "dupdata", "index.db"));
+    LibraryScanner.Scan(ddb, dlib, Array.Empty<string>(), null, CancellationToken.None, new ScanOptions { FileIds = null });
+    long Q(string sql) { using var c = ddb.Open(); return IndexDb.Scalar(c, sql); }
+    string Esc(string rel) => Path.GetFullPath(Path.Combine(dlib, rel.Replace('/', Path.DirectorySeparatorChar))).Replace("'", "''");
+
+    Check(PhotoDates.Read(Path.Combine(dlib, "Cam/a.jpg")) == new DateTimeOffset(new DateTime(2019, 5, 6, 7, 8, 9, DateTimeKind.Local)).ToUnixTimeSeconds(), "EXIF date taken read");
+    Check(PhotoDates.Read(Path.Combine(dlib, "Cam/plain.jpg")) is null, "a JPEG without EXIF has no date");
+    var wp = new WorkProgress();
+    int dates = PhotoDates.Run(ddb, wp, () => false, CancellationToken.None);
+    Check(dates > 0 && Q($"SELECT taken FROM files WHERE path='{Esc("Cam/a.jpg")}'") > 0 && Q($"SELECT taken FROM files WHERE path='{Esc("Cam/plain.jpg")}'") == -1 && Q($"SELECT taken FROM files WHERE path='{Esc("Cam/b.png")}'") == -1, "taken dates stored (-1 where there is none)");
+    Check(PhotoDates.Run(ddb, wp, () => false, CancellationToken.None) == 0, "a second run reads nothing");
+    Check(Q($"SELECT ctime FROM files WHERE path='{Esc("Cam/a.jpg")}'") > 0, "created dates come from the scan");
+
+    int confirmed = DuplicateHashes.Run(ddb, wp, () => false, CancellationToken.None);
+    Check(confirmed == 4, $"the three copies and the near copy (same size and ends) are read in full ({confirmed})");
+    long hx = Q($"SELECT fhash FROM files WHERE path='{Esc("Games/x.jpg")}'");
+    Check(hx != 0 && Q($"SELECT COUNT(*) FROM files WHERE fhash={hx}") == 3, "the three copies share one content hash");
+    Check(Q($"SELECT fhash FROM files WHERE path='{Esc("Games/near.jpg")}'") != hx, "the near copy is a different file");
+    Check(Q($"SELECT phash FROM files WHERE path='{Esc("Games/unique.jpg")}'") == 0, "a file of a size nothing else has is never read");
+    Check(DuplicateHashes.Run(ddb, wp, () => false, CancellationToken.None) == 0 && !wp.Running, "a second run reads nothing and says it has stopped");
 }
 
 // ---- videos (only where ffmpeg and ffprobe are available, as on the build machine) ----

@@ -56,10 +56,29 @@ public sealed class AppSettings
     public bool ShowGifs { get; set; } = true;
     public bool ShowVideos { get; set; } = true;
 
-    /// <summary>Folders whose OWN files are hidden (paths relative to the library). A folder's subfolders are separate entries.</summary>
+    /// <summary>
+    /// Folders whose OWN files are hidden (paths relative to the library, NSFW and Very folders merged into the folder above, as
+    /// Browse shows them). A folder's subfolders are separate entries.
+    /// </summary>
     public List<string> OffFolders { get; set; } = new();
-    /// <summary>1 = old rule (an off folder also hid everything inside it); 2 = each folder stands alone.</summary>
-    public int FolderRulesVersion { get; set; } = 2;
+    /// <summary>1 = old rule (an off folder also hid everything inside it); 2 = each folder stands alone; 3 = as Browse shows folders.</summary>
+    public int FolderRulesVersion { get; set; } = 3;
+    /// <summary>Folders whose NSFW / Very switch is off (the folder holding the NSFW folder).</summary>
+    public List<string> NsfwOff { get; set; } = new();
+    public List<string> VeryOff { get; set; } = new();
+    /// <summary>Subfolders shown as their own row in Select folders, with their own switch (their parent's switch leaves them alone).</summary>
+    public List<string> Standalone { get; set; } = new();
+    /// <summary>Folders kept at the bottom of Select folders: off unless switched on one by one, and left out of All on / All off.</summary>
+    public List<string> RarelyUsed { get; set; } = new();
+
+    // ---- filters and order (Home and Favourites; Browse keeps its own order per folder) ----
+    public bool SortReverse { get; set; }
+    public FilterSet Filters { get; set; } = new();
+    /// <summary>Connected Art: sets with more images than this show as a stacked tile; sort sets by their first image for every sort.</summary>
+    public int SetLimit { get; set; } = 5;
+    public bool SetsByFirst { get; set; }
+    /// <summary>Show a file once when the same file is in several of the folders shown.</summary>
+    public bool HideCopies { get; set; } = true;
     public string FolderSort { get; set; } = "Name";
     public bool FolderSortReverse { get; set; }
     /// <summary>true = rows of equal height; false = equal-width columns.</summary>
@@ -129,6 +148,9 @@ public sealed class AppSettings
                 string text = File.ReadAllText(FilePath);
                 var s = JsonSerializer.Deserialize<AppSettings>(text) ?? new();
                 if (!text.Contains("FolderRulesVersion")) s.FolderRulesVersion = 1;
+                // sorts are now a field plus a direction
+                (s.Sort, bool r) = SortTag(s.Sort); if (r) s.SortReverse = true;
+                foreach (var bp in s.BrowseFolders.Values) { (bp.FileSort, bool br) = SortTag(bp.FileSort); if (br) bp.FileReverse = true; }
                 if (!text.Contains("MemoryRulesVersion")) { if (s.CacheProfile == 0) s.CacheProfile = AutoProfile; s.MemoryRulesVersion = 1; }
                 return s;
             }
@@ -136,6 +158,12 @@ public sealed class AppSettings
         catch { }
         return new();
     }
+
+    /// <summary>Old sort names: "SizeDesc" is Size, "SizeAsc" is Size reversed, "Largest" is Megapixels.</summary>
+    public static (string sort, bool reverse) SortTag(string old) => old switch
+    {
+        "SizeDesc" => ("Size", false), "SizeAsc" => ("Size", true), "Largest" => ("Megapixels", false), _ => (old, false),
+    };
 
     public void Save()
     {
@@ -162,4 +190,5 @@ public sealed class BrowsePrefs
     public string FolderSort { get; set; } = "Name";
     public bool FolderReverse { get; set; }
     public string FileSort { get; set; } = "Name";
+    public bool FileReverse { get; set; }
 }
