@@ -8,6 +8,7 @@ public partial class App : Application
         // avoid long, screen-stopping full collections while the app is in use
         GCSettings.LatencyMode = GCLatencyMode.SustainedLowLatency;
         DispatcherUnhandledException += (_, a) => { Crashed(a.Exception); a.Handled = true; Shutdown(1); };
+        MasonryView.ErrorLog = LogError;
         AppDomain.CurrentDomain.UnhandledException += (_, a) => Crashed(a.ExceptionObject as Exception);
         base.OnStartup(e);
         var settings = AppSettings.Load();

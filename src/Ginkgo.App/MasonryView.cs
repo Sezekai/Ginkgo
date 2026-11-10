@@ -599,11 +599,14 @@ public sealed class MasonryView : FrameworkElement
         catch (Exception ex)
         {
             // one bad frame is not worth closing Ginkgo over: note it, and the next frame starts afresh
-            App.LogError($"drawing the grid ({_items.Length} tiles, layout {_layout?.Count ?? -1}, visible {(_visible.Count > 0 ? _visible[^1] : -1)}, thumbs {(_thumbs is null ? "none" : "set")})", ex);
+            ErrorLog?.Invoke($"drawing the grid ({_items.Length} tiles, layout {_layout?.Count ?? -1}, visible {(_visible.Count > 0 ? _visible[^1] : -1)}, thumbs {(_thumbs is null ? "none" : "set")})", ex);
             _sigPrev.Clear();
         }
         finally { dc.Pop(); }
     }
+
+    /// <summary>Where a drawing error is written (set by the app; the grid carries on).</summary>
+    public static Action<string, Exception>? ErrorLog { get; set; }
 
     /// <summary>How far past its top and bottom edges the view draws (hidden under the bars next to it).</summary>
     private const double EdgeBleed = 3;
