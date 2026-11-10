@@ -1170,9 +1170,17 @@ public sealed class MasonryView : FrameworkElement
         if (hovered) _starHit = (i, box);
     }
     private static readonly Pen SetPen = MakeSetPen();
-    private static Pen SelectPen => _selectPen ??= MakeSelectPen();
+    /// <summary>The highlight the arrow keys move (in the theme's accent; made again when the accent changes).</summary>
+    private static Pen SelectPen
+    {
+        get
+        {
+            var b = ThemeKit.Brush("Accent");
+            if (_selectPen is null || !ReferenceEquals(_selectPen.Brush, b)) { var p = new Pen(b, 2.5); p.Freeze(); _selectPen = p; }
+            return _selectPen;
+        }
+    }
     private static Pen? _selectPen;
-    private static Pen MakeSelectPen() { var p = new Pen(ThemeKit.Brush("Accent"), 2.5); return p; }
     private static Pen MakeSetPen() { var p = new Pen(new SolidColorBrush(Color.FromArgb(220, 0xB8, 0x9C, 0xFF)), 1.5); p.Freeze(); return p; }
     private static readonly Brush SetBack = Freeze(new SolidColorBrush(Color.FromArgb(215, 0x24, 0x1C, 0x3A)));
 

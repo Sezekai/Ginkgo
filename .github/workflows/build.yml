@@ -51,6 +51,20 @@ jobs:
           dotnet publish src/Ginkgo.App -c Release -r win-x64 --self-contained true -o publish/Ginkgo
           New-Item -ItemType Directory -Force publish/Ginkgo/tools | Out-Null
           Copy-Item tools\ffmpeg.exe, tools\ffprobe.exe, tools\*.dll publish/Ginkgo/tools/
+      - name: Start-up check (opens the published app on a small library, runs 15 s, closes)
+        shell: pwsh
+        run: |
+          $lib = Join-Path $env:RUNNER_TEMP 'smoke-lib'; $cache = Join-Path $env:RUNNER_TEMP 'smoke-cache'
+          New-Item -ItemType Directory -Force "$lib\Art\Set A", "$lib\Photos", $cache | Out-Null
+          1..4 | ForEach-Object { Copy-Item src/Ginkgo.App/Assets/ginkgo.png "$lib\Art\Set A\pic $_.png"; Copy-Item src/Ginkgo.App/Assets/ginkgo.png "$lib\Photos\p$_.png" }
+          $data = Join-Path $env:LOCALAPPDATA 'Ginkgo'; New-Item -ItemType Directory -Force $data | Out-Null
+          @{ LibraryRoot = $lib; CacheDir = $cache; FolderRulesVersion = 3; MemoryRulesVersion = 1 } | ConvertTo-Json | Set-Content (Join-Path $data 'settings.json')
+          $p = Start-Process publish/Ginkgo/Ginkgo.exe -ArgumentList '--smoke' -PassThru
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); Write-Host "::error::Ginkgo did not close within 2 minutes"; exit 1 }
+          $log = Join-Path $data 'crash.log'
+          if (Test-Path $log) { Get-Content $log; }
+          if ($p.ExitCode -ne 0) { Write-Host "::error::Ginkgo failed to start (exit code $($p.ExitCode))"; exit 1 }
+          Write-Host "::notice::Ginkgo started and closed cleanly"
       - name: Latest build as a download (Releases page)
         if: github.ref == 'refs/heads/main'
         shell: pwsh

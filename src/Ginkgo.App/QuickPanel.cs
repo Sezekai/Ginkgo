@@ -15,7 +15,9 @@ public sealed class QuickPanel : Border
     private readonly AppSettings _s;
     private readonly List<Action> _syncs = new();
 
-    private static readonly Brush Dim = ThemeKit.Brush("Dim"), Txt = ThemeKit.Brush("Text"), Line = ThemeKit.Brush("Edge");
+    private static Brush Dim => ThemeKit.Brush("Dim");
+    private static Brush Txt => ThemeKit.Brush("Text");
+    private static Brush Line => ThemeKit.Brush("Edge");
     private static Brush Frozen(string hex) { var b = (SolidColorBrush)new BrushConverter().ConvertFromString(hex)!; b.Freeze(); return b; }
     private static readonly string[] Swatches = { "#FFB000", "#FF8A00", "#FFD84A", "#FF4D4D", "#FF5FA2", "#B07CFF", "#4DA3FF", "#3FD0D0", "#5FAF6B", "#9BE07A", "#FFFFFF" };
 

@@ -21,7 +21,9 @@ public sealed class FilterPanel : Border
     private List<(string ext, int count)> _formatList = new();
     private bool _syncing;
 
-    private static readonly Brush Dim = ThemeKit.Brush("Dim"), Txt = ThemeKit.Brush("Text"), Line = ThemeKit.Brush("Edge");
+    private static Brush Dim => ThemeKit.Brush("Dim");
+    private static Brush Txt => ThemeKit.Brush("Text");
+    private static Brush Line => ThemeKit.Brush("Edge");
     private static Brush Frozen(string hex) { var b = (SolidColorBrush)new BrushConverter().ConvertFromString(hex)!; b.Freeze(); return b; }
 
     public FilterPanel(FilterSet f)

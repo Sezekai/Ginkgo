@@ -46,7 +46,9 @@ public sealed class FolderPanel : Border
     private bool _painting, _paintOn;
 
     private static readonly Brush On = Frozen("#3E7A48"), OnHover = Frozen("#4B9058"), OffB = Frozen("#2A2A30"), OffHover = Frozen("#36363E"),
-        Part = Frozen("#8A6A2A"), PartHover = Frozen("#A07C31"), Txt = ThemeKit.Brush("Text"), TxtOff = Frozen("#8D939A"), Dim = ThemeKit.Brush("Dim");
+        Part = Frozen("#8A6A2A"), PartHover = Frozen("#A07C31"), TxtOff = Frozen("#8D939A");
+    private static Brush Txt => ThemeKit.Brush("Text");
+    private static Brush Dim => ThemeKit.Brush("Dim");
     private static readonly Brush[] DepthEdge = { Frozen("#00000000"), Frozen("#6C9BD2"), Frozen("#B58BD6"), Frozen("#D6AC6C"), Frozen("#6CC4B4") };
     private static Brush Frozen(string hex) { var b = (SolidColorBrush)new BrushConverter().ConvertFromString(hex)!; b.Freeze(); return b; }
 

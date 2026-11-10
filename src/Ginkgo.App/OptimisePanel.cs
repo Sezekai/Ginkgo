@@ -24,7 +24,9 @@ public sealed class OptimisePanel : Border
     private readonly WrapPanel _capRow = new();
     private readonly System.Windows.Threading.DispatcherTimer _timer = new() { Interval = TimeSpan.FromMilliseconds(700) };
 
-    private static readonly Brush Dim = ThemeKit.Brush("Dim"), Txt = ThemeKit.Brush("Text"), Line = ThemeKit.Brush("Edge");
+    private static Brush Dim => ThemeKit.Brush("Dim");
+    private static Brush Txt => ThemeKit.Brush("Text");
+    private static Brush Line => ThemeKit.Brush("Edge");
     private static Brush Frozen(string hex) { var b = (SolidColorBrush)new BrushConverter().ConvertFromString(hex)!; b.Freeze(); return b; }
 
     public static readonly double[] CapChoices = { 0, 0.5, 1, 2, 4, 8, 16 };

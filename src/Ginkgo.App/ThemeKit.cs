@@ -115,19 +115,17 @@ public static class ThemeKit
     private static Typeface? _iconFace;
     public static Typeface IconTypeface => _iconFace ??= new Typeface(IconFamily, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
 
-    /// <summary>The theme brushes. They are changed in place, so everything using them follows at once.</summary>
+    /// <summary>A theme brush as it is now. The window's own parts follow theme changes through DynamicResource; brushes taken
+    /// here are a snapshot (application resources are frozen when they are stored, so they can't be changed in place).</summary>
     public static SolidColorBrush Brush(string key)
-    {
-        if (Application.Current?.Resources[key] is SolidColorBrush b && !b.IsFrozen) return b;
-        var nb = new SolidColorBrush(Colors.Gray);
-        if (Application.Current is not null) R[key] = nb;
-        return nb;
-    }
+        => Application.Current?.TryFindResource(key) as SolidColorBrush ?? Gray;
+    private static readonly SolidColorBrush Gray = MakeGray();
+    private static SolidColorBrush MakeGray() { var b = new SolidColorBrush(Colors.Gray); b.Freeze(); return b; }
 
     /// <summary>Puts a theme into effect everywhere (brushes, fonts, icons, the grid and the viewer's background).</summary>
     public static void Apply(AppTheme t, ButtonLook look)
     {
-        void Set(string key, string hex) => Brush(key).Color = ButtonLook.C(hex);
+        void Set(string key, string hex) { var b = new SolidColorBrush(ButtonLook.C(hex)); b.Freeze(); R[key] = b; }
         Set("WindowBg", t.Window); Set("Bar", t.Surface); Set("Surface2", t.Inner); Set("Field", t.Field); Set("Edge", t.Edge);
         Set("Text", t.Text); Set("Dim", t.Dim); Set("Accent", t.Accent);
         R["AppFont"] = new FontFamily(t.Font);
