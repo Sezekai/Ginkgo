@@ -22,7 +22,7 @@ public partial class MainWindow
         GridLayoutBtn.IsChecked = _settings.GridLayout; FitBtn.IsChecked = _settings.GridFit;
         _loading = false;
         ApplyLayoutToView();
-        View.HoverDetails = i => _settings.HoverDetails && RowOfTile(i) is int r and >= 0 && _model is { } m
+        View.HoverDetails = i => _settings.HoverDetails && RowOfTile(i) is int r and >= 0 && _model is { } m && r < m.Id.Length
             ? $"{m.W[r]} x {m.H[r]}  ·  {Ginkgo.App.BrowsePage.SizeText(m.Size[r])}" : null;
         // the scrubber: dragging the scroll bar shows where you are in the list
         Scroll.AddHandler(Thumb.DragStartedEvent, new DragStartedEventHandler((_, _) => { _scrubbing = true; UpdateScrub(); }));
@@ -162,6 +162,18 @@ public partial class MainWindow
     /// <summary>Puts a view back: what it says, and leaves alone what it doesn't. Goes to its section and folder when asked.</summary>
     private async Task ApplyView(ViewState v, bool go)
     {
+        // go there first (that brings that section's own view), then change it
+        if (go && (v.Section != _section || v.Folder != _folder)) await Go(v.Section, v.Folder);
+        SetViewFields(v, _section, _folder);
+        if (!string.IsNullOrEmpty(v.Search) || !go) { bool w = _loading; _loading = true; SearchBox.Text = v.Search ?? ""; _loading = w; }
+        ApplyFolderPrefs();
+        await BuildViewAsync(false, 0);
+        SaveSettings();
+    }
+
+    /// <summary>Sets the switches, folder choices, filters, order and look from a view (null parts are left as they are). Builds nothing.</summary>
+    private void SetViewFields(ViewState v, string section, string folder)
+    {
         bool was = _loading; _loading = true;
         try
         {
@@ -185,7 +197,6 @@ public partial class MainWindow
             if (v.BrowseDetails is { } bd) _settings.BrowseDetails = bd.ToList();
             if (v.CoverGrid is bool cg) { _settings.BrowseCoverGrid = cg; GridBtn.IsChecked = cg; }
             if (v.OwnOnly is bool oo) { _settings.BrowseOwnOnly = oo; OwnOnlyBtn.IsChecked = oo; }
-            string section = go ? v.Section : _section, folder = go ? v.Folder : _folder;
             if (section == "Browse")
             {
                 var p = PrefsForEdit(folder);
@@ -194,20 +205,70 @@ public partial class MainWindow
                 if (folder.Length > 0) { if (v.Sort is { } so) p.FileSort = so; if (v.Reverse is bool re) p.FileReverse = re; }
             }
             else { if (v.Sort is { } so) _settings.Sort = so; if (v.Reverse is bool re) _settings.SortReverse = re; }
-            if (v.Search is { } q && !go) SearchBox.Text = q;
+            if (v.OpenSets is { } os) { _openSets.Clear(); foreach (var k in os) _openSets.Add(k); }
             _filters.Load(_settings.Filters, (_model ?? _libModel)?.Formats() ?? new());
         }
         finally { _loading = was; }
         ApplyLayoutToView();
         UpdateChips(); UpdateLevelLabels(); UpdateFoldersLabel();
         ShuffleBtn.Visibility = (v.Sort ?? _settings.Sort) == "Random" ? Visibility.Visible : Visibility.Collapsed;
-        if (go && (v.Section != _section || v.Folder != _folder))
-        {
-            await Go(v.Section, v.Folder);
-            if (!string.IsNullOrEmpty(v.Search)) { SearchBox.Text = v.Search; }
-        }
-        else { ApplyFolderPrefs(); await BuildViewAsync(false, 0); }
-        SaveSettings();
+    }
+
+    // ---- each section keeps its own view for the session ----
+
+    /// <summary>Each section's view as it was left (this session): switches, folder choices, filters, order, look, folder, scroll position, search.</summary>
+    private readonly Dictionary<string, ViewState> _sectionViews = new();
+    /// <summary>How things were when Ginkgo started (the switches and folder choices a section starts with the first time it is opened).</summary>
+    private ViewState? _startState;
+
+    private ViewState CaptureSection()
+    {
+        var v = CaptureAll("");
+        v.Section = _section; v.Folder = _folder;
+        v.Offset = View.Offset;
+        v.OpenSets = _openSets.ToList();
+        return v;
+    }
+
+    /// <summary>A section opened for the first time this session: how Ginkgo started, with that section's default look and order.</summary>
+    private ViewState FirstState(string section, string folder)
+    {
+        var v = (_startState ?? CaptureAll("")).Copy();
+        v.Section = section; v.Folder = folder; v.Search = ""; v.OpenSets = new(); v.Offset = 0;
+        return v;
+    }
+
+    private ViewState DefaultFor(string section, string folder)
+    {
+        string key = ViewState.DefaultKey(section, folder);
+        return _settings.Defaults.TryGetValue(key, out var d) ? d.Copy() : ViewState.BuiltIn(key);
+    }
+
+    /// <summary>Leaving one section for another: keep this one's view, put the other's back (or its default the first time).</summary>
+    private ViewState SwapSection(string from, string to, string folder)
+    {
+        _sectionViews[from] = CaptureSection();
+        if (_sectionViews.TryGetValue(to, out var saved)) { SetViewFields(saved, to, saved.Folder); return saved; }
+        var first = FirstState(to, folder);
+        SetViewFields(first, to, folder);
+        var d = DefaultFor(to, folder);
+        SetViewFields(d, to, folder);
+        first.Search = "";
+        return first;
+    }
+
+    /// <summary>Called once the window is set up: notes how things started, and Home starts with its default look.</summary>
+    private void StartSections()
+    {
+        _startState = CaptureAll("");
+        SetViewFields(DefaultFor("Home", ""), "Home", "");
+    }
+
+    /// <summary>Before saving on close: the settings file keeps Home's choices (the switches and folders it starts with next time).</summary>
+    private void KeepHomeForNextTime()
+    {
+        if (_section == "Home" || !_sectionViews.TryGetValue("Home", out var home)) return;
+        SetViewFields(home, "Home", "");
     }
 
     private async void OnReturnToDefault(object s, RoutedEventArgs e)

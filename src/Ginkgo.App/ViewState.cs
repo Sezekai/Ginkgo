@@ -47,6 +47,10 @@ public sealed class ViewState
     public string? FolderSort { get; set; }
     public bool? FolderReverse { get; set; }
 
+    // a section's place in this session (not kept in saved searches or defaults)
+    public double? Offset { get; set; }
+    public List<string>? OpenSets { get; set; }
+
     public ViewState Copy() => JsonSerializer.Deserialize<ViewState>(JsonSerializer.Serialize(this))!;
 
     /// <summary>The section a default belongs to: Home, Browse (the folders at the top), Folder (inside a folder) or Favourites.</summary>

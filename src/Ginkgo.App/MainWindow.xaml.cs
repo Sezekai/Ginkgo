@@ -110,6 +110,7 @@ public partial class MainWindow : Window
         InitViews();
         InitSlideshow();
         InitTools();
+        StartSections();
         _gifs = new GifAnimator(i => i >= 0 && i < _paths.Length ? _paths[i] : null, () => Dispatcher.BeginInvoke(View.Refresh));
         View.Gifs = _gifs;
         _gifs.Limit = _settings.GifLimit;
@@ -164,6 +165,7 @@ public partial class MainWindow : Window
         Closing += (_, _) =>
         {
             _settings.BarHidden = _barManual;
+            KeepHomeForNextTime();
             CleanGpuExit();
             StopGrid();
             _engine.Warmer.Vram = null;        // the process is ending: the card's memory goes with it
@@ -189,7 +191,7 @@ public partial class MainWindow : Window
         var m = await Task.Run(() => LibraryModel.Load(db, favRoot, favourites: false));
         var fm = await Task.Run(() => LibraryModel.Load(db, favRoot, favourites: true));
         _libModel = m; _favModel = fm;
-        _dupResult = null;                                         // the duplicate finder's rows belong to the old list
+        _dupResult = ForModel(_dupResult, m);                      // the duplicate finder's groups, found again in the new list
         MigrateFolderRules(m);
         _fav.RequestSync();
         _engine.ViewRefreshed();
@@ -247,7 +249,7 @@ public partial class MainWindow : Window
 
     private async Task BuildViewAsync(bool keepPosition, double? offset = null)
     {
-        var model = _model; var stores = _engine.Stores;
+        var model = TargetModel; var stores = _engine.Stores;
         if (model is null || stores is null) return;
         int version = ++_buildVersion;
         var q = CurrentQuery();
@@ -259,7 +261,7 @@ public partial class MainWindow : Window
         bool grid = _settings.BrowseCoverGrid;
         var details = BrowseDetails();
         q.RowFilter = VideoRowFilter();
-        bool tools = InTools; var dupResult = _dupResult; string tool = _settings.Tool;
+        bool tools = InTools; string tool = _settings.Tool; var dupResult = tools && tool == "Duplicates" ? (_dupResult = ForModel(_dupResult, model)) : _dupResult;
         if (tools && tool == "LowRes") { var low = LowResFilter(model); var vf0 = q.RowFilter; q.RowFilter = vf0 is null ? low : r => low(r) && vf0(r); q.HideCopies = false; }
         var result = await Task.Run(() =>
         {
@@ -288,6 +290,7 @@ public partial class MainWindow : Window
         if (result.page is not null && result.page.Folder != _folder) { _folder = result.page.Folder; UpdateNavUi(); }   // the folder has gone (or is hidden): its nearest parent instead
         for (int k = 0; k < _firstFile; k++) result.slice.badges[k] = 0;
         _order = result.order;
+        _shownModel = model;
         _paths = result.slice.paths;
         _sets = result.sets; _copies = result.copies;
         View.Sets = _sets;
@@ -1067,7 +1070,13 @@ public partial class MainWindow : Window
     private void Navigate(string where)
     {
         SetSidebar(false);
-        if (where is "Home" or "Browse" or "Favourites" or "Tools") { if (where != _section || (where == "Browse" && _folder.Length > 0)) _ = Go(where, ""); else UpdateNavUi(); return; }
+        if (where is "Home" or "Browse" or "Favourites" or "Tools")
+        {
+            if (where != _section) _ = GoSection(where);                       // back where it was left
+            else if (where == "Browse" && _folder.Length > 0) _ = Go(where, ""); // Browse again: the top
+            else UpdateNavUi();
+            return;
+        }
         UpdateNavUi();
         StatusText.Text = $"{where} is coming in a later build.";
     }

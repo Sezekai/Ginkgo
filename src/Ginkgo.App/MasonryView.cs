@@ -595,7 +595,14 @@ public sealed class MasonryView : FrameworkElement
     {
         var sw = Stopwatch.StartNew();
         dc.PushClip(new RectangleGeometry(new Rect(0, -EdgeBleed, ActualWidth, ActualHeight + 2 * EdgeBleed)));
-        try { RenderInside(dc, sw); } finally { dc.Pop(); }
+        try { RenderInside(dc, sw); }
+        catch (Exception ex)
+        {
+            // one bad frame is not worth closing Ginkgo over: note it, and the next frame starts afresh
+            App.LogError($"drawing the grid ({_items.Length} tiles, layout {_layout?.Count ?? -1}, visible {(_visible.Count > 0 ? _visible[^1] : -1)}, thumbs {(_thumbs is null ? "none" : "set")})", ex);
+            _sigPrev.Clear();
+        }
+        finally { dc.Pop(); }
     }
 
     /// <summary>How far past its top and bottom edges the view draws (hidden under the bars next to it).</summary>

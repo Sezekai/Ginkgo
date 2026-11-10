@@ -96,13 +96,27 @@ public partial class MainWindow
         UpdateNavButtons();
     }
 
+    /// <summary>Opens a section where it was left this session (its folder and scroll position), or at its start the first time.</summary>
+    private Task GoSection(string section)
+    {
+        if (_sectionViews.TryGetValue(section, out var saved)) return Go(section, saved.Folder, offset: saved.Offset);
+        return Go(section, "");
+    }
+
     private Task Go(string section, string folder, bool remember = true, double? offset = null)
     {
         if (remember && (section != _section || folder != _folder)) Remember();
         bool sectionChanged = section != _section;
         if (ViewerOpen) CloseViewer(fromUser: false);
+        string search = "";
+        if (sectionChanged)
+        {
+            // each section keeps its own view: switches, folders, filters, order, size and layout
+            var st = SwapSection(_section, section, folder);
+            if (st.Folder == folder) { search = st.Search ?? ""; offset ??= st.Offset; }
+        }
         _section = section; _folder = folder; _navAt = Stopwatch.GetTimestamp();
-        _loading = true; SearchBox.Text = ""; _loading = false;     // a search belongs to the place it was typed in
+        _loading = true; SearchBox.Text = search; _loading = false;     // a search belongs to the place it was typed in
         ApplyFolderPrefs();
         UpdateNavUi();
         _barAuto = false; ApplyBar();                               // a new place starts at the top, with the bar showing

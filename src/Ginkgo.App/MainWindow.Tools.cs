@@ -18,7 +18,25 @@ public partial class MainWindow
 {
     private bool InTools => _section == "Tools";
 
-    private sealed class DupResult { public int[] Order = Array.Empty<int>(); public List<SetBlock> Blocks = new(); public List<List<int>> Groups = new(); }
+    /// <summary>The duplicate finder's groups: rows of <see cref="Model"/>, and the same files by id (so they survive the library being reloaded).</summary>
+    private sealed class DupResult
+    {
+        public int[] Order = Array.Empty<int>(); public List<SetBlock> Blocks = new(); public List<List<int>> Groups = new();
+        public LibraryModel Model = null!;
+        public List<List<long>> Ids = new();
+        public bool Near;
+    }
+
+    /// <summary>The groups again for a newly loaded library (files that have gone are dropped; a group needs two left).</summary>
+    private DupResult? ForModel(DupResult? d, LibraryModel? m)
+    {
+        if (d is null || m is null || ReferenceEquals(d.Model, m)) return d;
+        var rowOf = new Dictionary<long, int>(m.Id.Length);
+        for (int r = 0; r < m.Id.Length; r++) rowOf.TryAdd(m.Id[r], r);
+        var groups = d.Ids.Select(g => g.Where(rowOf.ContainsKey).Select(id => rowOf[id]).ToList()).Where(g => g.Count > 1).ToList();
+        var nd = Arrange(groups, m); nd.Near = d.Near;
+        return nd;
+    }
     private DupResult? _dupResult;
     private readonly WorkProgress _toolProgress = new();
     private CancellationTokenSource? _toolCts;
@@ -74,7 +92,7 @@ public partial class MainWindow
         order.Items.Add(new ComboBoxItem { Content = "Most space wasted first", Tag = "Wasted" });
         foreach (ComboBoxItem it in order.Items) if ((string)it.Tag == _settings.DupOrder) order.SelectedItem = it;
         if (order.SelectedItem is null) order.SelectedIndex = 0;
-        order.SelectionChanged += (_, _) => { _settings.DupOrder = (string)((ComboBoxItem)order.SelectedItem).Tag; if (_dupResult is { } d) { _dupResult = Arrange(d.Groups); BuildView(false); } };
+        order.SelectionChanged += (_, _) => { _settings.DupOrder = (string)((ComboBoxItem)order.SelectedItem).Tag; if (_dupResult is { } d) { var nd = Arrange(d.Groups, d.Model); nd.Near = d.Near; _dupResult = nd; BuildView(false); } };
         row.Children.Add(order);
         _dupPanel.Children.Add(row);
 
@@ -227,8 +245,9 @@ public partial class MainWindow
                 _toolProgress.Running = false;
                 return found.Select(g => g.Select(k => rows[k]).ToList()).ToList();
             }, cts.Token);
-            _dupResult = Arrange(groups);
-            _toolText.Text = groups.Count == 0 ? "No copies found." : $"{groups.Count:N0} groups of {(near ? "near" : "exact")} copies, {groups.Sum(g => g.Count):N0} files, {BrowsePage.SizeText(Wasted(groups))} taken by the extra copies.";
+            _dupResult = ForModel(Arrange(groups, m), _libModel);   // (the library may have been reloaded while it looked)
+            _dupResult!.Near = near;
+            _toolText.Text = groups.Count == 0 ? "No copies found." : $"{groups.Count:N0} groups of {(near ? "near" : "exact")} copies, {groups.Sum(g => g.Count):N0} files, {BrowsePage.SizeText(Wasted(groups, m))} taken by the extra copies.";
             _csvBtn.IsEnabled = groups.Count > 0;
             if (InTools) await BuildViewAsync(false, 0);
         }
@@ -241,13 +260,12 @@ public partial class MainWindow
         }
     }
 
-    private long Wasted(List<List<int>> groups) => _libModel is not { } m ? 0 : groups.Sum(g => g.Sum(r => m.Size[r]) - g.Max(r => m.Size[r]));
+    private long Wasted(List<List<int>> groups, LibraryModel m) => groups.Sum(g => g.Sum(r => m.Size[r]) - g.Max(r => m.Size[r]));
 
     /// <summary>Groups one after another (largest file first in each), as outlined blocks with what they cost.</summary>
-    private DupResult Arrange(List<List<int>> groups)
+    private DupResult Arrange(List<List<int>> groups, LibraryModel m)
     {
-        var m = _libModel!;
-        var res = new DupResult { Groups = groups };
+        var res = new DupResult { Groups = groups, Model = m, Ids = groups.Select(g => g.Select(r => m.Id[r]).ToList()).ToList() };
         IEnumerable<List<int>> ordered = _settings.DupOrder == "Wasted"
             ? groups.OrderByDescending(g => g.Sum(r => m.Size[r]) - g.Max(r => m.Size[r]))
             : groups.OrderByDescending(g => g.Count).ThenByDescending(g => g.Sum(r => m.Size[r]));
@@ -279,7 +297,8 @@ public partial class MainWindow
 
     private void ExportCsv()
     {
-        if (_dupResult is not { } d || _libModel is not { } m) return;
+        if (_dupResult is not { } d) return;
+        var m = d.Model;
         var dlg = new Microsoft.Win32.SaveFileDialog { Title = "Export the groups", FileName = "ginkgo-duplicates.csv", Filter = "CSV files|*.csv" };
         if (dlg.ShowDialog(this) != true) return;
         static string Q(string s) => "\"" + s.Replace("\"", "\"\"") + "\"";

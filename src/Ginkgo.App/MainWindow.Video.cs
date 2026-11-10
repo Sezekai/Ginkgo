@@ -78,7 +78,7 @@ public partial class MainWindow
     private bool _vSyncVol;
 
     private bool IsVideoTile(int i) => _model is not null && i >= _firstFile && i < _order.Length && _order[i] >= 0 && _model.Kind[_order[i]] == (byte)MediaKind.Video;
-    private long TileId(int i) => _model is not null && i >= 0 && i < _order.Length && _order[i] >= 0 ? _model.Id[_order[i]] : -1;
+    private long TileId(int i) => _model is { } m && i >= 0 && i < _order.Length && _order[i] >= 0 && _order[i] < m.Id.Length ? m.Id[_order[i]] : -1;
     private static long Ms(double s) => (long)(s * Stopwatch.Frequency);
     private bool Always => _settings.OutlineMemory == "Always";
 

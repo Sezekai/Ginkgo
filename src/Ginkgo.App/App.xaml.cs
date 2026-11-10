@@ -35,6 +35,20 @@ public partial class App : Application
     /// <summary>Started with --smoke (the build's start-up check): errors end the process with code 3 instead of showing a message.</summary>
     public static bool Smoke => Environment.GetCommandLineArgs().Contains("--smoke");
     private static int _crashed;
+    private static string LogPath => System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Ginkgo", "crash.log");
+
+    /// <summary>An error Ginkgo got past (it carries on): written to crash.log, at most a few times per run.</summary>
+    public static void LogError(string where, Exception ex)
+    {
+        if (System.Threading.Interlocked.Increment(ref _logged) > 5) return;
+        try
+        {
+            System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(LogPath)!);
+            System.IO.File.AppendAllText(LogPath, $"---- {DateTime.Now:yyyy-MM-dd HH:mm:ss} (carried on) {where}{Environment.NewLine}{ex}{Environment.NewLine}");
+        }
+        catch { }
+    }
+    private static int _logged;
     /// <summary>Something went wrong that nothing else caught: it is written to crash.log in Ginkgo's data folder and shown,
     /// instead of Ginkgo vanishing without a word.</summary>
     private static void Crashed(Exception? ex)

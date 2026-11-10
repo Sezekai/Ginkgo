@@ -11,7 +11,12 @@ public partial class MainWindow
     private FavouritesService _fav = null!;
     private LibraryModel? _libModel, _favModel;
     /// <summary>The model the current section shows: the Favourites folder in Favourites, everything else elsewhere.</summary>
-    private LibraryModel? _model => InFavourites ? _favModel : _libModel;
+    /// <summary>The list the tiles on screen come from. It changes together with _order (when a view has been built), so a tile's
+    /// row always means the same list, even while a section switch or a library reload is still building the next view.</summary>
+    private LibraryModel? _model => _shownModel ?? TargetModel;
+    private LibraryModel? _shownModel;
+    /// <summary>The list this section shows (the next view is built from it).</summary>
+    private LibraryModel? TargetModel => InFavourites ? _favModel : _libModel;
     private bool InFavourites => _section == "Favourites";
     private int _favCountLoaded = -1;
 
@@ -25,7 +30,7 @@ public partial class MainWindow
             _favMessageUntil = System.Diagnostics.Stopwatch.GetTimestamp() + 6 * System.Diagnostics.Stopwatch.Frequency;
             if (ViewerOpen) Osd(text.Length > 60 ? (text.StartsWith("Added") ? "Added to Favourites" : text.StartsWith("Removed") ? "Removed from Favourites" : "Favourites: see the status bar") : text);
         });
-        View.Starred = i => RowOfTile(i) is int r and >= 0 && _model is { } m && _fav.IsStarred(m.Id[r]);
+        View.Starred = i => RowOfTile(i) is int r and >= 0 && _model is { } m && r < m.Id.Length && _fav.IsStarred(m.Id[r]);
         View.StarClicked += i => { if (RowOfTile(i) is int r and >= 0) ToggleFavourite(r); };
         // every change in the library (a new file, a copy made in Explorer, a favourite deleted elsewhere) is checked again
         _engine.DataChanged += () => _fav.RequestSync();
