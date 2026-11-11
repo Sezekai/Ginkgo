@@ -621,12 +621,12 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="CheckBox">
-                        <StackPanel Orientation="Horizontal" Background="Transparent">
-                            <Border x:Name="Box" Width="18" Height="18" CornerRadius="4" Background="{DynamicResource Field}" BorderBrush="#55555F" BorderThickness="1" VerticalAlignment="Center">
+                        <DockPanel Background="Transparent">
+                            <Border x:Name="Box" DockPanel.Dock="Left" Width="18" Height="18" CornerRadius="4" Background="{DynamicResource Field}" BorderBrush="#55555F" BorderThickness="1" VerticalAlignment="Center">
                                 <TextBlock x:Name="Tick" Text="&#xE73E;" FontFamily="{DynamicResource IconFont}" FontSize="11" Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
                             </Border>
                             <ContentPresenter Margin="8,0,0,0" VerticalAlignment="Center"/>
-                        </StackPanel>
+                        </DockPanel>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
                                 <Setter TargetName="Box" Property="Background" Value="#6A3CF0"/>
