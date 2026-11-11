@@ -128,6 +128,7 @@ public static class ThemeKit
         void Set(string key, string hex) { var b = new SolidColorBrush(ButtonLook.C(hex)); b.Freeze(); R[key] = b; }
         Set("WindowBg", t.Window); Set("Bar", t.Surface); Set("Surface2", t.Inner); Set("Field", t.Field); Set("Edge", t.Edge);
         Set("Text", t.Text); Set("Dim", t.Dim); Set("Accent", t.Accent);
+        Set("BarBack", t.Surface);                  // the bars' background (a scene may replace it: Appearance > Backgrounds)
         R["AppFont"] = new FontFamily(t.Font);
         R["AppFontSize"] = Math.Clamp(t.FontSize, 9, 18);
         IconFamily = new FontFamily(t.Icons == "Classic" ? "Segoe MDL2 Assets" : "Segoe Fluent Icons, Segoe MDL2 Assets");

@@ -209,6 +209,51 @@ public partial class MainWindow
         return "   also in: " + string.Join(", ", l.Select(r => m.Display[r].Length == 0 ? "(library)" : m.Display[r]).Distinct());
     }
 
+    /// <summary>Home: switch off the file's folder (or its top-level folder), send it to Rarely used, and the same for its
+    /// NSFW and Very files when it is one of them.</summary>
+    private void AddFolderOptions(ContextMenu menu, int row)
+    {
+        if (_section != "Home" || _model is not { } m || row < 0 || row >= m.Count) return;
+        string folder = m.Display[row];
+        string name = folder.Length == 0 ? "the library's own files" : FolderPaths.Name(folder);
+        var level = (ContentLevel)m.Level[row];
+        void Item(string text, Action act) { var it = new MenuItem { Header = text }; it.Click += (_, _) => { act(); AfterFolderChange(); }; menu.Items.Add(it); }
+        menu.Items.Add(new Separator());
+        Item($"Hide the folder “{name}”", () => HideFolderTree(folder));
+        int cut = folder.IndexOf('\\');
+        if (cut > 0) { string top = folder[..cut]; Item($"Hide “{top}” (all of it)", () => HideFolderTree(top)); }
+        if (folder.Length > 0) Item($"Send “{name}” to Rarely used", () => { Add(_settings.RarelyUsed, folder); HideFolderTree(folder); });
+        if (level >= ContentLevel.Nsfw && folder.Length > 0)
+        {
+            menu.Items.Add(new Separator());
+            Item($"Hide the NSFW files of “{name}”", () => Add(_settings.NsfwOff, folder));
+            Item($"Send “{name}” to Rarely used in NSFW", () => { Add(_settings.RarelyUsed, folder); Add(_settings.NsfwOff, folder); });
+        }
+        if (level >= ContentLevel.Very && folder.Length > 0)
+        {
+            Item($"Hide the Very files of “{name}”", () => Add(_settings.VeryOff, folder));
+            Item($"Send “{name}” to Rarely used in Very", () => { Add(_settings.RarelyUsed, folder); Add(_settings.VeryOff, folder); });
+        }
+        static void Add(List<string> list, string v) { if (!list.Contains(v, StringComparer.OrdinalIgnoreCase)) list.Add(v); }
+    }
+
+    /// <summary>A folder and everything inside it, switched off in Select folders.</summary>
+    private void HideFolderTree(string folder)
+    {
+        if (_libModel is not { } m) return;
+        var off = new HashSet<string>(_settings.OffFolders, StringComparer.OrdinalIgnoreCase) { folder };
+        for (int i = 0; i < m.Count; i++) if (FolderPaths.IsUnder(m.Display[i], folder)) off.Add(m.Display[i]);
+        _settings.OffFolders = off.ToList();
+    }
+
+    private void AfterFolderChange()
+    {
+        UpdateFoldersLabel(); UpdateLevelLabels();
+        SaveSettings();
+        if (ViewerOpen) CloseViewer(fromUser: false);
+        BuildView(true);
+    }
+
     private void AddCopiesMenu(ContextMenu menu, int row)
     {
         if (!_copies.TryGetValue(row, out var l) || _model is not { } m) return;

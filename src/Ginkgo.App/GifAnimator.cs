@@ -87,6 +87,16 @@ public sealed class GifAnimator
         foreach (var k in _anims.Keys.Where(k => !keep.Contains(k)).ToList()) { _anims[k].Cts.Cancel(); _anims.Remove(k); }
     }
 
+    /// <summary>How long one loop of tile i's GIF lasts (ms), once it has loaded; 0 if not (yet).</summary>
+    public int LoopMs(int i) => _anims.TryGetValue(i, out var a) && a.Ready ? a.Total : 0;
+    /// <summary>Whether tile i's GIF has finished loading (or turned out to be a still picture).</summary>
+    public bool Settled(int i)
+    {
+        if (_anims.TryGetValue(i, out var a)) return a.Ready;
+        string? p = _pathOf(i);
+        lock (_still) return p is not null && _still.Contains(p);
+    }
+
     /// <summary>GIFs playing now (loaded and on screen).</summary>
     public int Playing => _anims.Values.Count(a => a.Ready);
 

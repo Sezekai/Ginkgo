@@ -484,7 +484,9 @@ float4 PS(VO v) : SV_Target
         bool timing = !_tsPending[slot];
         if (timing) { _ctx.Begin(_tsDisjoint[slot]); _ctx.End(_tsStart[slot]); }
 
-        _ctx.ClearRenderTargetView(_rtv!, new Color4(((background >> 16) & 255) / 255f, ((background >> 8) & 255) / 255f, (background & 255) / 255f, 1f));
+        // (premultiplied: a see-through background is all zeros, and the window's own background shows between the tiles)
+        float ba = ((background >> 24) & 255) / 255f;
+        _ctx.ClearRenderTargetView(_rtv!, new Color4(((background >> 16) & 255) / 255f * ba, ((background >> 8) & 255) / 255f * ba, (background & 255) / 255f * ba, ba));
         if (n > 0)
         {
             _ctx.OMSetRenderTargets(_rtv!);

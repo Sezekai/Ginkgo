@@ -341,8 +341,30 @@ public sealed class MasonryView : FrameworkElement
         Offset = top - (ActualHeight - _layout.H[index]) / 2;
     }
 
+    /// <summary>
+    /// Brings a tile into view for the arrow keys: the least scroll that shows it with a little room around it, eased, and
+    /// building on a scroll still under way (holding an arrow key glides instead of jumping). <paramref name="cover"/> is how
+    /// much of the top is under the bar.
+    /// </summary>
+    public void RevealIndex(int index, double cover)
+    {
+        if (_layout is null || index < 0 || index >= _items.Length) return;
+        double top = _layout.Y[index], bottom = top + _layout.H[index];
+        double h = ActualHeight, margin = Math.Min(40, h * 0.06);
+        double viewTop = _target + cover + margin, viewBottom = _target + h - margin;
+        double dest;
+        if (top < viewTop || bottom - top > viewBottom - viewTop) dest = top - cover - margin;
+        else if (bottom > viewBottom) dest = bottom - h + margin;
+        else return;
+        _target = Math.Clamp(dest, 0, MaxOffset);
+        StartAnimating();
+    }
+
     /// <summary>True while the offset is being recalculated because the layout changed (zoom, resize), not because the person scrolled.</summary>
     public bool InRelayout { get; private set; }
+
+    /// <summary>Lays the tiles out again (a look that changes the layout, such as sets without gaps).</summary>
+    public void RefreshLayout() => Relayout();
 
     private void Relayout()
     {
@@ -366,7 +388,7 @@ public sealed class MasonryView : FrameworkElement
             if (_grid) return UniformGrid.Compute(items, (float)ActualWidth, MasonryLayout.ColumnsFor((float)ActualWidth, _tileTarget, Gap), Gap, _gridFit);
             if (_rows) return JustifiedLayout.Compute(items, (float)ActualWidth, _tileTarget, Gap);
             int cols = MasonryLayout.ColumnsFor((float)ActualWidth, _tileTarget, Gap);
-            return MasonryLayout.Compute(items, (float)ActualWidth, cols, Gap);
+            return MasonryLayout.Compute(items, (float)ActualWidth, cols, Gap, _setLook.NoGap ? 0 : Gap);
         }
         if (CoverCount > 0)
         {
@@ -577,10 +599,13 @@ public sealed class MasonryView : FrameworkElement
     private static uint BgPixel = TileBlit.Pack(18, 18, 20), FadePixel = TileBlit.Pack(40, 40, 46);
 
     /// <summary>The colour behind the tiles (from the theme), and the slightly lighter one a tile shows while its picture loads.</summary>
-    public static void SetBackground(Color c)
+    public static void SetBackground(Color c) => SetBackground(c, false);
+
+    /// <summary>See-through: nothing is painted behind the tiles, so the window's background (a scene) shows between them.</summary>
+    public static void SetBackground(Color c, bool clear)
     {
-        Background = Freeze(new SolidColorBrush(c));
-        BgPixel = TileBlit.Pack(c.R, c.G, c.B);
+        Background = clear ? Brushes.Transparent : Freeze(new SolidColorBrush(c));
+        BgPixel = clear ? 0u : TileBlit.Pack(c.R, c.G, c.B);
         byte L(byte v) => (byte)Math.Min(255, v + (v < 128 ? 22 : -22));
         FadePixel = TileBlit.Pack(L(c.R), L(c.G), L(c.B));
     }
@@ -713,7 +738,7 @@ public sealed class MasonryView : FrameworkElement
             bool gif = e is not null && Badges is { } bd && i < bd.Length && bd[i] != 0;
             int below = i < CoverCount ? (int)(CaptionHeight * dpi) : 0;
             bool labelled = _labels is { } lb && i < lb.Length && lb[i] is not null && y < offPx + ph && y + hPx + below > offPx;
-            bool starred = e is not null && ((Starred is { } stf && stf(i)) || (CopiesOf is { } cof && cof(i) > 0));
+            bool starred = e is not null && ((MarkFavourites && Starred is { } stf && stf(i)) || (CopiesOf is { } cof && cof(i) > 0));
             if (i == _hoverIndex || gif || labelled || starred || i == _selected) _overlay.Add((new Rect(x / dpi, (y - offPx) / dpi, wPx / dpi, hPx / dpi), i == _hoverIndex, gif, labelled ? i : -1, i));
         }
         (_sigPrev, _sigNow) = (_sigNow, _sigPrev);
@@ -741,6 +766,8 @@ public sealed class MasonryView : FrameworkElement
         }
         Perf.PaintMax = Math.Max(Perf.PaintMax, Perf.Ms(Stopwatch.GetTimestamp() - pt0));
         _starHit = (-1, Rect.Empty);
+        (Rect r, string text)? stripFor = null;
+        if (_shineHover >= 0 && _shineHover != _hoverIndex) _shineHover = -1;
         foreach (var (r, hovered, gif, label, index) in _overlay)
         {
             if (label >= 0) { if (label < CoverCount) DrawCaptionBelow(dc, r, label, dpi); else DrawCaption(dc, r, label, dpi); }
@@ -753,11 +780,18 @@ public sealed class MasonryView : FrameworkElement
             if (playingHere) DrawVideoBar(dc, r, index, vt!);
             else if (isVideo && info.Item2 >= 0) DrawPausedLabel(dc, r, index, info.Item2);
             else if (gif && r.Width > 70 && (!isVideo || LabelsFit(r))) DrawBadge(dc, r, index);
+            if (MarkFavourites && index >= CoverCount && Starred is { } fst && fst(index)) DrawFavourite(dc, r, index, hovered);
             if (label < 0 || index >= CoverCount) DrawStar(dc, r, index, hovered);
-            if (hovered && index >= CoverCount && !playingHere && HoverDetails is { } hd && r.Width >= 150 && r.Height >= 60 && hd(index) is { Length: > 0 } det) DrawHoverDetails(dc, r, det);
+            if (hovered && index >= CoverCount && !playingHere && _favLook.Info != "None" && HoverDetails is { } hd && r.Width >= 90 && r.Height >= 40 && hd(index) is { Length: > 0 } det)
+            {
+                if (_favLook.Info == "Strip") stripFor = (r, det);
+                else if (r.Width >= 150 && r.Height >= 60) DrawHoverDetails(dc, r, det);
+            }
             if (CopiesOf is { } co && index >= CoverCount && r.Width >= 60 && co(index) is int nc and > 0) DrawCopies(dc, r, nc, isVideo && playingHere);
         }
         DrawSets(dc, offPx, dpi);
+        if (stripFor is { } sf) DrawInfoStrip(dc, sf.r, sf.text);
+        KeepFxMoving();
         UpdateCursor();
         _fadingNow = fading;
         LastRenderMs = sw.Elapsed.TotalMilliseconds;
@@ -1162,8 +1196,9 @@ public sealed class MasonryView : FrameworkElement
     private void DrawStar(DrawingContext dc, Rect r, int i, bool hovered)
     {
         if (Starred is null || r.Width < 48 || r.Height < 40) return;
-        bool on = Starred(i);
-        if (!on && !hovered) return;
+        bool on = Starred(i) && MarkFavourites;
+        if (on && !_favLook.Star) on = false;
+        if (!on && !(hovered && _favLook.StarButton)) return;
         double k = UiScale(r);
         double sz = Math.Round(26 * k);
         var box = new Rect(r.Left + 6 * k, r.Top + 6 * k, sz, sz);
@@ -1179,6 +1214,78 @@ public sealed class MasonryView : FrameworkElement
         dc.DrawText(ft, at);
         if (hovered) _starHit = (i, box);
     }
+    // ---- how sets and favourites are marked (Appearance) ----
+
+    private static SetLook _setLook = new();
+    private static FavLook _favLook = new();
+    /// <summary>The look of Connected Art sets in the grid.</summary>
+    public static SetLook SetStyle { get => _setLook; set { _setLook = value.Copy(); _setPens = null; } }
+    /// <summary>How favourites and picture details show.</summary>
+    public static FavLook FavStyle { get => _favLook; set { _favLook = value.Copy(); _favPens = null; } }
+    /// <summary>Favourites are marked (off in the Favourites section, where every picture is one).</summary>
+    public bool MarkFavourites { get; set; } = true;
+    private static (Pen main, Pen[] glow, Brush label, Pen labelEdge)? _setPens;
+    private static (Pen main, Pen[] glow)? _favPens;
+    private readonly Stopwatch _fxClock = Stopwatch.StartNew();
+    private System.Windows.Threading.DispatcherTimer? _fxTimer;
+    private int _shineHover = -1; private double _shineHoverAt;
+
+    private static Brush Edge2(string kind, Color a, Color b, double t)
+    {
+        Brush br = kind switch
+        {
+            "Gradient" => new LinearGradientBrush(a, b, 0),
+            "Gold" => Gold(),
+            "Holographic" => Holo(t),
+            _ => new SolidColorBrush(a),
+        };
+        br.Freeze();
+        return br;
+    }
+
+    private static LinearGradientBrush Gold()
+    {
+        var g = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 1) };
+        foreach (var (c, at) in new[] { ("#B8862B", 0.0), ("#FFE7A0", 0.3), ("#E0A93A", 0.55), ("#FFF3C4", 0.8), ("#B8862B", 1.0) }) g.GradientStops.Add(new GradientStop(ButtonLook.C(c), at));
+        return g;
+    }
+
+    private static LinearGradientBrush Holo(double t)
+    {
+        var g = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 1), SpreadMethod = GradientSpreadMethod.Repeat };
+        string[] cs = { "#FF6FB1", "#FFD36B", "#86FF9E", "#6BE3FF", "#A98BFF", "#FF6FB1" };
+        for (int i = 0; i < cs.Length; i++) g.GradientStops.Add(new GradientStop(ButtonLook.C(cs[i]), i / (double)(cs.Length - 1)));
+        g.RelativeTransform = new TranslateTransform((t * 0.15) % 1, 0);
+        return g;
+    }
+
+    private static Pen[] GlowPens(Color c, double width, double glow)
+    {
+        if (glow <= 0.01) return Array.Empty<Pen>();
+        var list = new List<Pen>();
+        for (int k = 3; k >= 1; k--)
+        {
+            var b = new SolidColorBrush(Color.FromArgb((byte)(255 * Math.Min(1, glow) * 0.12 * (4 - k)), c.R, c.G, c.B)); b.Freeze();
+            var p = new Pen(b, width + k * 2.5 * glow + 1); p.LineJoin = PenLineJoin.Round; p.Freeze(); list.Add(p);
+        }
+        return list.ToArray();
+    }
+
+    private static (Pen main, Pen[] glow, Brush label, Pen labelEdge) SetPens()
+    {
+        if (_setPens is { } sp) return sp;
+        var l = _setLook;
+        Color a = ButtonLook.C(l.ColourA), b = ButtonLook.C(l.ColourB);
+        var main = new Pen(Edge2(l.Outline == "Gradient" ? "Gradient" : "Solid", Color.FromArgb(230, a.R, a.G, a.B), b, 0), Math.Clamp(l.Width, 0.5, 8)) { LineJoin = PenLineJoin.Round };
+        if (l.Outline == "Dashed") main.DashStyle = new DashStyle(new double[] { 3, 2.2 }, 0);
+        main.Freeze();
+        var glow = GlowPens(a, l.Width, l.Outline == "Glow" ? Math.Max(0.6, l.Glow) : l.Glow);
+        var back = Freeze(new SolidColorBrush(Color.FromArgb(215, (byte)(a.R / 5 + 10), (byte)(a.G / 5 + 8), (byte)(a.B / 5 + 18))));
+        var edge = new Pen(Freeze(new SolidColorBrush(Color.FromArgb(220, a.R, a.G, a.B))), 1); edge.Freeze();
+        _setPens = (main, glow, back, edge);
+        return _setPens.Value;
+    }
+
     private static readonly Pen SetPen = MakeSetPen();
     /// <summary>The highlight the arrow keys move (in the theme's accent; made again when the accent changes).</summary>
     private static Pen SelectPen
@@ -1219,11 +1326,29 @@ public sealed class MasonryView : FrameworkElement
                 else parts.Add(rk);
             }
             if (parts.Count == 0) continue;
+            var look = _setLook;
+            var (pen, glows, labelBack, labelEdge) = SetPens();
+            double rad = Math.Clamp(look.Radius, 0, 24), off = Math.Clamp(look.Offset, 0, 8);
+            double t = _fxClock.Elapsed.TotalSeconds;
             foreach (var pr in parts)
             {
-                var o = pr; o.Inflate(1.5, 1.5);
-                dc.DrawRoundedRectangle(null, SetPen, o, 4, 4);
+                var o = pr; o.Inflate(off, off);
+                if (look.Glass)
+                {
+                    var gc = ButtonLook.C(look.GlassColour);
+                    var tint = new SolidColorBrush(Color.FromArgb((byte)(255 * Math.Clamp(look.GlassStrength, 0, 0.8)), gc.R, gc.G, gc.B));
+                    var gloss = new LinearGradientBrush(Color.FromArgb(60, 255, 255, 255), Color.FromArgb(0, 255, 255, 255), 90) { EndPoint = new Point(0, 0.45) };
+                    dc.DrawRoundedRectangle(tint, null, pr, rad, rad);
+                    dc.DrawRoundedRectangle(gloss, null, pr, rad, rad);
+                }
+                if (look.Shine) DrawSweep(dc, pr, rad, t, look.ShineEvery, b.First);
+                if (look.Outline != "None")
+                {
+                    foreach (var gp in glows) dc.DrawRoundedRectangle(null, gp, o, rad, rad);
+                    dc.DrawRoundedRectangle(null, pen, o, rad, rad);
+                }
             }
+            if (look.Links) DrawLinks(dc, b, offPx, dpi, pen.Brush);
             var first = parts[0];
             if (b.Collapsed)
             {
@@ -1233,20 +1358,127 @@ public sealed class MasonryView : FrameworkElement
                     double d = 4 * k;
                     var edge = new Rect(first.Left + d + 2, first.Top - d + 2, Math.Max(0, first.Width - d - 2), Math.Max(0, first.Height - d - 2));
                     dc.PushOpacity(0.55 / k);
-                    dc.DrawRoundedRectangle(null, SetPen, edge, 4, 4);
+                    dc.DrawRoundedRectangle(null, look.Outline == "None" ? SetPen : pen, edge, rad, rad);
                     dc.Pop();
                 }
             }
             if (first.Width < 70 || first.Height < 36) continue;
+            if (!look.Label && !b.Collapsed && !b.Large) continue;      // (a stacked or large set keeps its label: it opens and closes it)
             string text = b.Collapsed ? $"{b.Name}  ·  {b.Total} images  ▸" : b.Large ? $"{b.Name}  ·  {b.Total}  ▴" : $"{b.Name}  ·  {b.Total}";
             var ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 11, Brushes.White, ppd)
             { MaxTextWidth = Math.Max(10, first.Width - 24), MaxLineCount = 1, Trimming = TextTrimming.CharacterEllipsis };
             var at = parts[^1];                                    // the bottom-left corner of the set (its last row in equal rows)
             var box = new Rect(at.Left + 6, at.Bottom - 22, ft.Width + 12, 17);
-            dc.DrawRoundedRectangle(SetBack, SetPen, box, 4, 4);
+            dc.DrawRoundedRectangle(labelBack, labelEdge, box, 4, 4);
             dc.DrawText(ft, new Point(box.Left + 6, box.Top + (box.Height - ft.Height) / 2));
             if (b.Collapsed || b.Large) _setLabels.Add((b.First, box));
         }
+    }
+
+    /// <summary>A small link on each seam between neighbouring pictures of a set.</summary>
+    private void DrawLinks(DrawingContext dc, SetBlock b, int offPx, double dpi, Brush ink)
+    {
+        if (_layout is null) return;
+        double ppd = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        int end = Math.Min(b.First + b.Count, _layout.Count);
+        for (int k = b.First; k + 1 < end; k++)
+        {
+            int n = k + 1;
+            if (_layout.W[k] <= 0 || _layout.W[n] <= 0) continue;
+            var a = new Rect(_layout.X[k], _layout.Y[k] - offPx / dpi, _layout.W[k], _layout.H[k]);
+            var c = new Rect(_layout.X[n], _layout.Y[n] - offPx / dpi, _layout.W[n], _layout.H[n]);
+            Point at;
+            if (Math.Abs(c.Left - a.Right) < 12 && c.Top < a.Bottom && c.Bottom > a.Top)
+                at = new Point((a.Right + c.Left) / 2, (Math.Max(a.Top, c.Top) + Math.Min(a.Bottom, c.Bottom)) / 2);
+            else if (Math.Abs(c.Top - a.Bottom) < 12 && c.Left < a.Right && c.Right > a.Left)
+                at = new Point((Math.Max(a.Left, c.Left) + Math.Min(a.Right, c.Right)) / 2, (a.Bottom + c.Top) / 2);
+            else continue;
+            if (at.Y < -20 || at.Y > ActualHeight + 20) continue;
+            dc.DrawEllipse(SpeakerBack, new Pen(ink, 1), at, 9, 9);
+            var ft = new FormattedText("\uE71B", CultureInfo.InvariantCulture, FlowDirection.LeftToRight, IconFace, 10, Brushes.White, ppd);
+            dc.DrawText(ft, new Point(at.X - ft.Width / 2, at.Y - ft.Height / 2));
+        }
+    }
+
+    /// <summary>The card shine: a band of light crossing a rectangle now and then (each one at its own moment).</summary>
+    private void DrawSweep(DrawingContext dc, Rect r, double radius, double t, double every, int seed, bool now = false, double started = 0)
+    {
+        const double sweep = 1.1;
+        double phase;
+        if (now) phase = t - started;
+        else
+        {
+            every = Math.Clamp(every, 2, 120);
+            phase = (t + (seed * 0.618 % 1) * every) % every;
+        }
+        if (phase < 0 || phase > sweep) return;
+        double p = phase / sweep, c = -0.35 + 1.7 * p;
+        var band = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 1) };
+        band.GradientStops.Add(new GradientStop(Color.FromArgb(0, 255, 255, 255), c - 0.16));
+        band.GradientStops.Add(new GradientStop(Color.FromArgb(70, 255, 230, 250), c - 0.06));
+        band.GradientStops.Add(new GradientStop(Color.FromArgb(140, 255, 255, 255), c));
+        band.GradientStops.Add(new GradientStop(Color.FromArgb(70, 200, 240, 255), c + 0.06));
+        band.GradientStops.Add(new GradientStop(Color.FromArgb(0, 255, 255, 255), c + 0.16));
+        dc.PushClip(new RectangleGeometry(r, radius, radius));
+        dc.DrawRectangle(band, null, r);
+        dc.Pop();
+        _fxActive = true;
+    }
+    private bool _fxActive;
+
+    /// <summary>Favourites: an outline (gold, holographic, a colour or a gradient) with a soft glow, and the card shine.</summary>
+    private void DrawFavourite(DrawingContext dc, Rect r, int index, bool hovered)
+    {
+        var l = _favLook;
+        double t = _fxClock.Elapsed.TotalSeconds;
+        if (l.Outline != "None")
+        {
+            Color a = ButtonLook.C(l.ColourA), b = ButtonLook.C(l.ColourB);
+            var brush = Edge2(l.Outline, a, b, t);
+            double w = Math.Clamp(l.Width, 0.5, 8);
+            var o = r; o.Inflate(-w / 2, -w / 2);
+            Color gc = l.Outline is "Gold" ? Color.FromRgb(0xFF, 0xC8, 0x3D) : l.Outline == "Holographic" ? Color.FromRgb(0xB8, 0xE8, 0xFF) : a;
+            foreach (var gp in GlowPens(gc, w, l.Glow)) { var g = r; g.Inflate(1, 1); dc.DrawRectangle(null, gp, g); }
+            var pen = new Pen(brush, w); pen.Freeze();
+            dc.DrawRectangle(null, pen, o);
+            if (l.Outline == "Holographic") _fxActive = true;
+        }
+        if (l.Shine == "Always") DrawSweep(dc, r, 0, t, l.ShineEvery, index);
+        else if (l.Shine == "Hover" && hovered)
+        {
+            if (_shineHover != index) { _shineHover = index; _shineHoverAt = t; }
+            DrawSweep(dc, r, 0, t, 0, index, now: true, started: _shineHoverAt);
+        }
+    }
+
+    /// <summary>Animated marks (shines, the holographic edge) keep the grid redrawing while they move.</summary>
+    private void KeepFxMoving()
+    {
+        bool want = _fxActive || _setLook.Shine || _favLook.Shine == "Always" || _favLook.Outline == "Holographic" || (_favLook.Shine == "Hover" && _shineHover >= 0);
+        _fxActive = false;
+        if (!want) { _fxTimer?.Stop(); return; }
+        if (_fxTimer is null)
+        {
+            _fxTimer = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(40) };
+            _fxTimer.Tick += (_, _) => { if (IsVisible) InvalidateVisual(); };
+        }
+        if (!_fxTimer.IsEnabled) _fxTimer.Start();
+    }
+
+    /// <summary>Picture details in a small strip just under the picture (it lies over the top of the one below).</summary>
+    private void DrawInfoStrip(DrawingContext dc, Rect r, string text)
+    {
+        var l = _favLook;
+        double ppd = VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        var ink = new SolidColorBrush(ButtonLook.C(l.InfoText)); ink.Freeze();
+        var ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, Math.Clamp(l.InfoSize, 8, 16), ink, ppd)
+        { MaxTextWidth = Math.Max(10, r.Width - 12), MaxLineCount = 1, Trimming = TextTrimming.CharacterEllipsis };
+        double h = ft.Height + 6;
+        var bc = ButtonLook.C(l.InfoBack);
+        var back = new SolidColorBrush(Color.FromArgb((byte)(255 * Math.Clamp(l.InfoOpacity, 0.2, 1)), bc.R, bc.G, bc.B)); back.Freeze();
+        var box = new Rect(r.Left, r.Bottom - 2, r.Width, h);
+        dc.DrawRoundedRectangle(back, null, box, 0, 3);
+        dc.DrawText(ft, new Point(box.Left + 6, box.Top + 3));
     }
 
     private void DrawHoverDetails(DrawingContext dc, Rect r, string text)

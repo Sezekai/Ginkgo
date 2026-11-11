@@ -95,6 +95,25 @@ public partial class MainWindow
         order.SelectionChanged += (_, _) => { _settings.DupOrder = (string)((ComboBoxItem)order.SelectedItem).Tag; if (_dupResult is { } d) { var nd = Arrange(d.Groups, d.Model); nd.Near = d.Near; _dupResult = nd; BuildView(false); } };
         row.Children.Add(order);
         _dupPanel.Children.Add(row);
+        // where copies count
+        var scopeRow = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
+        scopeRow.Children.Add(new TextBlock { Text = "Look for copies", Foreground = (Brush)FindResource("Dim"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 8, 0) });
+        var scopes = new List<(ToggleButton b, string v)>();
+        foreach (var (text, v, tip) in new[]
+        {
+            ("In the same folder", "Folder", "Only files lying in the very same folder count as copies (not its subfolders)"),
+            ("Within each top-level folder", "Top", "The same file in Games and in God of War is not reported; within Games it is"),
+            ("Anywhere", "All", "Across the whole library"),
+            ("Only across folders", "Apart", "Only copies that sit in different folders (copies within one folder are left out)"),
+        })
+        {
+            var b = new ToggleButton { Content = text, Margin = new Thickness(0, 0, 4, 0), Height = 28, ToolTip = tip };
+            string val = v;
+            b.Click += (_, _) => { _settings.DupScope = val; foreach (var (bb, vv) in scopes) bb.IsChecked = vv == val; };
+            scopes.Add((b, v)); scopeRow.Children.Add(b);
+        }
+        foreach (var (bb, vv) in scopes) bb.IsChecked = vv == _settings.DupScope;
+        _dupPanel.Children.Add(scopeRow);
 
         var run = new WrapPanel { Margin = new Thickness(0, 2, 0, 0) };
         _findBtn = new Button { Content = "Find", Padding = new Thickness(14, 2, 14, 2), Margin = new Thickness(0, 0, 6, 0), Height = 28 };
@@ -206,6 +225,7 @@ public partial class MainWindow
         _toolPaused = false; _pauseBtn.Content = "Pause";
         _findBtn.IsEnabled = false; _pauseBtn.IsEnabled = _stopBtn.IsEnabled = true;
         bool near = _settings.DupNear, vids = _settings.DupVideos, gifs = _settings.DupGifs;
+        string scope = _settings.DupScope;
         int bits = _settings.DupBits;
         long minBytes = (long)(_settings.DupMinMB * 1048576);
         var q = CurrentQuery();
@@ -219,7 +239,16 @@ public partial class MainWindow
         {
             var groups = await Task.Run(() =>
             {
-                string Top(int r) { string d = m.Display[r]; int c = d.IndexOf('\\'); return c < 0 ? d : d[..c]; }
+                string Dir(int r) => System.IO.Path.GetDirectoryName(m.Path[r]) ?? "";
+                // the "scope" a copy must share with the others: its own folder, its top-level folder, or nothing (anywhere)
+                string Top(int r)
+                {
+                    if (scope == "Folder") return Dir(r).ToLowerInvariant();
+                    if (scope is "All" or "Apart") return "";
+                    string d = m.Display[r]; int c = d.IndexOf('\\'); return c < 0 ? d : d[..c];
+                }
+                List<List<int>> Keep(List<List<int>> groups) => scope != "Apart" ? groups
+                    : groups.Where(g => g.Select(r => Dir(r)).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1).ToList();
                 if (!near)
                 {
                     DuplicateHashes.Run(db, _toolProgress, () => _toolPaused, cts.Token);
@@ -232,9 +261,9 @@ public partial class MainWindow
                         while (r.Read()) hash[r.GetInt64(0)] = r.GetInt64(1);
                     }
                     // each top-level folder on its own: the same file in Games and in God of War is not reported
-                    return rows.Where(r => hash.ContainsKey(m.Id[r]))
+                    return Keep(rows.Where(r => hash.ContainsKey(m.Id[r]))
                         .GroupBy(r => (Top(r).ToLowerInvariant(), m.Size[r], hash[m.Id[r]]))
-                        .Where(g => g.Count() > 1).Select(g => g.ToList()).ToList();
+                        .Where(g => g.Count() > 1).Select(g => g.ToList()).ToList());
                 }
                 var files = rows.Select(r => (m.Id[r], m.MicroPack[r], m.MicroOff[r], m.MicroLen[r])).ToList();
                 var vh = VisualHash.Ensure(db, stores.Micro, files, _toolProgress, () => _toolPaused, cts.Token);
@@ -243,7 +272,7 @@ public partial class MainWindow
                 var scopes = rows.Select(Top).ToList();
                 var found = NearGroups.Find(hashes, scopes, bits, cts.Token);
                 _toolProgress.Running = false;
-                return found.Select(g => g.Select(k => rows[k]).ToList()).ToList();
+                return Keep(found.Select(g => g.Select(k => rows[k]).ToList()).ToList());
             }, cts.Token);
             _dupResult = ForModel(Arrange(groups, m), _libModel);   // (the library may have been reloaded while it looked)
             _dupResult!.Near = near;

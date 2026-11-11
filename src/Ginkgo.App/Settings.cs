@@ -117,6 +117,9 @@ public sealed class AppSettings
     public bool DupVideos { get; set; } = true;
     public bool DupGifs { get; set; } = true;
     public string DupOrder { get; set; } = "Copies";
+    /// <summary>Where copies count: Folder (the same folder only, not its subfolders), Top (within each top-level folder),
+    /// All (anywhere in the library), Apart (only copies that sit in different folders).</summary>
+    public string DupScope { get; set; } = "Top";
     public Ginkgo.Data.LowResRule LowRes { get; set; } = new();
     public List<Ginkgo.Data.LowResRule> LowResPresets { get; set; } = new();
 

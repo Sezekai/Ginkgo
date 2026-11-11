@@ -12,7 +12,7 @@
     <Border x:Name="WindowEdge" BorderBrush="#4A4A54" BorderThickness="0">
     <DockPanel>
     <!-- the window's own title bar: name on the left, window buttons flush in the top-right corner -->
-    <Grid x:Name="TitleBar" DockPanel.Dock="Top" Panel.ZIndex="1" Height="29" Background="{DynamicResource Bar}" MouseLeftButtonDown="OnTitleDown" MouseMove="OnTitleMove" MouseLeftButtonUp="OnTitleUp">
+    <Grid x:Name="TitleBar" DockPanel.Dock="Top" Panel.ZIndex="1" Height="29" Background="{DynamicResource BarBack}" MouseLeftButtonDown="OnTitleDown" MouseMove="OnTitleMove" MouseLeftButtonUp="OnTitleUp">
         <Border VerticalAlignment="Bottom" Height="1" Background="{DynamicResource Edge}" IsHitTestVisible="False"/>
         <TextBlock Text="Ginkgo" FontSize="12" Foreground="{DynamicResource Text}" VerticalAlignment="Center" Margin="14,0,0,1" IsHitTestVisible="False"/>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
@@ -40,7 +40,7 @@
                        VerticalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="560" Visibility="Collapsed"/>
         </Grid>
 
-        <Border x:Name="StatusBar" Grid.Row="1" Background="{DynamicResource Bar}" BorderBrush="{DynamicResource Edge}" BorderThickness="0,1,0,0" Padding="14,6">
+        <Border x:Name="StatusBar" Grid.Row="1" Background="{DynamicResource BarBack}" BorderBrush="{DynamicResource Edge}" BorderThickness="0,1,0,0" Padding="14,6">
             <DockPanel>
                 <Button x:Name="UpdateBtn" DockPanel.Dock="Right" Content="Update view" Visibility="Collapsed" Margin="8,0,0,0" Padding="8,2" Click="OnUpdateView"/>
                 <Button x:Name="DiagMoreBtn" DockPanel.Dock="Right" Content="Full status" Visibility="Collapsed" Margin="8,0,0,0" Padding="8,0" Height="22" ToolTip="Show the whole F3 status" Click="OnDiagMore"/>
@@ -56,9 +56,11 @@
         <!-- the top bar: also the window's title bar. It slides away when you scroll down. -->
         <StackPanel x:Name="BarHost" Grid.RowSpan="2" VerticalAlignment="Top">
             <StackPanel.RenderTransform><TranslateTransform x:Name="BarShift"/></StackPanel.RenderTransform>
-            <Border x:Name="TopBar" Background="{DynamicResource Bar}" BorderBrush="{DynamicResource Edge}" BorderThickness="0,0,0,1" MouseLeftButtonDown="OnTitleDown" MouseMove="OnTitleMove" MouseLeftButtonUp="OnTitleUp">
+            <Border x:Name="TopBar" Background="{DynamicResource BarBack}" BorderBrush="{DynamicResource Edge}" BorderThickness="0,0,0,1" MouseLeftButtonDown="OnTitleDown" MouseMove="OnTitleMove" MouseLeftButtonUp="OnTitleUp">
                 <local:BarPanel x:Name="BarRow" Margin="14,14,10,14" VerticalAlignment="Center">
-                        <Button Style="{StaticResource IconButton}" Content="&#xE700;" Height="{DynamicResource KeyHeight}" Margin="0,3,10,3" VerticalAlignment="Center" ToolTip="Menu (Ctrl+B)" Click="OnSidebarToggle"/>
+                        <local:LogoView x:Name="Logo" local:BarPanel.Pinned="True" Margin="0,0,10,0" VerticalAlignment="Center" ToolTip="Ginkgo"/>
+                        <TextBlock x:Name="SectionTitle" local:BarPanel.Pinned="True" Text="Home" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource Text}" VerticalAlignment="Center" Margin="0,0,12,1" MinWidth="40"/>
+                        <local:SectionSwitch x:Name="Sections" local:BarPanel.Pinned="True" Height="{DynamicResource KeyHeight}" Margin="0,3,16,3" VerticalAlignment="Center"/>
                         <Button x:Name="FoldersBtn" Style="{StaticResource DropButton}" Content="Select folders" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnFolders"/>
                         <ToggleButton x:Name="ImagesBtn" Content="Images" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged"/>
                         <ToggleButton x:Name="GifsBtn" Content="GIFs" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged"/>
@@ -100,10 +102,15 @@
                         <ToggleButton x:Name="GridLayoutBtn" Content="Grid" Height="{DynamicResource KeyHeight}" Margin="0,3,4,3" VerticalAlignment="Center" Click="OnGridLayout" ToolTip="Square cells of one size"/>
                         <ToggleButton x:Name="FitBtn" Content="Fit" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnGridFit" Visibility="Collapsed" ToolTip="On: whole pictures inside their cells. Off: pictures cropped to fill them"/>
                         <ToggleButton x:Name="RowsBtn" Content="Equal rows" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnLayoutChanged" ToolTip="Rows of equal height instead of equal-width columns (L)"/>
-                        <Button x:Name="SlideshowBtn" Style="{StaticResource IconButton}" Content="&#xE786;" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" ToolTip="Slideshow of this view (Space pauses, arrows step, Esc stops)" Click="OnSlideshow"/>
+                        <Button x:Name="ViewsBtn" Style="{StaticResource DropButton}" Content="Views" Height="{DynamicResource KeyHeight}" Margin="0,3,4,3" VerticalAlignment="Center" ToolTip="Saved views: open one, save this view, update, rename or delete" Click="OnViewsMenu"/>
+                        <Button x:Name="ResetViewBtn" Style="{StaticResource IconButton}" Content="&#xE72C;" Height="{DynamicResource KeyHeight}" Margin="0,3,2,3" VerticalAlignment="Center" ToolTip="Return to default: this section's own sort, filters, layout and size" Click="OnReturnToDefaultBtn"/>
+                        <Button x:Name="SaveViewBtn" Style="{StaticResource IconButton}" Content="&#xE710;" Height="{DynamicResource KeyHeight}" Margin="0,3,2,3" VerticalAlignment="Center" ToolTip="Save this view… (everything about it, under a name)" Click="OnSaveSearch"/>
+                        <Button x:Name="SaveDefaultBtn" Style="{StaticResource IconButton}" Content="&#xE74E;" Height="{DynamicResource KeyHeight}" Margin="0,3,12,3" VerticalAlignment="Center" ToolTip="Save as default: how this section looks now becomes what it starts with" Click="OnSaveAsDefaultBtn"/>
+                        <Button x:Name="SlideshowBtn" Style="{StaticResource IconButton}" Content="&#xE786;" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" ToolTip="Slideshow: how long each picture shows, videos and GIFs, then Start" Click="OnSlideshow"/>
                         <Button x:Name="PauseAllBtn" Style="{StaticResource IconButton}" Content="&#xE769;" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" ToolTip="Pause every playing video" Click="OnPauseAll" Visibility="Collapsed"/>
                         <Button x:Name="QuickBtn" Style="{StaticResource IconButton}" Content="&#xE9E9;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Quick toggles: videos (Q)" Click="OnQuick"/>
                         <Button x:Name="OptimiseBtn" Style="{StaticResource IconButton}" Content="&#xE9D9;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Optimisations: memory and GIFs" Click="OnOptimise"/>
+                        <Button x:Name="AppearanceBtn" Style="{StaticResource IconButton}" Content="&#xE790;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Appearance: themes, buttons, logo, backgrounds, folder pop-outs, sets, favourites" Click="OnAppearanceBtn"/>
                         <Button x:Name="SettingsBtn" Style="{StaticResource IconButton}" Content="&#xE713;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Settings" Click="OnSettings"/>
                         <Button x:Name="KeysBtn" Style="{StaticResource IconButton}" Content="&#xE765;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Keyboard shortcuts (K)" Click="OnKeysClick"/>
                         <Button x:Name="MoreBtn" local:BarPanel.Pinned="True" Style="{StaticResource IconButton}" Content="&#xE712;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="More" Click="OnMoreBar"/>
@@ -111,10 +118,10 @@
                     </local:BarPanel>
             </Border>
             <!-- the filters in use, each with an x, and Clear all -->
-            <Border x:Name="ChipBar" Background="{DynamicResource Bar}" BorderBrush="{DynamicResource Edge}" BorderThickness="0,0,0,1" Padding="14,6" Visibility="Collapsed">
+            <Border x:Name="ChipBar" Background="{DynamicResource BarBack}" BorderBrush="{DynamicResource Edge}" BorderThickness="0,0,0,1" Padding="14,6" Visibility="Collapsed">
                 <WrapPanel x:Name="Chips" Orientation="Horizontal"/>
             </Border>
-            <Border x:Name="BrowseBar" Background="{DynamicResource Bar}" BorderBrush="{DynamicResource Edge}" BorderThickness="0,0,0,1" Padding="14,7" Visibility="Collapsed"
+            <Border x:Name="BrowseBar" Background="{DynamicResource BarBack}" BorderBrush="{DynamicResource Edge}" BorderThickness="0,0,0,1" Padding="14,7" Visibility="Collapsed"
                     MouseLeftButtonDown="OnTitleDown" MouseMove="OnTitleMove" MouseLeftButtonUp="OnTitleUp">
                 <DockPanel>
                     <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
@@ -143,7 +150,7 @@
                     </StackPanel>
                 </DockPanel>
             </Border>
-            <Border x:Name="ToolsBar" Background="{DynamicResource Bar}" BorderBrush="{DynamicResource Edge}" BorderThickness="0,0,0,1" Padding="14,7" Visibility="Collapsed"/>
+            <Border x:Name="ToolsBar" Background="{DynamicResource BarBack}" BorderBrush="{DynamicResource Edge}" BorderThickness="0,0,0,1" Padding="14,7" Visibility="Collapsed"/>
             <Border x:Name="Banner" Background="#5A4A1E" Padding="12,6" Visibility="Collapsed">
                 <DockPanel>
                     <StackPanel x:Name="BannerButtons" Orientation="Horizontal" DockPanel.Dock="Right"/>
@@ -169,111 +176,32 @@
         <Button x:Name="ShowBarBtn" Grid.RowSpan="2" Style="{StaticResource IconButton}" Content="&#xE70D;" Height="26" HorizontalAlignment="Right"
                 VerticalAlignment="Top" Margin="0,4,18,0" Background="#99000000" Visibility="Collapsed" ToolTip="Show the bar (H)" Click="OnShowBar"/>
 
-        <!-- side menu -->
-        <!-- the menu: a card that drops down from the menu button -->
-        <Grid x:Name="SideLayer" Grid.RowSpan="2" Visibility="Collapsed">
-            <Border x:Name="Scrim" Background="#40000000" MouseLeftButtonDown="OnScrimDown"/>
-            <Border x:Name="Side" Width="310" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="10,8,0,0"
-                    Background="{DynamicResource Bar}" BorderBrush="{DynamicResource Edge}" BorderThickness="1" CornerRadius="16">
-                <Border.Effect><DropShadowEffect BlurRadius="28" ShadowDepth="6" Opacity="0.6" Color="Black"/></Border.Effect>
-                <Border.RenderTransform><TranslateTransform x:Name="SideShift" Y="-8"/></Border.RenderTransform>
+        <!-- saved views: a pop-out from the Views button -->
+        <Popup x:Name="SavedPopup" Grid.RowSpan="2" PlacementTarget="{Binding ElementName=ViewsBtn}" Placement="Bottom" AllowsTransparency="True" PopupAnimation="Fade" VerticalOffset="2">
+            <Border Margin="6,0,20,20" Width="340" Background="{DynamicResource Bar}" BorderBrush="{DynamicResource Edge}" BorderThickness="1" CornerRadius="12" Padding="8,10,8,8"
+                    TextElement.FontFamily="{DynamicResource AppFont}" TextElement.Foreground="{DynamicResource Text}">
+                <Border.Effect><DropShadowEffect BlurRadius="18" ShadowDepth="4" Opacity="0.55" Color="Black"/></Border.Effect>
                 <StackPanel>
-                    <DockPanel Margin="18,16,18,14">
-                        <Border Width="46" Height="46" CornerRadius="12" Background="{DynamicResource Field}" BorderBrush="{DynamicResource Edge}" BorderThickness="1">
-                            <Image Source="Assets/ginkgo.png" Width="34" Height="34" RenderOptions.BitmapScalingMode="HighQuality"/>
-                        </Border>
-                        <StackPanel Margin="14,0,0,0" VerticalAlignment="Center">
-                            <TextBlock Text="Ginkgo" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource Text}"/>
-                            <TextBlock x:Name="SideLibrary" Foreground="{DynamicResource Dim}" FontSize="12.5" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
-                        </StackPanel>
+                    <DockPanel Margin="8,0,4,8">
+                        <Button DockPanel.Dock="Right" Content="Save this view…" Padding="10,1" Height="26" Click="OnSaveSearch" ToolTip="Keep everything about this view under a name"/>
+                        <TextBlock x:Name="ViewTitle" Text="Saved views" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     </DockPanel>
-                    <Border Height="1" Background="{DynamicResource Edge}"/>
-                    <Border Margin="12" Background="{DynamicResource Surface2}" BorderBrush="{DynamicResource Edge}" BorderThickness="1" CornerRadius="12" Padding="6,8,6,6">
-                        <StackPanel>
-                            <TextBlock Text="Sections" Foreground="{DynamicResource Dim}" FontSize="12.5" Margin="10,2,0,6"/>
-                            <ToggleButton x:Name="NavHome" Style="{StaticResource SideItem}" IsChecked="True" Click="OnNav" Tag="Home">
-                                <DockPanel>
-                                    <TextBlock DockPanel.Dock="Right" Text="Ctrl+1" Foreground="{DynamicResource Dim}" FontSize="12" VerticalAlignment="Center"/>
-                                    <TextBlock Text="&#xE80F;" FontFamily="{DynamicResource IconFont}" Width="30" FontSize="16" VerticalAlignment="Center" Foreground="{DynamicResource Dim}"/>
-                                    <TextBlock Text="Home" VerticalAlignment="Center"/>
-                                </DockPanel>
-                            </ToggleButton>
-                            <ToggleButton x:Name="NavBrowse" Style="{StaticResource SideItem}" Click="OnNav" Tag="Browse">
-                                <DockPanel>
-                                    <TextBlock DockPanel.Dock="Right" Text="Ctrl+2" Foreground="{DynamicResource Dim}" FontSize="12" VerticalAlignment="Center"/>
-                                    <TextBlock Text="&#xE8B7;" FontFamily="{DynamicResource IconFont}" Width="30" FontSize="16" VerticalAlignment="Center" Foreground="{DynamicResource Dim}"/>
-                                    <TextBlock Text="Browse" VerticalAlignment="Center"/>
-                                </DockPanel>
-                            </ToggleButton>
-                            <ToggleButton x:Name="NavFav" Style="{StaticResource SideItem}" Click="OnNav" Tag="Favourites">
-                                <DockPanel>
-                                    <TextBlock DockPanel.Dock="Right" Text="Ctrl+3" Foreground="{DynamicResource Dim}" FontSize="12" VerticalAlignment="Center"/>
-                                    <TextBlock Text="&#xE734;" FontFamily="{DynamicResource IconFont}" Width="30" FontSize="16" VerticalAlignment="Center" Foreground="{DynamicResource Dim}"/>
-                                    <TextBlock Text="Favourites" VerticalAlignment="Center"/>
-                                </DockPanel>
-                            </ToggleButton>
-                            <ToggleButton x:Name="NavTools" Style="{StaticResource SideItem}" Click="OnNav" Tag="Tools">
-                                <DockPanel>
-                                    <TextBlock DockPanel.Dock="Right" Text="Ctrl+4" Foreground="{DynamicResource Dim}" FontSize="12" VerticalAlignment="Center"/>
-                                    <TextBlock Text="&#xE90F;" FontFamily="{DynamicResource IconFont}" Width="30" FontSize="16" VerticalAlignment="Center" Foreground="{DynamicResource Dim}"/>
-                                    <TextBlock Text="Tools" VerticalAlignment="Center"/>
-                                </DockPanel>
-                            </ToggleButton>
-                        </StackPanel>
-                    </Border>
-                    <Border Margin="12,0,12,12" Background="{DynamicResource Surface2}" BorderBrush="{DynamicResource Edge}" BorderThickness="1" CornerRadius="12" Padding="6,8,6,6">
-                        <StackPanel>
-                            <TextBlock x:Name="ViewTitle" Text="This view" Foreground="{DynamicResource Dim}" FontSize="12.5" Margin="10,2,0,6"/>
-                            <ToggleButton Style="{StaticResource SideItem}" Click="OnReturnToDefault" ToolTip="This section's own sort, filters, layout and size">
-                                <DockPanel>
-                                    <TextBlock Text="&#xE72C;" FontFamily="{DynamicResource IconFont}" Width="30" FontSize="15" VerticalAlignment="Center" Foreground="{DynamicResource Dim}"/>
-                                    <TextBlock Text="Return to default" VerticalAlignment="Center"/>
-                                </DockPanel>
-                            </ToggleButton>
-                            <ToggleButton Style="{StaticResource SideItem}" Click="OnSaveAsDefault" ToolTip="Make how this section looks now its default">
-                                <DockPanel>
-                                    <TextBlock Text="&#xE74E;" FontFamily="{DynamicResource IconFont}" Width="30" FontSize="15" VerticalAlignment="Center" Foreground="{DynamicResource Dim}"/>
-                                    <TextBlock Text="Save as default" VerticalAlignment="Center"/>
-                                </DockPanel>
-                            </ToggleButton>
-                            <DockPanel Margin="10,10,4,4">
-                                <Button DockPanel.Dock="Right" Content="Save this view…" Padding="8,1,8,1" Click="OnSaveSearch" ToolTip="Keep everything about this view under a name"/>
-                                <TextBlock Text="Saved searches" Foreground="{DynamicResource Dim}" FontSize="12.5" VerticalAlignment="Center"/>
-                            </DockPanel>
-                            <ScrollViewer MaxHeight="260" VerticalScrollBarVisibility="Auto">
-                                <StackPanel x:Name="SavedList"/>
-                            </ScrollViewer>
-                            <TextBlock x:Name="SavedEmpty" Text="None yet. Right-click a saved search to update, rename, move or delete it." Foreground="{DynamicResource Dim}" FontSize="11.5" TextWrapping="Wrap" Margin="10,2,6,4"/>
-                        </StackPanel>
-                    </Border>
-                    <Border Height="1" Background="{DynamicResource Edge}"/>
-                    <StackPanel Margin="12,8,12,12">
-                        <ToggleButton Style="{StaticResource SideItem}" Click="OnSideSettings">
-                            <DockPanel>
-                                <TextBlock Text="&#xE713;" FontFamily="{DynamicResource IconFont}" Width="30" FontSize="16" VerticalAlignment="Center" Foreground="{DynamicResource Dim}"/>
-                                <TextBlock Text="Settings" VerticalAlignment="Center"/>
-                            </DockPanel>
-                        </ToggleButton>
-                        <ToggleButton Style="{StaticResource SideItem}" Click="OnSideAppearance">
-                            <DockPanel>
-                                <TextBlock Text="&#xE771;" FontFamily="{DynamicResource IconFont}" Width="30" FontSize="16" VerticalAlignment="Center" Foreground="{DynamicResource Dim}"/>
-                                <TextBlock Text="Appearance" VerticalAlignment="Center"/>
-                            </DockPanel>
-                        </ToggleButton>
-                        <ToggleButton Style="{StaticResource SideItem}" Click="OnSideLook">
-                            <DockPanel>
-                                <TextBlock Text="&#xE790;" FontFamily="{DynamicResource IconFont}" Width="30" FontSize="16" VerticalAlignment="Center" Foreground="{DynamicResource Dim}"/>
-                                <TextBlock Text="Button look" VerticalAlignment="Center"/>
-                            </DockPanel>
-                        </ToggleButton>
-                    </StackPanel>
+                    <ScrollViewer MaxHeight="360" VerticalScrollBarVisibility="Auto">
+                        <StackPanel x:Name="SavedList"/>
+                    </ScrollViewer>
+                    <TextBlock x:Name="SavedEmpty" Text="None yet. Save this view keeps everything about it (section, folder, switches, filters, order and look) under a name. Right-click a saved view to update, rename, move or delete it." Foreground="{DynamicResource Dim}" FontSize="11.5" TextWrapping="Wrap" Margin="8,2,6,6"/>
+                    <Border Height="1" Background="{DynamicResource Edge}" Margin="4,6"/>
+                    <WrapPanel Margin="4,2,0,0">
+                        <Button Content="Return to default" Padding="10,1" Height="26" Margin="0,0,6,0" Click="OnReturnToDefaultBtn" ToolTip="This section's own sort, filters, layout and size"/>
+                        <Button Content="Save as default" Padding="10,1" Height="26" Click="OnSaveAsDefaultBtn" ToolTip="Make how this section looks now its default"/>
+                    </WrapPanel>
                 </StackPanel>
             </Border>
-        </Grid>
+        </Popup>
 
         <!-- viewer -->
         <Grid x:Name="ViewerRoot" Grid.RowSpan="2" Background="{DynamicResource ViewerBack}" Visibility="Collapsed" Focusable="True" FocusVisualStyle="{x:Null}">
-            <Grid x:Name="PicHost" ClipToBounds="True" Background="Transparent" MouseWheel="OnViewerWheel" MouseLeftButtonDown="OnViewerDown"
+            <Grid x:Name="PicHost" ClipToBounds="True" Background="Transparent" MouseWheel="OnViewerWheel" MouseLeftButtonDown="OnViewerDown" MouseRightButtonUp="OnViewerRightClick"
                   MouseMove="OnViewerMove" MouseLeftButtonUp="OnViewerUp" SizeChanged="OnViewerSize">
                 <Image x:Name="Pic" Stretch="Uniform" RenderTransformOrigin="0.5,0.5" RenderOptions.BitmapScalingMode="HighQuality">
                     <Image.RenderTransform>
@@ -325,6 +253,7 @@
                 <StackPanel Orientation="Horizontal">
                     <Button x:Name="FavBtn" Style="{StaticResource VBtn}" Content="&#xE734;" FontSize="18" Height="41" Click="OnViewerFav" ToolTip="Add to Favourites"/>
                     <Button x:Name="SlideBtn" Style="{StaticResource VBtn}" Content="&#xE786;" FontSize="17" Height="41" Click="OnSlideshow" ToolTip="Slideshow from here (Space pauses, arrows step, Esc stops)"/>
+                    <Button x:Name="SlideMoreBtn" Style="{StaticResource VBtn}" Content="&#xE70D;" FontSize="10" Width="24" Height="41" Click="OnSlideMore" ToolTip="Slideshow settings: how long each picture shows, videos and GIFs, order"/>
                 </StackPanel>
             </Border>
             <Border x:Name="InfoBox" HorizontalAlignment="Left" VerticalAlignment="Bottom" Padding="10,6" CornerRadius="5"

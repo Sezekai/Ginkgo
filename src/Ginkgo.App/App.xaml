@@ -15,6 +15,7 @@
         <FontFamily x:Key="IconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
         <sys:Double x:Key="AppFontSize" xmlns:sys="clr-namespace:System;assembly=mscorlib">12</sys:Double>
         <SolidColorBrush x:Key="ViewerBack" Color="Black"/>
+        <SolidColorBrush x:Key="BarBack" Color="#1C1C20"/>
 
         <!-- ===== buttons ===== -->
         <Style TargetType="Button">

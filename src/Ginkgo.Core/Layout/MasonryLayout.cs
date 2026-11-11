@@ -74,9 +74,12 @@ public static class MasonryLayout
     /// <summary>
     /// Standard shortest-column masonry. Items with Span &gt; 1 are placed where the tallest of the columns they cover is lowest.
     /// </summary>
-    public static MasonryResult Compute(ReadOnlySpan<ItemSpec> items, float width, int columns, float gap) => Compute(items.ToArray(), width, columns, gap);
+    public static MasonryResult Compute(ReadOnlySpan<ItemSpec> items, float width, int columns, float gap) => Compute(items.ToArray(), width, columns, gap, gap);
 
-    private static MasonryResult Compute(ItemSpec[] items, float width, int columns, float gap)
+    /// <summary>As above, with <paramref name="blockGap"/> between the pictures inside a set (0: they touch).</summary>
+    public static MasonryResult Compute(ReadOnlySpan<ItemSpec> items, float width, int columns, float gap, float blockGap) => Compute(items.ToArray(), width, columns, gap, blockGap);
+
+    private static MasonryResult Compute(ItemSpec[] items, float width, int columns, float gap, float blockGap)
     {
         if (columns < 1) throw new ArgumentOutOfRangeException(nameof(columns));
         if (width <= 0) throw new ArgumentOutOfRangeException(nameof(width));
@@ -117,7 +120,7 @@ public static class MasonryLayout
         {
             int len = Math.Min(items[i].Block, n - i);
             float bw = colW * bspan + gap * (bspan - 1), bx = bs * pitch;
-            float bh = PlaceRows(items, i, len, bx, btop, bw, oneRow ? float.MaxValue : colW, gap, x, y, w, h);
+            float bh = PlaceRows(items, i, len, bx, btop, bw, oneRow ? float.MaxValue : colW, Math.Max(0, blockGap), x, y, w, h);
             for (int k = i; k < i + len; k++)
             {
                 int c0 = Math.Clamp((int)((x[k] - 0.5f) / pitch + 0.0001f), 0, columns - 1);

@@ -192,7 +192,9 @@ public partial class MainWindow
 
     private void UpdateNavUi()
     {
-        NavHome.IsChecked = _section == "Home"; NavBrowse.IsChecked = InBrowse; NavFav.IsChecked = InFavourites; NavTools.IsChecked = InTools;
+        Sections.Show(_section);
+        SectionTitle.Text = _section;
+        View.MarkFavourites = !InFavourites;          // in Favourites every picture is one: nothing to mark
         ToolsBar.Visibility = InTools ? Visibility.Visible : Visibility.Collapsed;
         BrowseBar.Visibility = InBrowse ? Visibility.Visible : Visibility.Collapsed;
         FoldersBtn.Visibility = InBrowse || InFavourites ? Visibility.Collapsed : Visibility.Visible;     // Select folders shapes Home; Browse shows every folder
@@ -293,7 +295,9 @@ public partial class MainWindow
 
     // ---- right-click menu ----
 
-    private void ShowTileMenu(int index)
+    private void ShowTileMenu(int index) => ShowTileMenu(index, inViewer: false);
+
+    private void ShowTileMenu(int index, bool inViewer)
     {
         if (_model is null || index < 0 || index >= _order.Length) return;
         var menu = new ContextMenu();
@@ -314,7 +318,7 @@ public partial class MainWindow
         else
         {
             int row = _order[index];
-            Item("Open", () => OpenViewer(index));
+            if (!inViewer) Item("Open", () => OpenViewer(index));
             if (InBrowse && _folder.Length > 0 && row >= 0)
             {
                 menu.Items.Add(new Separator());
@@ -334,7 +338,8 @@ public partial class MainWindow
                 Item("Show in Explorer", () => ShowInExplorer(_model.Path[row], folder: false));
                 Item("Copy path", () => { try { Clipboard.SetText(_model.Path[row]); } catch { } });
                 AddCopiesMenu(menu, row);
-                if (_sets.FirstOrDefault(b => index >= b.First && index < b.First + b.Count && b.Large) is { } sb)
+                AddFolderOptions(menu, row);
+                if (!inViewer && _sets.FirstOrDefault(b => index >= b.First && index < b.First + b.Count && b.Large) is { } sb)
                 {
                     menu.Items.Add(new Separator());
                     Item(sb.Collapsed ? $"Open the set “{sb.Name}”" : $"Close the set “{sb.Name}”", () => ToggleSet(sb.First));

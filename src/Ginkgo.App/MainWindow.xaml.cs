@@ -45,7 +45,6 @@ public partial class MainWindow : Window
     private long _barShownAt, _ignoreOverUntil;
 
     // side menu
-    private bool _sideOpen;
     private bool _diag;
     private long _lastFrame; private double _worstGap; private TimeSpan _lastRenderTime; private int _slowFrames, _slowGc, _slowOurs, _slowOther; private long _busyAtFrame; private TimeSpan _gcAtFrame, _gcAtTick;
 
@@ -113,7 +112,12 @@ public partial class MainWindow : Window
         InitViews();
         InitSlideshow();
         InitTools();
+        InitSections();
+        Sticky(SavedPopup);
+        SavedPopup.Opened += (_, _) => ViewsBtn.Tag = true;
+        SavedPopup.Closed += (_, _) => { ViewsBtn.Tag = false; ApplyBar(); };
         StartSections();
+        ApplyLooks();
         _gifs = new GifAnimator(i => i >= 0 && i < _paths.Length ? _paths[i] : null, () => Dispatcher.BeginInvoke(View.Refresh));
         View.Gifs = _gifs;
         _gifs.Limit = _settings.GifLimit;
@@ -724,6 +728,11 @@ public partial class MainWindow : Window
 
     private void OnKey(object s, KeyEventArgs e)
     {
+        if (Sections.IsKeyboardFocused && ViewerRoot.Visibility != Visibility.Visible)
+        {
+            if (Sections.HandleKey(e)) e.Handled = true;
+            return;
+        }
         if (KeysLayer.Visibility == Visibility.Visible)
         {
             if (e.Key is Key.Escape or Key.K or Key.OemQuestion) { KeysLayer.Visibility = Visibility.Collapsed; e.Handled = true; }
@@ -743,12 +752,11 @@ public partial class MainWindow : Window
         if (e.Key == Key.Escape)
         {
             if (CloseSticky()) { e.Handled = true; }
-            else if (_sideOpen) { SetSidebar(false); e.Handled = true; }
             else if (_fullscreen && !typing) { ToggleFullscreen(); e.Handled = true; }
             else if (typing) { SearchBox.Text = ""; View.Focus(); e.Handled = true; }
             return;
         }
-        if (ctrl && e.Key == Key.B) { SetSidebar(!_sideOpen); e.Handled = true; return; }
+        if (ctrl && e.Key == Key.B) { FocusSections(); e.Handled = true; return; }
         if (ctrl && e.Key == Key.W) { Close(); e.Handled = true; return; }
         if (ctrl && e.Key == Key.S) { OpenSettings(); e.Handled = true; return; }
         if (ctrl && e.Key == Key.F) { RevealBar(); SearchBox.Focus(); SearchBox.SelectAll(); e.Handled = true; return; }
@@ -792,7 +800,7 @@ public partial class MainWindow : Window
             case Key.Q: RevealBar(); OnQuick(this, e); e.Handled = true; break;
             case Key.F: case Key.F11: ToggleFullscreen(); e.Handled = true; break;
             case Key.F3: StepDiag(); e.Handled = true; break;
-            case Key.M: SetSidebar(!_sideOpen); e.Handled = true; break;
+            case Key.M: FocusSections(); e.Handled = true; break;
             case Key.H: OnHideBar(this, e); e.Handled = true; break;
             case Key.G: GeneralBtn.IsChecked = GeneralBtn.IsChecked != true; OnFilterChanged(this, e); e.Handled = true; break;
             case Key.N: NsfwBtn.IsChecked = NsfwBtn.IsChecked != true; OnFilterChanged(this, e); e.Handled = true; break;
@@ -927,7 +935,7 @@ public partial class MainWindow : Window
     // ---- top bar: slides away on scroll down, back on scroll up; H hides it for good until shown again ----
 
     private bool BarPinned =>
-        _folderPopup.IsOpen || (_optPopup?.IsOpen ?? false) || (_quickPopup?.IsOpen ?? false) || (_vfPopup?.IsOpen ?? false) || LibraryPopupOpen() || _sideOpen || BarRow.Expanded || Banner.Visibility == Visibility.Visible || SearchBox.IsKeyboardFocused ||
+        _folderPopup.IsOpen || (_optPopup?.IsOpen ?? false) || (_quickPopup?.IsOpen ?? false) || (_vfPopup?.IsOpen ?? false) || LibraryPopupOpen() || (_slidePopup?.IsOpen ?? false) || SavedPopup.IsOpen || Sections.IsKeyboardFocused || BarRow.Expanded || Banner.Visibility == Visibility.Visible || SearchBox.IsKeyboardFocused ||
         (TopBar.IsMouseOver && Stopwatch.GetTimestamp() > _ignoreOverUntil) || HoverStrip.IsMouseOver;
 
     private void ApplyBar()
@@ -1033,47 +1041,26 @@ public partial class MainWindow : Window
 
     private void RevealBar() { if (_barManual || _barAuto) { _barManual = false; _barAuto = false; UpdateInset(); } ApplyBar(); }
 
-    // ---- side menu ----
+    // ---- the section switch ----
 
-    private void OnSidebarToggle(object s, RoutedEventArgs e) => SetSidebar(!_sideOpen);
-    private void OnScrimDown(object s, MouseButtonEventArgs e) => SetSidebar(false);
-
-    private void SetSidebar(bool open)
+    /// <summary>Ctrl+B or M: the keyboard goes to the section switch (1-4 or the arrows move; Enter, Esc, Ctrl+B or M come back).</summary>
+    private void FocusSections()
     {
-        if (open == _sideOpen) return;
-        _sideOpen = open;
-        var ease = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut };
-        if (open)
-        {
-            // the card drops down just under the menu button
-            var btn = BarRow.Children.OfType<Button>().FirstOrDefault();
-            // measured within the bar, not where it is now: a hidden bar slides back in as the menu opens, and the menu goes under it
-            double top = btn is not null && btn.IsVisible ? btn.TranslatePoint(new Point(0, btn.ActualHeight), BarHost).Y + BarHost.TranslatePoint(new Point(0, 0), Root).Y - BarShift.Y + 6 : 8;
-            double left = btn is not null && btn.IsVisible ? Math.Max(8, btn.TranslatePoint(new Point(0, 0), Root).X - 4) : 10;
-            Side.Margin = new Thickness(left, Math.Max(8, top), 0, 0);
-            Side.MaxHeight = Math.Max(200, Root.ActualHeight - Side.Margin.Top - 12);
-            SideLibrary.Text = _settings.LibraryRoot;
-            SideLayer.Visibility = Visibility.Visible;
-            SideShift.BeginAnimation(TranslateTransform.YProperty, new System.Windows.Media.Animation.DoubleAnimation(-8, 0, TimeSpan.FromMilliseconds(150)) { EasingFunction = ease });
-            Side.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(130)));
-            Scrim.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(150)));
-        }
-        else
-        {
-            var fade = new System.Windows.Media.Animation.DoubleAnimation(0, TimeSpan.FromMilliseconds(110));
-            fade.Completed += (_, _) => { if (!_sideOpen) SideLayer.Visibility = Visibility.Collapsed; };
-            Side.BeginAnimation(OpacityProperty, fade);
-            SideShift.BeginAnimation(TranslateTransform.YProperty, new System.Windows.Media.Animation.DoubleAnimation(-6, TimeSpan.FromMilliseconds(110)) { EasingFunction = ease });
-            Scrim.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(0, TimeSpan.FromMilliseconds(110)));
-        }
-        ApplyBar();
+        RevealBar();
+        if (!Sections.IsVisible) return;
+        Keyboard.Focus(Sections);
+    }
+
+    private void InitSections()
+    {
+        Sections.Picked += Navigate;
+        Sections.Done += () => View.Focus();
     }
 
     private void OnNav(object s, RoutedEventArgs e) => Navigate((string)((FrameworkElement)s).Tag);
 
     private void Navigate(string where)
     {
-        SetSidebar(false);
         if (where is "Home" or "Browse" or "Favourites" or "Tools")
         {
             if (where != _section) _ = GoSection(where);                       // back where it was left
@@ -1085,36 +1072,44 @@ public partial class MainWindow : Window
         StatusText.Text = $"{where} is coming in a later build.";
     }
 
-    private void OnSideSettings(object s, RoutedEventArgs e) { ((System.Windows.Controls.Primitives.ToggleButton)s).IsChecked = false; SetSidebar(false); OpenSettings(); }
     /// <summary>The arrow keys move a highlight through the tiles (starting at the one under the mouse, or the first on screen).</summary>
     private void MoveSelection(int dx, int dy)
     {
         if (_order.Length == 0) return;
         int cur = View.SelectedIndex;
-        if (cur < 0 || cur >= _order.Length) { cur = View.HoverIndex >= 0 ? View.HoverIndex : Math.Max(0, View.VisibleRange().first); View.SelectedIndex = cur; View.ScrollToIndex(cur); return; }
+        double cover = BarHost.Visibility == Visibility.Visible ? Math.Max(0, BarHost.ActualHeight + BarShift.Y) : 0;
+        if (cur < 0 || cur >= _order.Length) { cur = View.HoverIndex >= 0 ? View.HoverIndex : Math.Max(0, View.VisibleRange().first); View.SelectedIndex = cur; View.RevealIndex(cur, cover); return; }
         int next = View.Neighbour(cur, dx, dy);
         if (next < 0) return;
         View.SelectedIndex = next;
-        View.ScrollToIndex(next);
+        View.RevealIndex(next, cover);
         StatusText.Text = IsFolderTile(next) ? FolderHoverText(next) : next < _paths.Length ? HoverText(next) : StatusText.Text;
     }
 
-    private void OnSideAppearance(object s, RoutedEventArgs e) { ((System.Windows.Controls.Primitives.ToggleButton)s).IsChecked = false; OpenAppearance(); }
-    private void OnSideLook(object s, RoutedEventArgs e) { ((System.Windows.Controls.Primitives.ToggleButton)s).IsChecked = false; SetSidebar(false); OpenLook(); }
+    private void OnAppearanceBtn(object s, RoutedEventArgs e) => OpenAppearance();
 
     /// <summary>The button look window: changes show at once; Save keeps them.</summary>
     /// <summary>Appearance: themes, colours, fonts, icons and backgrounds.</summary>
-    public void OpenAppearance()
+    private AppearanceWindow? _appearance;
+    public void OpenAppearance() => OpenAppearance(null);
+
+    /// <summary>The Appearance window (one at a time; it stays open beside the main window), at a page if asked.</summary>
+    public void OpenAppearance(string? page)
     {
-        SetSidebar(false);
-        var w = new AppearanceWindow(_settings, ThemeApplied) { Owner = this };
-        w.Show();
+        if (_appearance is null || !_appearance.IsLoaded)
+        {
+            _appearance = new AppearanceWindow(_settings, ThemeApplied, LooksApplied) { Owner = this };
+            _appearance.Closed += (_, _) => { _appearance = null; SaveSettings(); };
+            _appearance.Show();
+        }
+        else { if (_appearance.WindowState == WindowState.Minimized) _appearance.WindowState = WindowState.Normal; _appearance.Activate(); }
+        if (page is not null) _appearance.ShowPage(page);
     }
 
     /// <summary>The theme changed: the grid repaints, and the window's own frame follows.</summary>
     public void ThemeApplied()
     {
-        View.ThemeChanged();
+        ApplyLooks();                 // (the backgrounds and the logo follow the theme's colours)
         SaveSettings();
     }
 
@@ -1135,7 +1130,9 @@ public partial class MainWindow : Window
     public void ClearVideoPositions() { ResetVideoMemory(); View.Refresh(); }
     public Task ReloadAfterFolders() => ReloadModel(true);
 
-    public void OpenLook()
+    public void OpenLook() => OpenAppearance("Buttons");
+
+    public void OpenLookOld()
     {
         var w = new ButtonLookWindow(_settings.Look, () => ThemeKit.Apply(_settings.Theme, _settings.Look)) { Owner = this };
         if (w.ShowDialog() == true) SaveSettings();
@@ -1240,6 +1237,7 @@ public partial class MainWindow : Window
         _viewerClosedAt = Stopwatch.GetTimestamp();
         _vToken++;
         ViewerRoot.Visibility = Visibility.Collapsed;
+        StopViewerGif();
         Pic.Source = null;
         View.ScrollToIndex(_vIndex);
         View.Focus();
@@ -1427,11 +1425,13 @@ public partial class MainWindow : Window
         if (m.Kind[row] == (byte)MediaKind.Video)
         {
             if (full && _viewerVideo) return;                 // zooming a video: nothing to reload
+            StopViewerGif();
             LeaveViewerVideo();
             await LoadVideo(index, token, fast);
             return;
         }
         LeaveViewerVideo();
+        if (m.Kind[row] != (byte)MediaKind.Gif || _vGifIndex != index) StopViewerGif();
         int w = m.W[row], h = m.H[row];
         var (hw, hh) = FitPixels(row);
         int decodeW = 0, decodeH = 0;
@@ -1468,6 +1468,7 @@ public partial class MainWindow : Window
         if (bmp is null) { if (Pic.Source is null) ViewerNote.Text = "This file can't be shown."; return; }
         Pic.Source = bmp;
         ViewerNote.Text = "";
+        if (m.Kind[row] == (byte)MediaKind.Gif) StartViewerGif(index, row); else StopViewerGif();
         if (!full)
         {
             _ = Preload(index + 1); _ = Preload(index + 2); _ = Preload(index - 1);
@@ -1529,6 +1530,14 @@ public partial class MainWindow : Window
         // a video zooms into the middle of the window; a picture into where the mouse is
         var at = _viewerVideo ? new Point(PicHost.ActualWidth / 2, PicHost.ActualHeight / 2) : e.GetPosition(PicHost);
         ZoomAt(at, _zoom * Math.Pow(1.18, e.Delta / 120.0));
+        e.Handled = true;
+    }
+
+    /// <summary>Right-click in the viewer: the same menu as on the tile (favourites, folders, Explorer, copy path).</summary>
+    private void OnViewerRightClick(object s, MouseButtonEventArgs e)
+    {
+        if (_vIndex < _firstFile || _vIndex >= _order.Length) return;
+        ShowTileMenu(_vIndex, inViewer: true);
         e.Handled = true;
     }
 

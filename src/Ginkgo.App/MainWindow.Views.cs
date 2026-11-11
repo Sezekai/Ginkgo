@@ -271,25 +271,33 @@ public partial class MainWindow
         SetViewFields(home, "Home", "");
     }
 
-    private async void OnReturnToDefault(object s, RoutedEventArgs e)
+    private void OnViewsMenu(object s, RoutedEventArgs e)
     {
-        ((ToggleButton)s).IsChecked = false;
-        SetSidebar(false);
+        if (SavedPopup.IsOpen) { SavedPopup.IsOpen = false; return; }
+        SavedPopup.PlacementTarget = ViewsBtn.IsVisible ? ViewsBtn : MoreBtn;
+        ViewTitle.Text = "Saved views";
+        SavedPopup.IsOpen = true;
+        ApplyBar();
+    }
+
+    private void OnReturnToDefaultBtn(object s, RoutedEventArgs e) { SavedPopup.IsOpen = false; ReturnToDefault(); }
+    private void OnSaveAsDefaultBtn(object s, RoutedEventArgs e) { SavedPopup.IsOpen = false; SaveAsDefault(); }
+
+    private async void ReturnToDefault()
+    {
         string key = DefaultKey;
         var v = _settings.Defaults.TryGetValue(key, out var d) ? d.Copy() : ViewState.BuiltIn(key);
         await ApplyView(v, go: false);
         StatusText.Text = _settings.Defaults.ContainsKey(key) ? $"Back to your default for {KeyName(key)}." : $"Back to Ginkgo's default for {KeyName(key)}.";
     }
 
-    private void OnSaveAsDefault(object s, RoutedEventArgs e)
+    private void SaveAsDefault()
     {
-        ((ToggleButton)s).IsChecked = false;
         string key = DefaultKey;
         var v = CaptureLook();
         v.Search = "";                                   // a default starts with nothing typed
         _settings.Defaults[key] = v;
         SaveSettings();
-        SetSidebar(false);
         StatusText.Text = $"Saved as the default for {KeyName(key)}. Return to default brings it back.";
     }
 
@@ -297,6 +305,7 @@ public partial class MainWindow
 
     private void OnSaveSearch(object s, RoutedEventArgs e)
     {
+        SavedPopup.IsOpen = false;
         string suggested = _section == "Browse" && _folder.Length > 0 ? FolderPaths.Name(_folder) : _section;
         if (SearchBox.Text.Trim().Length > 0) suggested += " · " + SearchBox.Text.Trim();
         var name = AskName("Save this view", "Name for this saved search:", suggested);
@@ -319,7 +328,7 @@ public partial class MainWindow
             dp.Children.Add(new TextBlock { Text = "", FontFamily = ThemeKit.IconFamily, Width = 30, FontSize = 14, VerticalAlignment = VerticalAlignment.Center, Foreground = new SolidColorBrush(Color.FromRgb(0xB8, 0xB8, 0xC2)) });
             dp.Children.Add(new TextBlock { Text = v.Name, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
             item.Content = dp;
-            item.Click += async (_, _) => { item.IsChecked = false; SetSidebar(false); await ApplyView(_saved[at].Copy(), go: true); StatusText.Text = $"“{_saved[at].Name}”"; };
+            item.Click += async (_, _) => { item.IsChecked = false; SavedPopup.IsOpen = false; await ApplyView(_saved[at].Copy(), go: true); StatusText.Text = $"“{_saved[at].Name}”"; };
             item.MouseRightButtonUp += (_, ev) => { SavedMenu(at); ev.Handled = true; };
             SavedList.Children.Add(item);
         }

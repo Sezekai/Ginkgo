@@ -78,8 +78,6 @@ public sealed class Scene
     public double Strength { get; set; } = 1;
     /// <summary>How many stars (0.2 ... 2).</summary>
     public double Stars { get; set; } = 1;
-    /// <summary>A few stars twinkle (window background only).</summary>
-    public bool Twinkle { get; set; }
 
     public Scene Copy() => JsonSerializer.Deserialize<Scene>(JsonSerializer.Serialize(this))!;
     public static readonly string[] Kinds = { "Theme", "Gradient", "Starfield", "Night sky", "Milky Way", "Nebula", "Aurora", "Deep space", "Dusk" };
