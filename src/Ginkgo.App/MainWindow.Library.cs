@@ -27,7 +27,8 @@ public partial class MainWindow
     {
         _filters = new FilterPanel(_settings.Filters);
         _filters.Changed += () => { UpdateChips(); _filterDelay.Run(() => BuildView(false)); };
-        _filterPopup = MakePopup(FiltersBtn, _filters, () => _filterClosedAt = Stopwatch.GetTimestamp());
+        _filterPopup = MakePopup(FiltersBtn, _filters, () => { _filterClosedAt = Stopwatch.GetTimestamp(); FiltersBtn.Tag = false; });
+        _filterPopup.Opened += (_, _) => FiltersBtn.Tag = true;
 
         Popup Level(Button anchor, ContentLevel level, Action closed, out FolderPanel panel)
         {
@@ -45,11 +46,13 @@ public partial class MainWindow
                 _filterDelay.Run(() => BuildView(false));
             };
             p.PlacesChanged += (alone, rare) => { _settings.Standalone = alone.ToList(); _settings.RarelyUsed = rare.ToList(); SaveSettings(); };
-            return MakePopup(anchor, new Border { Margin = new Thickness(6, 0, 20, 20), Child = p }, closed);
+            var card = new PopCard(p, level == ContentLevel.Nsfw ? "NSFW folders" : "Very folders");
+            var pop = MakePopup(anchor, card, closed);
+            pop.Opened += (_, _) => card.NotchX = anchor.ActualWidth / 2 - pop.HorizontalOffset - 6;
+            return pop;
         }
         _nsfwPopup = Level(NsfwMoreBtn, ContentLevel.Nsfw, () => _nsfwClosedAt = Stopwatch.GetTimestamp(), out _nsfwPanel);
         _veryPopup = Level(VeryMoreBtn, ContentLevel.Very, () => _veryClosedAt = Stopwatch.GetTimestamp(), out _veryPanel);
-        _nsfwPanel.Effect = _veryPanel.Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 14, ShadowDepth = 3, Opacity = 0.55 };
 
         View.SetLabelClicked += ToggleSet;
         View.CopiesOf = i => i >= _firstFile && i < _order.Length && _order[i] >= 0 && _copies.TryGetValue(_order[i], out var l) ? l.Count : 0;
@@ -61,12 +64,54 @@ public partial class MainWindow
     {
         var p = new Popup { PlacementTarget = anchor, Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true, Child = child, VerticalOffset = 2, PopupAnimation = PopupAnimation.Fade };
         p.Closed += (_, _) => { closed(); ApplyBar(); };
-        return p;
+        return Sticky(p);
     }
 
     private bool LibraryPopupOpen() => (_filterPopup?.IsOpen ?? false) || (_nsfwPopup?.IsOpen ?? false) || (_veryPopup?.IsOpen ?? false);
 
-    private static bool JustClosed(long at) => (Stopwatch.GetTimestamp() - at) * 4 < Stopwatch.Frequency;      // the click that closed it
+    private static bool JustClosed(long at) => false;     // (sticky pop-outs: the button's own click toggles them)
+
+    // ---- pop-outs that the button opening them also closes ----
+
+    private readonly List<Popup> _sticky = new();
+
+    /// <summary>A pop-out that stays open until a click lands outside it (not on its own button), Esc, or the window moves.
+    /// Its button opens and closes it, like a drop-down.</summary>
+    private Popup Sticky(Popup p)
+    {
+        p.StaysOpen = true;
+        if (!_sticky.Contains(p)) _sticky.Add(p);
+        if (_sticky.Count == 1)
+        {
+            PreviewMouseDown += (_, e) =>
+            {
+                foreach (var q in _sticky)
+                {
+                    if (!q.IsOpen) continue;
+                    if (q.PlacementTarget is UIElement anchor && e.OriginalSource is DependencyObject d && IsInside(d, anchor)) continue;
+                    q.IsOpen = false;
+                }
+            };
+            Deactivated += (_, _) => CloseSticky();
+            LocationChanged += (_, _) => CloseSticky();
+            SizeChanged += (_, _) => CloseSticky();
+        }
+        return p;
+    }
+
+    private bool CloseSticky()
+    {
+        bool any = false;
+        foreach (var q in _sticky) if (q.IsOpen) { q.IsOpen = false; any = true; }
+        return any;
+    }
+
+    private static bool IsInside(DependencyObject d, DependencyObject outer)
+    {
+        for (var x = d; x != null; x = x is Visual || x is System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(x) : LogicalTreeHelper.GetParent(x))
+            if (x == outer) return true;
+        return false;
+    }
 
     private void Toggle(Popup p, long closedAt, Action beforeOpen)
     {
@@ -90,13 +135,13 @@ public partial class MainWindow
     private void OnNsfwMore(object s, RoutedEventArgs e) => Toggle(_nsfwPopup, _nsfwClosedAt, () =>
     {
         if (_libModel is { } m) _nsfwPanel.Load(m.LevelStats(CurrentQuery(), ContentLevel.Nsfw), _settings.NsfwOff, _settings.Standalone, _settings.RarelyUsed);
-        _nsfwPanel.Width = Math.Min(640, Math.Max(300, ActualWidth - 48));
+        _nsfwPanel.Width = Math.Min(768, Math.Max(300, ActualWidth - 48));
     });
 
     private void OnVeryMore(object s, RoutedEventArgs e) => Toggle(_veryPopup, _veryClosedAt, () =>
     {
         if (_libModel is { } m) _veryPanel.Load(m.LevelStats(CurrentQuery(), ContentLevel.Very), _settings.VeryOff, _settings.Standalone, _settings.RarelyUsed);
-        _veryPanel.Width = Math.Min(640, Math.Max(300, ActualWidth - 48));
+        _veryPanel.Width = Math.Min(768, Math.Max(300, ActualWidth - 48));
     });
 
     private void UpdateLevelLabels()

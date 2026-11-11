@@ -24,6 +24,9 @@ public sealed class ViewQuery
     public int SetLimit = 5;
     public HashSet<string> OpenSets = new(StringComparer.OrdinalIgnoreCase);
     public bool SetsByFirst;
+    /// <summary>Show a set's images one by one, with nothing marking them as a set (Browse inside Connected Art; also whenever
+    /// nothing but sets is shown).</summary>
+    public bool PlainSets;
     /// <summary>Of several copies of the same file, prefer the one in this folder (Browse); otherwise the first by folder name.</summary>
     public string PreferFolder = "";
     /// <summary>Show each file once when the same file is in several folders.</summary>
@@ -399,11 +402,14 @@ public sealed class LibraryModel
         }
 
         // write the order; a set's images follow one another in file-name order
+        // (when only sets are shown, every image simply shows: being in a set says nothing more there)
+        bool plain = q.PlainSets || (loose.Count == 0 && setsHit.Count > 0);
         var order = new List<int>(loose.Count + setsHit.Sum(si => Sets[si].Rows.Length));
         foreach (var (first, set) in units)
         {
             if (set < 0) { order.Add(first); continue; }
             var rows = Sets[set].Rows;
+            if (plain) { order.AddRange(rows); continue; }
             bool large = rows.Length > Math.Max(1, q.SetLimit);
             bool collapsed = large && !q.OpenSets.Contains(Sets[set].Key);
             res.Sets.Add(new SetBlock(order.Count, rows.Length, Sets[set].Key, Sets[set].Name, rows.Length, collapsed, large));

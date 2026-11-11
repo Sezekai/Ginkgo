@@ -59,27 +59,27 @@
             <Border x:Name="TopBar" Background="{DynamicResource Bar}" BorderBrush="{DynamicResource Edge}" BorderThickness="0,0,0,1" MouseLeftButtonDown="OnTitleDown" MouseMove="OnTitleMove" MouseLeftButtonUp="OnTitleUp">
                 <local:BarPanel x:Name="BarRow" Margin="14,14,10,14" VerticalAlignment="Center">
                         <Button Style="{StaticResource IconButton}" Content="&#xE700;" Height="{DynamicResource KeyHeight}" Margin="0,3,10,3" VerticalAlignment="Center" ToolTip="Menu (Ctrl+B)" Click="OnSidebarToggle"/>
-                        <Button x:Name="FoldersBtn" Content="Select folders" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnFolders"/>
+                        <Button x:Name="FoldersBtn" Style="{StaticResource DropButton}" Content="Select folders" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnFolders"/>
                         <ToggleButton x:Name="ImagesBtn" Content="Images" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged"/>
                         <ToggleButton x:Name="GifsBtn" Content="GIFs" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged"/>
                         <StackPanel Orientation="Horizontal" Margin="0,3,9,3" VerticalAlignment="Center">
-                            <ToggleButton x:Name="VideosBtn" Content="Videos" Height="{DynamicResource KeyHeight}" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged"/>
-                            <Button x:Name="VideosMoreBtn" Style="{StaticResource IconButton}" Content="&#xE70D;" FontSize="10" Width="22" Height="{DynamicResource KeyHeight}" Margin="1,0,0,0"
+                            <ToggleButton x:Name="VideosBtn" Style="{StaticResource SplitLeft}" Content="Videos" Height="{DynamicResource KeyHeight}" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged"/>
+                            <Button x:Name="VideosMoreBtn" Style="{StaticResource SplitRight}" Tag="{Binding IsChecked, ElementName=VideosBtn}" Height="{DynamicResource KeyHeight}"
                                     VerticalAlignment="Center" ToolTip="Which videos to show: watched, paused, not watched" Click="OnVideosMore"/>
                         </StackPanel>
                         <ToggleButton x:Name="GeneralBtn" Style="{StaticResource ContentToggle}" Content="General" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged" ToolTip="Show General files (G)"/>
                         <StackPanel Orientation="Horizontal" Margin="0,3,9,3" VerticalAlignment="Center">
-                            <ToggleButton x:Name="NsfwBtn" Style="{StaticResource ContentToggle}" Content="NSFW" Height="{DynamicResource KeyHeight}" VerticalAlignment="Center" Click="OnFilterChanged" ToolTip="Show NSFW files (N)"/>
-                            <Button x:Name="NsfwMoreBtn" Style="{StaticResource IconButton}" Content="&#xE70D;" FontSize="10" Width="22" Height="{DynamicResource KeyHeight}" Margin="1,0,0,0"
+                            <ToggleButton x:Name="NsfwBtn" Style="{StaticResource SplitLeftC}" Content="NSFW" Height="{DynamicResource KeyHeight}" VerticalAlignment="Center" Click="OnFilterChanged" ToolTip="Show NSFW files (N)"/>
+                            <Button x:Name="NsfwMoreBtn" Style="{StaticResource SplitRightC}" Tag="{Binding IsChecked, ElementName=NsfwBtn}" Height="{DynamicResource KeyHeight}"
                                     VerticalAlignment="Center" ToolTip="NSFW folder by folder" Click="OnNsfwMore"/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,3,17,3" VerticalAlignment="Center">
-                            <ToggleButton x:Name="VeryBtn" Style="{StaticResource ContentToggle}" Content="Very" Height="{DynamicResource KeyHeight}" VerticalAlignment="Center" Click="OnFilterChanged" ToolTip="Show Very files (V)"/>
-                            <Button x:Name="VeryMoreBtn" Style="{StaticResource IconButton}" Content="&#xE70D;" FontSize="10" Width="22" Height="{DynamicResource KeyHeight}" Margin="1,0,0,0"
+                            <ToggleButton x:Name="VeryBtn" Style="{StaticResource SplitLeftC}" Content="Very" Height="{DynamicResource KeyHeight}" VerticalAlignment="Center" Click="OnFilterChanged" ToolTip="Show Very files (V)"/>
+                            <Button x:Name="VeryMoreBtn" Style="{StaticResource SplitRightC}" Tag="{Binding IsChecked, ElementName=VeryBtn}" Height="{DynamicResource KeyHeight}"
                                     VerticalAlignment="Center" ToolTip="Very folder by folder" Click="OnVeryMore"/>
                         </StackPanel>
                         <TextBox x:Name="SearchBox" local:BarPanel.PreferredWidth="170" MinWidth="90" Height="{DynamicResource KeyHeight}" Margin="0,3,17,3" VerticalAlignment="Center" VerticalContentAlignment="Center" TextChanged="OnSearchChanged" ToolTip="Search file and folder names (/ or Ctrl+F)"/>
-                        <Button x:Name="FiltersBtn" Content="Filters" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnFilters" ToolTip="Format, size, dimensions, shape, video length, dates, favourites, sets"/>
+                        <Button x:Name="FiltersBtn" Style="{StaticResource DropButton}" Content="Filters" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnFilters" ToolTip="Format, size, dimensions, shape, video length, dates, favourites, sets"/>
                         <ComboBox x:Name="SortBox" local:BarPanel.PreferredWidth="130" MinWidth="96" Margin="0,3,2,3" Height="{DynamicResource KeyHeight}" VerticalAlignment="Center" SelectionChanged="OnSortChanged" ToolTip="Order">
                             <ComboBoxItem Content="First seen" Tag="FirstSeen"/>
                             <ComboBoxItem Content="Modified" Tag="Modified"/>
@@ -94,7 +94,7 @@
                             <ComboBoxItem Content="Video length" Tag="Duration"/>
                             <ComboBoxItem Content="Random" Tag="Random"/>
                         </ComboBox>
-                        <ToggleButton x:Name="SortRevBtn" Content="&#xE8CB;" FontFamily="{DynamicResource IconFont}" Width="34" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnSortRev" ToolTip="Reverse the order"/>
+                        <ToggleButton x:Name="SortRevBtn" Style="{StaticResource ArrowToggle}" Width="30" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnSortRev" ToolTip="Reverse the order"/>
                         <Button x:Name="ShuffleBtn" Content="Reshuffle" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Visibility="Collapsed" Click="OnReshuffle"/>
                         <Slider x:Name="SizeSlider" local:BarPanel.PreferredWidth="120" MinWidth="60" Minimum="0" Maximum="1" Margin="10,3,12,3" VerticalAlignment="Center" ValueChanged="OnSizeChanged" ToolTip="Picture size (Ctrl + mouse wheel, + and -)"/>
                         <ToggleButton x:Name="GridLayoutBtn" Content="Grid" Height="{DynamicResource KeyHeight}" Margin="0,3,4,3" VerticalAlignment="Center" Click="OnGridLayout" ToolTip="Square cells of one size"/>
@@ -132,7 +132,7 @@
                             <ComboBoxItem Content="Most videos" Tag="Videos"/>
                             <ComboBoxItem Content="Most GIFs" Tag="Gifs"/>
                         </ComboBox>
-                        <ToggleButton x:Name="FolderRevBtn" Content="&#xE8CB;" FontFamily="{DynamicResource IconFont}" Width="34" Height="{DynamicResource KeyHeight}" Margin="0,0,9,0" Click="OnFolderSortChanged" ToolTip="Reverse the folder order"/>
+                        <ToggleButton x:Name="FolderRevBtn" Style="{StaticResource ArrowToggle}" Width="30" Height="{DynamicResource KeyHeight}" Margin="0,0,9,0" Click="OnFolderSortChanged" ToolTip="Reverse the folder order"/>
                         <Button x:Name="DetailsBtn" Content="Details" Height="{DynamicResource KeyHeight}" Margin="0" Click="OnDetailsMenu" ToolTip="What each folder tile shows"/>
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">

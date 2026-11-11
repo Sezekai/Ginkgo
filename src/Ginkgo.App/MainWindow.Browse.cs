@@ -34,7 +34,7 @@ public partial class MainWindow
             if (CollapsedSetAt(i) is not null) { ToggleSet(i); return; }        // a stacked set opens with a click
             if (IsFolderTile(i)) OpenFolder(_page!.Tiles[i].Path);
             else if (IsVideoTile(i)) ClickVideoTile(i);          // a video plays in its tile
-            else if (InBrowse && i >= 0) OpenViewer(i);           // inside a folder one click opens a picture
+            else if (i >= 0 && !ViewerOpen) OpenViewer(i);        // one click opens a picture, everywhere
         };
         View.ItemContextRequested += ShowTileMenu;
         PreviewMouseDown += (_, e) =>

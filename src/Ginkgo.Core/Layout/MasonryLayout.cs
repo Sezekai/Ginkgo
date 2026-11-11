@@ -32,7 +32,17 @@ public sealed class MasonryResult
     {
         Count = count; Columns = columns; ColumnWidth = columnWidth; Gap = gap; TotalHeight = totalHeight;
         X = x; Y = y; W = w; H = h; _startColumn = startColumn; _columnItems = columnItems;
+        // the lowest bottom edge so far, down each column: a set's tiles can end above a picture listed before them,
+        // so the search uses this (always growing) instead of each tile's own bottom
+        _reach = new float[columnItems.Length][];
+        for (int c = 0; c < columnItems.Length; c++)
+        {
+            var items = columnItems[c]; var r = _reach[c] = new float[items.Length];
+            float m = float.MinValue;
+            for (int k = 0; k < items.Length; k++) { int i = items[k]; m = Math.Max(m, y[i] + h[i]); r[k] = m; }
+        }
     }
+    private readonly float[][] _reach;
 
     /// <summary>Adds the index of every item that intersects [top, bottom] to <paramref name="output"/>, ascending, no duplicates.</summary>
     public void GetVisible(float top, float bottom, List<int> output)
@@ -40,20 +50,19 @@ public sealed class MasonryResult
         output.Clear();
         for (int c = 0; c < Columns; c++)
         {
-            var items = _columnItems[c];
-            // first item whose bottom edge is at or below the top of the viewport
+            var items = _columnItems[c]; var reach = _reach[c];
+            // first item whose bottom edge (or an earlier one's) is at or below the top of the viewport
             int lo = 0, hi = items.Length;
             while (lo < hi)
             {
                 int mid = (lo + hi) >> 1;
-                int i = items[mid];
-                if (Y[i] + H[i] < top) lo = mid + 1; else hi = mid;
+                if (reach[mid] < top) lo = mid + 1; else hi = mid;
             }
             for (int k = lo; k < items.Length; k++)
             {
                 int i = items[k];
                 if (Y[i] > bottom) break;
-                if (_startColumn[i] == c) output.Add(i); // spanning items appear in several columns: count once
+                if (_startColumn[i] == c && Y[i] + H[i] >= top) output.Add(i); // spanning items appear in several columns: count once
             }
         }
         output.Sort();
@@ -65,7 +74,9 @@ public static class MasonryLayout
     /// <summary>
     /// Standard shortest-column masonry. Items with Span &gt; 1 are placed where the tallest of the columns they cover is lowest.
     /// </summary>
-    public static MasonryResult Compute(ReadOnlySpan<ItemSpec> items, float width, int columns, float gap)
+    public static MasonryResult Compute(ReadOnlySpan<ItemSpec> items, float width, int columns, float gap) => Compute(items.ToArray(), width, columns, gap);
+
+    private static MasonryResult Compute(ItemSpec[] items, float width, int columns, float gap)
     {
         if (columns < 1) throw new ArgumentOutOfRangeException(nameof(columns));
         if (width <= 0) throw new ArgumentOutOfRangeException(nameof(width));
@@ -82,6 +93,80 @@ public static class MasonryLayout
         var counts = new int[columns];
         float pitch = colW + gap;
 
+        // A set (a block) spanning several columns is not dropped in at once: it would sit below the tallest of those columns and
+        // leave empty space above it in the shorter ones. It waits while the next pictures fill the shortest columns, and goes in
+        // as soon as some run of columns is nearly level (or after a while regardless), so the grid stays closed up.
+        bool anyBlock = false;
+        for (int i = 0; i < n; i++) if (items[i].Block > 1) { anyBlock = true; break; }
+        var pending = new List<int>();
+        var waited = new List<int>();
+        float tolerance = Math.Max(gap * 2, colW * 0.15f);
+        int maxWait = Math.Max(8, columns * 6);
+
+        int Span(int i, out bool oneRow)
+        {
+            int len = Math.Min(items[i].Block, n - i);
+            float sum = 0;
+            for (int k = i; k < i + len; k++) sum += items[k].Aspect > 0.01f ? items[k].Aspect : 1f;
+            int want = Math.Max(1, (int)MathF.Round(sum));
+            oneRow = !items[i].Wide && want <= columns;
+            return oneRow ? want : columns;
+        }
+
+        void PlaceBlock(int i, int bs, float btop, int bspan, bool oneRow)
+        {
+            int len = Math.Min(items[i].Block, n - i);
+            float bw = colW * bspan + gap * (bspan - 1), bx = bs * pitch;
+            float bh = PlaceRows(items, i, len, bx, btop, bw, oneRow ? float.MaxValue : colW, gap, x, y, w, h);
+            for (int k = i; k < i + len; k++)
+            {
+                int c0 = Math.Clamp((int)((x[k] - 0.5f) / pitch + 0.0001f), 0, columns - 1);
+                if (x[k] - c0 * pitch < -0.5f) c0 = Math.Max(0, c0 - 1);
+                int c1 = Math.Clamp((int)((x[k] + w[k] - 0.5f) / pitch), c0, columns - 1);
+                startCol[k] = (ushort)c0; spanOf[k] = c1 - c0 + 1;
+                for (int c = c0; c <= c1; c++) counts[c]++;
+            }
+            for (int c = bs; c < bs + bspan; c++) heights[c] = btop + bh + gap;
+        }
+
+        // the run of columns where a block leaves the least empty space (ties: the higher one)
+        (int s, float top, float waste) BestWindow(int bspan)
+        {
+            int bs = 0; float btop = float.MaxValue, bwaste = float.MaxValue;
+            for (int s = 0; s + bspan <= columns; s++)
+            {
+                float top = 0;
+                for (int c = s; c < s + bspan; c++) if (heights[c] > top) top = heights[c];
+                float waste = 0;
+                for (int c = s; c < s + bspan; c++) waste += top - heights[c];
+                if (waste < bwaste - 0.5f || (Math.Abs(waste - bwaste) <= 0.5f && top < btop)) { bwaste = waste; btop = top; bs = s; }
+            }
+            return (bs, btop, bwaste);
+        }
+
+        void TryPending(bool force)
+        {
+            for (int p = 0; p < pending.Count; p++)
+            {
+                int i = pending[p];
+                int bspan = Span(i, out bool oneRow);
+                var (bs, btop, waste) = BestWindow(bspan);
+                if (oneRow)
+                {
+                    // a set in one row may take a column more or less than its shape asks for, if that fits the grid better
+                    for (int alt = Math.Max(2, bspan - 1); alt <= Math.Min(columns, bspan + 1); alt++)
+                    {
+                        if (alt == bspan) continue;
+                        var (s2, t2, w2) = BestWindow(alt);
+                        if (w2 + 0.5f < waste) { bs = s2; btop = t2; waste = w2; bspan = alt; }
+                    }
+                }
+                if (!force && waste > tolerance * Math.Max(1, bspan - 1) && waited[p] < maxWait) continue;
+                PlaceBlock(i, bs, btop, bspan, oneRow);
+                pending.RemoveAt(p); waited.RemoveAt(p); p--;
+            }
+        }
+
         for (int i = 0; i < n; i++)
         {
             if (items[i].Hidden)
@@ -93,29 +178,8 @@ public static class MasonryLayout
             if (items[i].Block > 1)
             {
                 int len = Math.Min(items[i].Block, n - i);
-                float sum = 0;
-                for (int k = i; k < i + len; k++) sum += items[k].Aspect > 0.01f ? items[k].Aspect : 1f;
-                int want = Math.Max(1, (int)MathF.Round(sum));
-                bool oneRow = !items[i].Wide && want <= columns;
-                int bspan = oneRow ? want : columns;
-                int bs = 0; float btop = float.MaxValue;
-                for (int s = 0; s + bspan <= columns; s++)
-                {
-                    float top = 0;
-                    for (int c = s; c < s + bspan; c++) if (heights[c] > top) top = heights[c];
-                    if (top < btop) { btop = top; bs = s; }
-                }
-                float bw = colW * bspan + gap * (bspan - 1), bx = bs * pitch;
-                float bh = PlaceRows(items, i, len, bx, btop, bw, oneRow ? float.MaxValue : colW, gap, x, y, w, h);
-                for (int k = i; k < i + len; k++)
-                {
-                    int c0 = Math.Clamp((int)((x[k] - 0.5f) / pitch + 0.0001f), 0, columns - 1);
-                    if (x[k] - c0 * pitch < -0.5f) c0 = Math.Max(0, c0 - 1);
-                    int c1 = Math.Clamp((int)((x[k] + w[k] - 0.5f) / pitch), c0, columns - 1);
-                    startCol[k] = (ushort)c0; spanOf[k] = c1 - c0 + 1;
-                    for (int c = c0; c <= c1; c++) counts[c]++;
-                }
-                for (int c = bs; c < bs + bspan; c++) heights[c] = btop + bh + gap;
+                pending.Add(i); waited.Add(0);
+                TryPending(false);
                 i += len - 1;
                 continue;
             }
@@ -141,13 +205,18 @@ public static class MasonryLayout
             x[i] = best * (colW + gap); y[i] = bestTop; w[i] = itemW; h[i] = itemH;
             startCol[i] = (ushort)best; spanOf[i] = span;
             for (int c = best; c < best + span; c++) { heights[c] = bestTop + itemH + gap; counts[c]++; }
+            if (pending.Count > 0) { for (int p = 0; p < waited.Count; p++) waited[p]++; TryPending(false); }
         }
+        TryPending(true);
 
         var columnItems = new int[columns][];
         for (int c = 0; c < columns; c++) columnItems[c] = new int[counts[c]];
         var fill = new int[columns];
         for (int i = 0; i < n; i++)
             for (int c = startCol[i]; c < startCol[i] + spanOf[i]; c++) columnItems[c][fill[c]++] = i;
+        // a set that waited sits below pictures that come after it in the list: each column is kept in top-to-bottom order
+        if (anyBlock)
+            foreach (var col in columnItems) Array.Sort(col, (a, b) => y[a] != y[b] ? y[a].CompareTo(y[b]) : a.CompareTo(b));
 
         float total = 0;
         for (int c = 0; c < columns; c++) if (heights[c] > total) total = heights[c];

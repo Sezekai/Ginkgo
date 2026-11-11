@@ -473,6 +473,7 @@ public partial class MainWindow
         System.Windows.Documents.TextElement.SetFontFamily(card, (FontFamily)Application.Current.Resources["AppFont"]);
         _vfPopup = new Popup { PlacementTarget = VideosBtn, Placement = PlacementMode.Bottom, StaysOpen = false, AllowsTransparency = true, Child = card, VerticalOffset = 2, PopupAnimation = PopupAnimation.Fade };
         _vfPopup.Closed += (_, _) => { _vfClosedAt = Stopwatch.GetTimestamp(); ApplyBar(); };
+        Sticky(_vfPopup);
     }
     private long _vfClosedAt;
 
@@ -481,7 +482,6 @@ public partial class MainWindow
     {
         if (_vfPopup is null) return;
         if (_vfPopup.IsOpen) { _vfPopup.IsOpen = false; return; }
-        if (Stopwatch.GetTimestamp() - _vfClosedAt < Ms(0.25)) return;     // the click that just closed it
         _vfPopup.IsOpen = true;
         ApplyBar();
     }

@@ -147,6 +147,16 @@ public sealed class AppSettings
     public string OutlineMemory { get; set; } = "Session";
     /// <summary>How the buttons look (shape, colours, outline, glow).</summary>
     public ButtonLook Look { get; set; } = new();
+    /// <summary>The logo, the backgrounds, the folder pop-outs, how sets and favourites are marked (Appearance).</summary>
+    public LogoLook Logo { get; set; } = new();
+    public SceneLook Scenes { get; set; } = new();
+    public FolderLook Folders { get; set; } = new();
+    public SetLook SetStyle { get; set; } = new();
+    public FavLook FavStyle { get; set; } = new();
+    /// <summary>For each kind of look, the saved look it was last loaded from or saved to ("" = none).</summary>
+    public Dictionary<string, string> LookNames { get; set; } = new();
+    /// <summary>The slideshow: play GIFs through to the end before the next picture.</summary>
+    public bool SlideGifsToEnd { get; set; } = true;
 
     // Browse
     public bool BrowseOwnOnly { get; set; }

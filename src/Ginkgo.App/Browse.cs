@@ -148,12 +148,25 @@ public sealed class BrowsePage
     public List<SetBlock> Sets = new();
     public Dictionary<int, List<int>> Copies = new();
 
+    /// <summary>Whether the library has the folder at all (whatever the switches and filters show).</summary>
+    private static bool FolderExists(LibraryModel m, string folder)
+    {
+        if (folder.Length == 0) return true;
+        for (int i = 0; i < m.Count; i++) if (FolderPaths.IsUnder(m.Display[i], folder)) return true;
+        return false;
+    }
+
     public static BrowsePage Build(LibraryModel m, ViewQuery q, string folder, bool ownOnly, string folderSort, bool folderReverse,
         CoverStore covers, ISet<string> details)
     {
         var p = new BrowsePage();
         var tree = m.Tree(q);
         var node = tree.Nearest(folder);
+        if (node.Path.Length != folder.Length && FolderExists(m, folder))
+        {
+            // the folder is there, it just has nothing to show under the current switches: stay in it (it shows as empty)
+            node = new FolderNode { Path = folder, Name = FolderPaths.Name(folder), Parent = node };
+        }
         p.Folder = node.Path; p.Node = node;
         string search = q.Search.Trim();
 

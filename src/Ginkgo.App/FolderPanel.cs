@@ -41,12 +41,18 @@ public sealed class FolderPanel : Border
     private readonly Dictionary<string, Node> _nodes = new(StringComparer.OrdinalIgnoreCase);
     private List<Node> _roots = new();
     private string _sort = "Name"; private bool _reverse;
-    private sealed class Btn { public Border B = null!; public TextBlock Name = null!; public Node N = null!; public bool Own; public Brush Fill = null!, Hover = null!; }
+    private sealed class Btn { public Border B = null!; public Border Shine = null!; public TextBlock Name = null!; public TextBlock? Arrow; public Node N = null!; public bool Own; public Brush Fill = null!, Hover = null!; public int Depth; }
     private readonly List<Btn> _btns = new();
     private bool _painting, _paintOn;
 
-    private static readonly Brush On = Frozen("#3E7A48"), OnHover = Frozen("#4B9058"), OffB = Frozen("#2A2A30"), OffHover = Frozen("#36363E"),
-        Part = Frozen("#8A6A2A"), PartHover = Frozen("#A07C31"), TxtOff = Frozen("#8D939A");
+    // the switches' look (Appearance > Folder pop-outs): off, shown, partly shown
+    private static ButtonLook.Kit[] _kits = MakeKits(FolderLook.DefaultToggles());
+    private static ButtonLook.Kit[] MakeKits(ButtonLook l) => new[] { l.KitFor(0), l.KitFor(1), l.KitFor(2) };
+    private static bool _glow, _outlined;
+    /// <summary>Puts a new look on the folder switches (open panels follow with <see cref="Restyle"/>).</summary>
+    public static void SetLook(ButtonLook l) { _kits = MakeKits(l); _glow = l.Glow > 0.01; _outlined = l.Outline != "None"; }
+    /// <summary>Re-colours every switch after a look change.</summary>
+    public void Restyle() => Rebuild();
     private static Brush Txt => ThemeKit.Brush("Text");
     private static Brush Dim => ThemeKit.Brush("Dim");
     private static readonly Brush[] DepthEdge = { Frozen("#00000000"), Frozen("#6C9BD2"), Frozen("#B58BD6"), Frozen("#D6AC6C"), Frozen("#6CC4B4") };
@@ -55,8 +61,8 @@ public sealed class FolderPanel : Border
     public FolderPanel(string sort, bool reverse)
     {
         _sort = sort; _reverse = reverse;
-        Background = ThemeKit.Brush("Bar"); BorderBrush = ThemeKit.Brush("Edge"); BorderThickness = new Thickness(1); CornerRadius = new CornerRadius(6);
-        Padding = new Thickness(12); Width = 640;
+        // the card round it is a PopCard (Appearance > Folder pop-outs)
+        Background = Brushes.Transparent; Padding = new Thickness(12, 8, 12, 12); Width = 768;
 
         foreach (var (label, key) in new[] { ("Name", "Name"), ("Number of files", "Files"), ("Size on disk", "Size"), ("Newest added", "Newest") })
             _sortBox.Items.Add(new ComboBoxItem { Content = label, Tag = key });
@@ -74,7 +80,7 @@ public sealed class FolderPanel : Border
         var fold = new Button { Content = "Close all" }; fold.Click += (_, _) => { _open.Clear(); Rebuild(); };
         head.Children.Add(all); head.Children.Add(none); head.Children.Add(fold); head.Children.Add(_summary);
 
-        var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = 460, Content = _flow };
+        var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = 506, Content = _flow };
         _note = new TextBlock
         {
             Text = "Click a folder to show or hide it and everything inside it. The arrow opens its subfolders. Right-click a folder to make it standalone (its own row and switch) or send it to Rarely used. Counts follow the General / NSFW / Very switches.",
@@ -270,10 +276,16 @@ public sealed class FolderPanel : Border
     private void ColorOne(Btn x)
     {
         int st = StateOf(x);
-        x.Fill = st == 1 ? On : st == 2 ? Part : OffB;
-        x.Hover = st == 1 ? OnHover : st == 2 ? PartHover : OffHover;
-        x.Name.Foreground = st == 0 ? TxtOff : Txt;
+        var k = _kits[st];
+        x.Fill = k.Fill; x.Hover = k.Hover;
+        x.Name.Foreground = k.Text;
+        if (x.Arrow is not null) x.Arrow.Foreground = k.Text;
         x.B.Background = x.B.IsMouseOver ? x.Hover : x.Fill;
+        x.B.CornerRadius = k.Radius; x.Shine.CornerRadius = k.Radius;
+        x.Shine.BorderBrush = k.Shine;
+        if (_outlined || x.Depth == 0) { x.B.BorderBrush = k.Border; x.B.BorderThickness = k.BorderWidth; }
+        else { x.B.BorderBrush = DepthEdge[Math.Min(x.Depth, DepthEdge.Length - 1)]; x.B.BorderThickness = new Thickness(0, 0, 0, 2); }
+        x.B.Effect = _glow && st != 0 ? k.Glow : k.Shadow;
     }
 
     private void Apply(Btn x, bool on)
@@ -288,7 +300,7 @@ public sealed class FolderPanel : Border
 
     private FrameworkElement MakeButton(Node n, int depth, bool hasKids, bool open, bool ownOnly, bool pathLabel = false)
     {
-        var x = new Btn { N = n, Own = ownOnly };
+        var x = new Btn { N = n, Own = ownOnly, Depth = depth };
         var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
         if (hasKids)
         {
@@ -303,15 +315,19 @@ public sealed class FolderPanel : Border
             arrow.MouseEnter += (_, _) => arrow.Background = new SolidColorBrush(Color.FromArgb(50, 255, 255, 255));
             arrow.MouseLeave += (_, _) => arrow.Background = Brushes.Transparent;
             row.Children.Add(arrow);
+            x.Arrow = arrow;
         }
         string name = ownOnly ? "files here" : pathLabel ? PathLabel(n.Path) : n.Name;
         int count = ownOnly ? n.Own : n.Sub;
         x.Name = new TextBlock { Text = name, Foreground = Txt, VerticalAlignment = VerticalAlignment.Center, FontStyle = ownOnly ? FontStyles.Italic : FontStyles.Normal, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 520 };
         row.Children.Add(x.Name);
         row.Children.Add(new TextBlock { Text = count.ToString("N0"), Foreground = Dim, Opacity = 0.75, FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 1, 0, 0) });
+        x.Shine = new Border { BorderThickness = new Thickness(1), IsHitTestVisible = false, Margin = new Thickness(-10, -5, -10, -5) };
+        var inside = new Grid();
+        inside.Children.Add(row); inside.Children.Add(x.Shine);
         x.B = new Border
         {
-            Child = row, CornerRadius = new CornerRadius(5), Padding = new Thickness(10, 5, 10, 5), Cursor = Cursors.Hand,
+            Child = inside, CornerRadius = new CornerRadius(5), Padding = new Thickness(10, 5, 10, 5), Cursor = Cursors.Hand,
             BorderBrush = DepthEdge[Math.Min(depth, DepthEdge.Length - 1)], BorderThickness = new Thickness(0, 0, 0, depth == 0 ? 0 : 2),
             ToolTip = ownOnly ? $"{count:N0} files directly in this folder" : $"{count:N0} files, {n.SubSize / 1048576.0:N0} MB" + (n.Path.Length > 0 ? "\n" + n.Path : "")
         };

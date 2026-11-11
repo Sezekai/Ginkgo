@@ -114,14 +114,20 @@ public sealed class ButtonLook
     public void Apply(ResourceDictionary r)
     {
         Color offA = C(OffA), offB = C(OffB);
-        r["KeyRadius"] = new CornerRadius(Math.Min(Radius, Height / 2));
+        double rad = Math.Min(Radius, Height / 2);
+        r["KeyRadius"] = new CornerRadius(rad);
+        r["KeyRadiusL"] = new CornerRadius(rad, 0, 0, rad);      // split buttons: the switch, then its drop-down arrow
+        r["KeyRadiusR"] = new CornerRadius(0, rad, rad, 0);
         r["KeyHeight"] = Height;
         r["KeyFill"] = Fill(OffStyle, offA, offB);
         r["KeyHover"] = Fill(OffStyle, Shift(offA, 0.08), Shift(offB, 0.08));
         r["KeyPress"] = Fill(OffStyle, Shift(offA, -0.15), Shift(offB, -0.15));
         r["KeyText"] = Frozen(C(Text));
         r["KeyBorder"] = Edge(offA);
-        r["KeyBorderWidth"] = new Thickness(Outline == "None" ? 0 : OutlineWidth);
+        double ow = Outline == "None" ? 0 : OutlineWidth;
+        r["KeyBorderWidth"] = new Thickness(ow);
+        r["KeyBorderWidthL"] = new Thickness(ow, ow, 0, ow);
+        r["KeyBorderWidthR"] = new Thickness(0, ow, ow, ow);
         var shine = Stops(new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(0, 1) },
             (Color.FromArgb((byte)(Shine * 160), 255, 255, 255), 0), (Color.FromArgb(0, 255, 255, 255), 0.55));
         shine.Freeze();
@@ -150,4 +156,27 @@ public sealed class ButtonLook
     }
 
     private static Brush Frozen(Color c) { var b = new SolidColorBrush(c); b.Freeze(); return b; }
+
+    /// <summary>Brushes for a switch drawn by code (the folder switches): 0 = off, 1 = on ("other" colours), 2 = partly on ("content" colours).</summary>
+    public sealed record Kit(Brush Fill, Brush Hover, Brush Border, Thickness BorderWidth, Effect? Glow, Brush Text, Brush Shine, CornerRadius Radius, Effect? Shadow);
+
+    public Kit KitFor(int state)
+    {
+        double ow = Outline == "None" ? 0 : OutlineWidth;
+        var shine = Stops(new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(0, 1) },
+            (Color.FromArgb((byte)(Shine * 160), 255, 255, 255), 0), (Color.FromArgb(0, 255, 255, 255), 0.55));
+        shine.Freeze();
+        Effect? shadow = null;
+        if (Shadow > 0.01) { var sh = new DropShadowEffect { Color = Colors.Black, BlurRadius = 4 + 12 * Shadow, ShadowDepth = 1 + 3 * Shadow, Direction = 270, Opacity = Math.Min(1, 0.3 + 0.6 * Shadow) }; sh.Freeze(); shadow = sh; }
+        var radius = new CornerRadius(Math.Max(0, Radius));
+        if (state == 0)
+        {
+            Color a = C(OffA), b = C(OffB);
+            return new Kit(Fill(OffStyle, a, b), Fill(OffStyle, Shift(a, 0.08), Shift(b, 0.08)), Edge(a), new Thickness(ow), null, Frozen(C(Text)), shine, radius, shadow);
+        }
+        var (ca, cb, text) = state == 1 ? (C(OtherA), C(OtherB), OtherText) : (C(ContentA), C(ContentB), ContentText);
+        var border = Outline == "Gradient" ? Edge(ca) : Outline == "None" ? Brushes.Transparent : Frozen(Shift(OnStyle == "BottomGlow" ? cb : ca, 0.3));
+        return new Kit(Fill(OnStyle, ca, cb), Fill(OnStyle, Shift(ca, 0.1), Shift(cb, 0.1)), border, new Thickness(ow), GlowOf(OnStyle == "BottomGlow" ? cb : ca),
+            Frozen(C(text)), shine, radius, shadow);
+    }
 }

@@ -32,6 +32,7 @@ public partial class MainWindow : Window
 
     // folder pop-out
     private readonly System.Windows.Controls.Primitives.Popup _folderPopup;
+    private readonly PopCard _folderCard;
     private System.Windows.Controls.Primitives.Popup _optPopup = null!;
     private OptimisePanel _opt = null!;
     private long _optClosedAt;
@@ -88,14 +89,16 @@ public partial class MainWindow : Window
         };
         _folders.SortChanged += (key, rev) => { _settings.FolderSort = key; _settings.FolderSortReverse = rev; };
         _folders.PlacesChanged += (alone, rare) => { _settings.Standalone = alone.ToList(); _settings.RarelyUsed = rare.ToList(); SaveSettings(); };
-        _folders.Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 14, ShadowDepth = 3, Opacity = 0.55 };
+        _folderCard = new PopCard(_folders, "Select folders");
         _folderPopup = new System.Windows.Controls.Primitives.Popup
         {
             PlacementTarget = FoldersBtn, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom, StaysOpen = false,
             AllowsTransparency = true, PopupAnimation = System.Windows.Controls.Primitives.PopupAnimation.Fade, VerticalOffset = 2,
-            Child = new Border { Margin = new Thickness(6, 0, 20, 20), Child = _folders }
+            Child = _folderCard
         };
-        _folderPopup.Closed += (_, _) => { _popupClosedAt = Stopwatch.GetTimestamp(); ApplyBar(); };
+        _folderPopup.Opened += (_, _) => FoldersBtn.Tag = true;
+        _folderPopup.Closed += (_, _) => { _popupClosedAt = Stopwatch.GetTimestamp(); FoldersBtn.Tag = false; ApplyBar(); };
+        Sticky(_folderPopup);
         _loading = false;
 
         View.ScrollChanged += SyncBar;
@@ -271,6 +274,7 @@ public partial class MainWindow : Window
             else if (browse)
             {
                 q.OffFolders.Clear();                               // Browse shows every folder; Select folders shapes Home
+                q.PlainSets = folder.Length > 0 && FolderPaths.IsUnder(folder, Ginkgo.Core.ConnectedArt.FolderName);   // inside Connected Art every image just shows
                 page = BrowsePage.Build(model, q, folder, own, fsort, frev, _covers, details);
                 order = page.Order; sets = page.Sets; copies = page.Copies;
             }
@@ -431,13 +435,12 @@ public partial class MainWindow : Window
     private void OnFolders(object s, RoutedEventArgs e)
     {
         if (_libModel is null) return;
-        if (_folderPopup.IsOpen) { _folderPopup.IsOpen = false; return; }
-        // clicking the button while the pop-out is open closes it (the pop-out closes itself on that same click)
-        if ((Stopwatch.GetTimestamp() - _popupClosedAt) / (double)Stopwatch.Frequency < 0.25) return;
-        _folders.Width = Math.Min(WindowState == WindowState.Maximized ? 960 : 640, Math.Max(300, ActualWidth - 48));
+        if (_folderPopup.IsOpen) { _folderPopup.IsOpen = false; return; }      // its own button closes it
+        _folders.Width = Math.Min(WindowState == WindowState.Maximized ? 1152 : 768, Math.Max(300, ActualWidth - 48));
         // keep the pop-out inside the window: slide it left if it would reach past the right edge
         double x0 = FoldersBtn.TranslatePoint(new Point(0, 0), this).X;
         _folderPopup.HorizontalOffset = Math.Min(0, ActualWidth - 10 - (_folders.Width + 26) - x0);
+        _folderCard.NotchX = FoldersBtn.ActualWidth / 2 - _folderPopup.HorizontalOffset - 6;
         _folders.Load(_libModel.FolderStats(CurrentQuery()), _settings.OffFolders, _settings.Standalone, _settings.RarelyUsed);
         _folderPopup.IsOpen = true;
     }
@@ -464,9 +467,9 @@ public partial class MainWindow : Window
                 Child = new Border { Margin = new Thickness(6, 0, 20, 20), Child = _opt }
             };
             _optPopup.Closed += (_, _) => { _optClosedAt = Stopwatch.GetTimestamp(); ApplyBar(); };
+            Sticky(_optPopup);
         }
         if (_optPopup.IsOpen) { _optPopup.IsOpen = false; return; }
-        if ((Stopwatch.GetTimestamp() - _optClosedAt) / (double)Stopwatch.Frequency < 0.25) return;
         _opt.Width = Math.Min(420, Math.Max(280, ActualWidth - 48));
         // keep it inside the window
         var btn = OptimiseBtn.IsVisible ? OptimiseBtn : (FrameworkElement)MoreBtn;
@@ -494,9 +497,9 @@ public partial class MainWindow : Window
                 Child = new Border { Margin = new Thickness(6, 0, 20, 20), Child = _quick }
             };
             _quickPopup.Closed += (_, _) => { _quickClosedAt = Stopwatch.GetTimestamp(); ApplyBar(); };
+            Sticky(_quickPopup);
         }
         if (_quickPopup!.IsOpen) { _quickPopup.IsOpen = false; return; }
-        if ((Stopwatch.GetTimestamp() - _quickClosedAt) / (double)Stopwatch.Frequency < 0.25) return;
         _quick.Sync();
         _quick.Width = Math.Min(420, Math.Max(280, ActualWidth - 48));
         _quick.MaxHeight = Math.Max(300, ActualHeight - 120);
@@ -739,7 +742,8 @@ public partial class MainWindow : Window
         bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
         if (e.Key == Key.Escape)
         {
-            if (_sideOpen) { SetSidebar(false); e.Handled = true; }
+            if (CloseSticky()) { e.Handled = true; }
+            else if (_sideOpen) { SetSidebar(false); e.Handled = true; }
             else if (_fullscreen && !typing) { ToggleFullscreen(); e.Handled = true; }
             else if (typing) { SearchBox.Text = ""; View.Focus(); e.Handled = true; }
             return;
@@ -1144,7 +1148,7 @@ public partial class MainWindow : Window
         ("Ctrl+B  or  M", "Open or close the menu"), ("S  or  Ctrl+S", "Settings"), ("T", "Open the picture under the mouse (or the first one)"), ("O", "Optimisations (memory, GIFs)"), ("Q", "Quick toggles (videos)"), ("F  or  F11", "Full screen (Esc to leave)"), ("Ctrl+W", "Close Ginkgo"), ("H", "Hide or show the top bar"), ("/  or  Ctrl+F", "Search"),
         ("G   N   V", "Show General / NSFW / Very files"), ("L", "Equal columns  or  equal rows"), ("+   -   or  Ctrl + wheel", "Picture size"),
         ("R", "Reshuffle (when sorted randomly)"), ("Home   End", "Top / bottom"), ("Page Up   Page Down", "Scroll one screen"),
-        ("Enter  or  double-click", "Open the picture under the mouse"), ("Middle button", "Scroll by moving the mouse"),
+        ("Enter  or  click", "Open the picture under the mouse"), ("Middle button", "Scroll by moving the mouse"),
         ("Ctrl+1 ... 4", "Home, Browse, Favourites, Tools"), ("Alt+Left  or  Backspace", "Back (Browse)"), ("Alt+Right   Alt+Up", "Forward / up one folder"), ("K", "This list"), ("Esc", "Close / clear the search"),
     };
     private static readonly (string keys, string what)[] ViewerKeys =
