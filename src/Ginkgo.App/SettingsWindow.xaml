@@ -1,99 +1,202 @@
 <Window x:Class="Ginkgo.App.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Settings" Width="620" Height="720" Background="{DynamicResource Bar}" WindowStartupLocation="CenterOwner" ShowInTaskbar="False"
-        FontFamily="{DynamicResource AppFont}" FontSize="{DynamicResource AppFontSize}">
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="18" TextBlock.Foreground="{DynamicResource Text}">
-            <TextBlock Text="Library" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,6"/>
-            <DockPanel Margin="0,0,0,4">
-                <Button DockPanel.Dock="Right" Content="Choose..." Margin="8,0,0,0" Click="OnChooseLibrary"/>
-                <TextBox x:Name="LibraryBox" IsReadOnly="True" VerticalContentAlignment="Center"/>
+        Title="Settings" Width="1200" Height="860" MinWidth="760" MinHeight="520" Background="{DynamicResource WindowBg}" WindowStartupLocation="CenterOwner" ShowInTaskbar="True"
+        FontFamily="{DynamicResource AppFont}" FontSize="{DynamicResource AppFontSize}" TextElement.Foreground="{DynamicResource Text}">
+    <Window.Resources>
+        <!-- a group's heading, and one setting: what it is (and a note) on the left, its controls on the right -->
+        <Style x:Key="Group" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="2,18,0,8"/>
+            <Setter Property="Foreground" Value="{DynamicResource Text}"/>
+        </Style>
+        <Style x:Key="GroupNote" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource Dim}"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="Margin" Value="2,-4,0,8"/>
+            <Setter Property="FontSize" Value="11.5"/>
+        </Style>
+        <Style x:Key="SetRow" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource Bar}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource Edge}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="10"/>
+            <Setter Property="Padding" Value="14,10"/>
+            <Setter Property="Margin" Value="0,0,0,6"/>
+        </Style>
+        <Style x:Key="RowTitle" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{DynamicResource Text}"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+        <Style x:Key="RowNote" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource Dim}"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="FontSize" Value="11.5"/>
+            <Setter Property="Margin" Value="0,2,12,0"/>
+        </Style>
+    </Window.Resources>
+    <DockPanel>
+        <!-- the heading -->
+        <Border DockPanel.Dock="Top" Background="{DynamicResource Bar}" BorderBrush="{DynamicResource Edge}" BorderThickness="0,0,0,1" Padding="24,14,24,14">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="Close" Width="90" Height="30" VerticalAlignment="Center" Click="OnClose"/>
+                <Button DockPanel.Dock="Right" Content="Appearance…" Height="30" Padding="14,0" Margin="0,0,10,0" VerticalAlignment="Center" Click="OnAppearance"
+                        ToolTip="Themes, buttons, the logo, backgrounds, folder pop-outs, sets, favourites and video outlines"/>
+                <StackPanel>
+                    <TextBlock Text="Settings" FontSize="18" FontWeight="SemiBold"/>
+                    <TextBlock Text="How Ginkgo behaves: the library, speed and memory, the grid and slideshow, sets, the cache and resets. Changes take effect at once." Foreground="{DynamicResource Dim}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                </StackPanel>
             </DockPanel>
-            <TextBlock x:Name="CacheLine" Foreground="{DynamicResource Dim}" Margin="0,0,0,8" TextWrapping="Wrap"/>
-            <StackPanel Orientation="Horizontal">
-                <Button Content="Look for changes now" Click="OnRescan"/>
-            </StackPanel>
-            <TextBlock Text="Library folders" FontSize="14" FontWeight="SemiBold" Margin="0,14,0,4"/>
-            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Dim}" Margin="0,0,0,6"
-                       Text="Untick a folder or subfolder to remove it from Ginkgo (it isn't looked through or counted; your files are never touched). Tick it again to bring it back, with its thumbnails if it was removed in the last 30 days."/>
-            <Border BorderBrush="{DynamicResource Edge}" BorderThickness="1" CornerRadius="6" Height="240" Margin="0,0,0,6">
-                <TreeView x:Name="FolderTree" Background="Transparent" BorderThickness="0"/>
-            </Border>
-            <StackPanel Orientation="Horizontal">
-                <Button x:Name="ApplyFoldersBtn" Content="Apply folder changes" IsEnabled="False" Click="OnApplyFolders"/>
-                <TextBlock x:Name="FoldersNote" Foreground="{DynamicResource Dim}" VerticalAlignment="Center" Margin="10,0,0,0"/>
-            </StackPanel>
+        </Border>
+        <!-- what the last action did -->
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource Bar}" BorderBrush="{DynamicResource Edge}" BorderThickness="0,1,0,0" Padding="24,8">
+            <TextBlock x:Name="Result" Foreground="{DynamicResource Dim}" TextWrapping="Wrap" Text="Ready."/>
+        </Border>
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <Grid Margin="22,0,22,22">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="20"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
 
-            <TextBlock Text="Speed and memory" FontSize="16" FontWeight="SemiBold" Margin="0,22,0,6"/>
-            <DockPanel Margin="0,0,0,6">
-                <TextBlock Text="Memory for pictures (picture cache / compressed cache)" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                <ComboBox x:Name="CacheBox" SelectionChanged="OnCacheChanged" HorizontalAlignment="Right" MinWidth="200"/>
-            </DockPanel>
-            <DockPanel Margin="0,0,0,6">
-                <TextBlock Text="Look-ahead (sharp pictures prepared while you pause)" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                <ComboBox x:Name="LookBox" SelectionChanged="OnLookChanged" HorizontalAlignment="Right" MinWidth="120">
-                    <ComboBoxItem Content="Off" Tag="0"/>
-                    <ComboBoxItem Content="1 window" Tag="1"/>
-                    <ComboBoxItem Content="2 windows" Tag="2"/>
-                    <ComboBoxItem Content="3 windows" Tag="3"/>
-                    <ComboBoxItem Content="5 windows" Tag="5"/>
-                    <ComboBoxItem Content="8 windows" Tag="8"/>
-                </ComboBox>
-            </DockPanel>
-            <CheckBox x:Name="WarmBox" Content="Keep the thumbnails in memory (instant lookups; uses free memory, gives it back when other programs need it)" Foreground="{DynamicResource Text}" Margin="0,0,0,6" Click="OnWarmChanged"/>
-            <TextBlock Text="Look" FontSize="16" FontWeight="SemiBold" Margin="0,16,0,6"/>
-            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                <Button Content="Appearance..." Click="OnAppearance" Margin="0,0,8,0"/>
-                <Button Content="Button look..." Click="OnLook"/>
-                <TextBlock Text="themes, colours, fonts and backgrounds; the buttons' shape, outline, glow and shadow" Foreground="{DynamicResource Dim}" VerticalAlignment="Center" Margin="10,0,0,0"/>
-            </StackPanel>
-            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
-                <Button Content="Video outlines..." Click="OnOutlines"/>
-                <TextBlock Text="the outlines round paused and watched videos: colour, thickness, glow and which videos" Foreground="{DynamicResource Dim}" VerticalAlignment="Center" Margin="10,0,0,0" TextWrapping="Wrap" MaxWidth="400"/>
-            </StackPanel>
-            <TextBlock Text="Browse" FontSize="16" FontWeight="SemiBold" Margin="0,16,0,6"/>
-            <DockPanel Margin="0,0,0,6">
-                <TextBlock x:Name="RadiusText" DockPanel.Dock="Right" Width="44" TextAlignment="Right" VerticalAlignment="Center"/>
-                <Slider x:Name="RadiusSlider" DockPanel.Dock="Right" Width="160" Minimum="0" Maximum="24" IsSnapToTickEnabled="True" TickFrequency="1" Margin="10,0,0,0" VerticalAlignment="Center" ValueChanged="OnRadiusChanged"/>
-                <CheckBox x:Name="RoundBox" Content="Round the corners of the covers in the cover grid" Foreground="{DynamicResource Text}" VerticalAlignment="Center" Click="OnRoundChanged"/>
-            </DockPanel>
-            <CheckBox x:Name="FadeBox" Content="Fade when a sharper picture replaces a soft one" Foreground="{DynamicResource Text}" Margin="0,0,0,6" Click="OnFadeChanged"/>
+                <!-- ========== left ========== -->
+                <StackPanel Grid.Column="0">
+                    <TextBlock Text="Library" Style="{StaticResource Group}"/>
+                    <Border Style="{StaticResource SetRow}">
+                        <StackPanel>
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Content="Choose…" Height="28" Margin="8,0,0,0" Click="OnChooseLibrary"/>
+                                <TextBlock Text="Library folder" Style="{StaticResource RowTitle}" VerticalAlignment="Center" Width="120"/>
+                                <TextBox x:Name="LibraryBox" IsReadOnly="True" Height="28" VerticalContentAlignment="Center"/>
+                            </DockPanel>
+                            <TextBlock x:Name="CacheLine" Style="{StaticResource RowNote}" Margin="0,8,0,0"/>
+                        </StackPanel>
+                    </Border>
+                    <Border Style="{StaticResource SetRow}">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Content="Look for changes now" Height="28" VerticalAlignment="Center" Click="OnRescan"/>
+                            <StackPanel>
+                                <TextBlock Text="Changes in the library" Style="{StaticResource RowTitle}"/>
+                                <TextBlock Text="Ginkgo notices new, moved and deleted files by itself. This looks through everything again now." Style="{StaticResource RowNote}"/>
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
 
-            <TextBlock Text="Grid and slideshow" FontSize="16" FontWeight="SemiBold" Margin="0,22,0,6"/>
-            <StackPanel x:Name="ViewPanel"/>
+                    <TextBlock Text="Library folders" Style="{StaticResource Group}"/>
+                    <TextBlock Style="{StaticResource GroupNote}"
+                               Text="Untick a folder or subfolder to remove it from Ginkgo (it isn't looked through or counted; your files are never touched). Tick it again to bring it back, with its thumbnails if it was removed in the last 30 days."/>
+                    <Border Style="{StaticResource SetRow}" Padding="6">
+                        <StackPanel>
+                            <Border Height="260" Background="{DynamicResource Surface2}" CornerRadius="8">
+                                <TreeView x:Name="FolderTree" Background="Transparent" BorderThickness="0"/>
+                            </Border>
+                            <StackPanel Orientation="Horizontal" Margin="6,8,6,4">
+                                <Button x:Name="ApplyFoldersBtn" Content="Apply folder changes" Height="28" IsEnabled="False" Click="OnApplyFolders"/>
+                                <TextBlock x:Name="FoldersNote" Foreground="{DynamicResource Dim}" VerticalAlignment="Center" Margin="10,0,0,0" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
 
-            <TextBlock Text="Connected Art sets and copies" FontSize="16" FontWeight="SemiBold" Margin="0,22,0,6"/>
-            <StackPanel x:Name="SetsPanel"/>
+                    <TextBlock Text="Speed and memory" Style="{StaticResource Group}"/>
+                    <Border Style="{StaticResource SetRow}">
+                        <DockPanel>
+                            <ComboBox x:Name="CacheBox" DockPanel.Dock="Right" SelectionChanged="OnCacheChanged" MinWidth="220" Height="28" VerticalAlignment="Center"/>
+                            <StackPanel>
+                                <TextBlock Text="Memory for pictures" Style="{StaticResource RowTitle}"/>
+                                <TextBlock Text="The picture cache and the compressed cache. More memory: less loading while you scroll back and forth." Style="{StaticResource RowNote}"/>
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+                    <Border Style="{StaticResource SetRow}">
+                        <DockPanel>
+                            <ComboBox x:Name="LookBox" DockPanel.Dock="Right" SelectionChanged="OnLookChanged" MinWidth="130" Height="28" VerticalAlignment="Center">
+                                <ComboBoxItem Content="Off" Tag="0"/>
+                                <ComboBoxItem Content="1 window" Tag="1"/>
+                                <ComboBoxItem Content="2 windows" Tag="2"/>
+                                <ComboBoxItem Content="3 windows" Tag="3"/>
+                                <ComboBoxItem Content="5 windows" Tag="5"/>
+                                <ComboBoxItem Content="8 windows" Tag="8"/>
+                            </ComboBox>
+                            <StackPanel>
+                                <TextBlock Text="Look-ahead" Style="{StaticResource RowTitle}"/>
+                                <TextBlock Text="Sharp pictures are prepared this far ahead while you pause." Style="{StaticResource RowNote}"/>
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+                    <Border Style="{StaticResource SetRow}">
+                        <StackPanel>
+                            <CheckBox x:Name="WarmBox" Content="Keep the thumbnails in memory" Foreground="{DynamicResource Text}" FontWeight="SemiBold" Click="OnWarmChanged"/>
+                            <TextBlock Text="Instant lookups. Uses free memory and gives it back when other programs need it. The limit is in Optimisations (in the top bar)." Style="{StaticResource RowNote}" Margin="22,2,0,0"/>
+                        </StackPanel>
+                    </Border>
 
-            <TextBlock Text="GPU grid" FontSize="16" FontWeight="SemiBold" Margin="0,22,0,6"/>
-            <StackPanel x:Name="GpuPanel"/>
+                    <TextBlock Text="GPU grid" Style="{StaticResource Group}"/>
+                    <Border Style="{StaticResource SetRow}">
+                        <StackPanel x:Name="GpuPanel"/>
+                    </Border>
 
-            <TextBlock Text="Sharp pictures" FontSize="16" FontWeight="SemiBold" Margin="0,22,0,6"/>
-            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Dim}" Margin="0,0,0,6"
-                       Text="Sharp versions are made the first time a large tile needs them and are kept for good. These buttons make them ahead of time. It reads a lot from your drive, so it pauses while you scroll."/>
-            <StackPanel Orientation="Horizontal">
-                <Button x:Name="SharpBigBtn" Content="PNGs and files over 3 MB" Click="OnSharpBig"/>
-                <Button x:Name="SharpAllBtn" Content="Every image that lacks one" Click="OnSharpAll"/>
-                <Button x:Name="SharpStopBtn" Content="Stop" IsEnabled="False" Click="OnSharpStop"/>
-            </StackPanel>
+                    <TextBlock Text="Sharp pictures" Style="{StaticResource Group}"/>
+                    <TextBlock Style="{StaticResource GroupNote}"
+                               Text="Sharp versions are made the first time a large tile needs them and are kept for good. These make them ahead of time. It reads a lot from your drive, so it pauses while you scroll."/>
+                    <Border Style="{StaticResource SetRow}">
+                        <WrapPanel>
+                            <Button x:Name="SharpBigBtn" Content="PNGs and files over 3 MB" Height="28" Margin="0,0,6,0" Click="OnSharpBig"/>
+                            <Button x:Name="SharpAllBtn" Content="Every image that lacks one" Height="28" Margin="0,0,6,0" Click="OnSharpAll"/>
+                            <Button x:Name="SharpStopBtn" Content="Stop" Height="28" IsEnabled="False" Click="OnSharpStop"/>
+                        </WrapPanel>
+                    </Border>
+                </StackPanel>
 
-            <TextBlock Text="Cache" FontSize="16" FontWeight="SemiBold" Margin="0,22,0,6"/>
-            <TextBlock x:Name="UsageText" FontFamily="Consolas" Margin="0,0,0,6"/>
-            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Dim}" Margin="0,0,0,6"
-                       Text="Nothing here is ever capped. Thumbnails of files that were confirmed deleted leave unused space in the cache files; Clean up gives it back and leaves everything in use alone."/>
-            <StackPanel Orientation="Horizontal">
-                <Button x:Name="MeasureBtn" Content="Measure" Click="OnMeasure"/>
-                <Button x:Name="CleanBtn" Content="Clean up cache" Click="OnClean"/>
-                <Button Content="Move cache..." Click="OnMoveCache" Margin="8,0,0,0" ToolTip="Moves the cache to another folder or drive without making it again (done when Ginkgo next starts, with progress)"/>
-            </StackPanel>
+                <!-- ========== right ========== -->
+                <StackPanel Grid.Column="2">
+                    <TextBlock Text="Grid and slideshow" Style="{StaticResource Group}"/>
+                    <Border Style="{StaticResource SetRow}">
+                        <StackPanel x:Name="ViewPanel"/>
+                    </Border>
 
-            <TextBlock Text="Resets" FontSize="16" FontWeight="SemiBold" Margin="0,22,0,6"/>
-            <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource Dim}" Margin="0,0,0,6"
-                       Text="Each one asks first. None of them touches your library's files."/>
-            <WrapPanel x:Name="ResetPanel"/>
-            <TextBlock x:Name="Result" Foreground="{DynamicResource Dim}" Margin="0,18,0,0" TextWrapping="Wrap"/>
-            <Button Content="Close" Width="90" HorizontalAlignment="Right" Margin="0,18,0,0" Click="OnClose"/>
-        </StackPanel>
-    </ScrollViewer>
+                    <TextBlock Text="Browse" Style="{StaticResource Group}"/>
+                    <Border Style="{StaticResource SetRow}">
+                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Slider x:Name="RadiusSlider" Width="150" Minimum="0" Maximum="24" IsSnapToTickEnabled="True" TickFrequency="1" VerticalAlignment="Center" ValueChanged="OnRadiusChanged"/>
+                                <TextBlock x:Name="RadiusText" Width="44" TextAlignment="Right" VerticalAlignment="Center" Foreground="{DynamicResource Dim}"/>
+                            </StackPanel>
+                            <CheckBox x:Name="RoundBox" Content="Round the corners of the covers" Foreground="{DynamicResource Text}" FontWeight="SemiBold" VerticalAlignment="Center" Click="OnRoundChanged"/>
+                        </DockPanel>
+                    </Border>
+                    <Border Style="{StaticResource SetRow}">
+                        <CheckBox x:Name="FadeBox" Content="Fade when a sharper picture replaces a soft one" Foreground="{DynamicResource Text}" FontWeight="SemiBold" Click="OnFadeChanged"/>
+                    </Border>
+
+                    <TextBlock Text="Connected Art sets and copies" Style="{StaticResource Group}"/>
+                    <Border Style="{StaticResource SetRow}">
+                        <StackPanel x:Name="SetsPanel"/>
+                    </Border>
+
+                    <TextBlock Text="Cache" Style="{StaticResource Group}"/>
+                    <TextBlock Style="{StaticResource GroupNote}"
+                               Text="Nothing here is ever capped. Thumbnails of files that were confirmed deleted leave unused space in the cache files; Clean up gives it back and leaves everything in use alone."/>
+                    <Border Style="{StaticResource SetRow}">
+                        <StackPanel>
+                            <TextBlock x:Name="UsageText" FontFamily="Consolas" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                            <WrapPanel>
+                                <Button x:Name="MeasureBtn" Content="Measure" Height="28" Margin="0,0,6,0" Click="OnMeasure"/>
+                                <Button x:Name="CleanBtn" Content="Clean up cache" Height="28" Margin="0,0,6,0" Click="OnClean"/>
+                                <Button Content="Move cache…" Height="28" Click="OnMoveCache" ToolTip="Moves the cache to another folder or drive without making it again (done when Ginkgo next starts, with progress)"/>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Text="Resets" Style="{StaticResource Group}"/>
+                    <TextBlock Style="{StaticResource GroupNote}" Text="Each one asks first. None of them touches your library's files."/>
+                    <Border Style="{StaticResource SetRow}">
+                        <WrapPanel x:Name="ResetPanel"/>
+                    </Border>
+                </StackPanel>
+            </Grid>
+        </ScrollViewer>
+    </DockPanel>
 </Window>

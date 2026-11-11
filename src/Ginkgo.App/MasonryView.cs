@@ -1341,7 +1341,7 @@ public sealed class MasonryView : FrameworkElement
                     dc.DrawRoundedRectangle(tint, null, pr, rad, rad);
                     dc.DrawRoundedRectangle(gloss, null, pr, rad, rad);
                 }
-                if (look.Shine) DrawSweep(dc, pr, rad, t, look.ShineEvery, b.First);
+                if (look.Shine) { _fxWanted = true; DrawSweep(dc, pr, rad, t, look.ShineEvery, b.First); }
                 if (look.Outline != "None")
                 {
                     foreach (var gp in glows) dc.DrawRoundedRectangle(null, gp, o, rad, rad);
@@ -1422,9 +1422,10 @@ public sealed class MasonryView : FrameworkElement
         dc.PushClip(new RectangleGeometry(r, radius, radius));
         dc.DrawRectangle(band, null, r);
         dc.Pop();
-        _fxActive = true;
+        _fxFast = true;
     }
-    private bool _fxActive;
+    /// <summary>Something on screen moves now (a shine crossing, a holographic edge) / something on screen will move later.</summary>
+    private bool _fxFast, _fxWanted;
 
     /// <summary>Favourites: an outline (gold, holographic, a colour or a gradient) with a soft glow, and the card shine.</summary>
     private void DrawFavourite(DrawingContext dc, Rect r, int index, bool hovered)
@@ -1441,27 +1442,30 @@ public sealed class MasonryView : FrameworkElement
             foreach (var gp in GlowPens(gc, w, l.Glow)) { var g = r; g.Inflate(1, 1); dc.DrawRectangle(null, gp, g); }
             var pen = new Pen(brush, w); pen.Freeze();
             dc.DrawRectangle(null, pen, o);
-            if (l.Outline == "Holographic") _fxActive = true;
+            if (l.Outline == "Holographic") _fxFast = true;
         }
-        if (l.Shine == "Always") DrawSweep(dc, r, 0, t, l.ShineEvery, index);
+        if (l.Shine == "Always") { _fxWanted = true; DrawSweep(dc, r, 0, t, l.ShineEvery, index); }
         else if (l.Shine == "Hover" && hovered)
         {
             if (_shineHover != index) { _shineHover = index; _shineHoverAt = t; }
-            DrawSweep(dc, r, 0, t, 0, index, now: true, started: _shineHoverAt);
+            if (t - _shineHoverAt < 1.2) { _fxWanted = true; DrawSweep(dc, r, 0, t, 0, index, now: true, started: _shineHoverAt); }
         }
     }
 
-    /// <summary>Animated marks (shines, the holographic edge) keep the grid redrawing while they move.</summary>
+    /// <summary>Animated marks (shines, the holographic edge) keep the grid redrawing: often while something moves, a few times
+    /// a second while a shine is only waiting for its turn, not at all when nothing on screen has one.</summary>
     private void KeepFxMoving()
     {
-        bool want = _fxActive || _setLook.Shine || _favLook.Shine == "Always" || _favLook.Outline == "Holographic" || (_favLook.Shine == "Hover" && _shineHover >= 0);
-        _fxActive = false;
+        bool fast = _fxFast, want = _fxWanted || fast;
+        _fxFast = _fxWanted = false;
         if (!want) { _fxTimer?.Stop(); return; }
         if (_fxTimer is null)
         {
-            _fxTimer = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Render) { Interval = TimeSpan.FromMilliseconds(40) };
-            _fxTimer.Tick += (_, _) => { if (IsVisible) InvalidateVisual(); };
+            _fxTimer = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Render);
+            _fxTimer.Tick += (_, _) => { if (IsVisible) InvalidateVisual(); else _fxTimer!.Stop(); };
         }
+        var every = TimeSpan.FromMilliseconds(fast ? 40 : 200);
+        if (_fxTimer.Interval != every) _fxTimer.Interval = every;
         if (!_fxTimer.IsEnabled) _fxTimer.Start();
     }
 

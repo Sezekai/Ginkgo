@@ -25,6 +25,7 @@
     <Compile Include="..\..\src\Ginkgo.App\ThemeKit.cs" Link="ThemeKit.cs" />
     <Compile Include="..\..\src\Ginkgo.App\ButtonLook.cs" Link="ButtonLook.cs" />
     <Compile Include="..\..\src\Ginkgo.App\Theme.cs" Link="Theme.cs" />
+    <Compile Include="..\..\src\Ginkgo.App\Looks.cs" Link="Looks.cs" />
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="LibVLCSharp" Version="3.9.1" />
     <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />

@@ -515,7 +515,20 @@ public partial class MainWindow : Window
         ApplyBar();
     }
 
-    private void OpenSettings() => new SettingsWindow(this, _settings, _engine) { Owner = this }.ShowDialog();
+    private SettingsWindow? _settingsWindow;
+
+    /// <summary>The Settings window: its own window beside the main one (one at a time).</summary>
+    private void OpenSettings()
+    {
+        if (_settingsWindow is { IsLoaded: true })
+        {
+            if (_settingsWindow.WindowState == WindowState.Minimized) _settingsWindow.WindowState = WindowState.Normal;
+            _settingsWindow.Activate(); return;
+        }
+        _settingsWindow = new SettingsWindow(this, _settings, _engine) { Owner = this, Icon = Icon };
+        _settingsWindow.Closed += (_, _) => { _settingsWindow = null; SaveSettings(); };
+        _settingsWindow.Show();
+    }
 
     private void OnUpdateView(object s, RoutedEventArgs e) => _ = ReloadModel(true);
 
@@ -1142,7 +1155,7 @@ public partial class MainWindow : Window
 
     private static readonly (string keys, string what)[] GridKeys =
     {
-        ("Ctrl+B  or  M", "Open or close the menu"), ("S  or  Ctrl+S", "Settings"), ("T", "Open the picture under the mouse (or the first one)"), ("O", "Optimisations (memory, GIFs)"), ("Q", "Quick toggles (videos)"), ("F  or  F11", "Full screen (Esc to leave)"), ("Ctrl+W", "Close Ginkgo"), ("H", "Hide or show the top bar"), ("/  or  Ctrl+F", "Search"),
+        ("Ctrl+B  or  M", "The section switch: then 1-4 or the arrows, Enter or Esc to go back"), ("Ctrl+1 ... 4", "Home, Browse, Favourites, Tools"), ("S  or  Ctrl+S", "Settings"), ("T", "Open the picture under the mouse (or the first one)"), ("O", "Optimisations (memory, GIFs)"), ("Q", "Quick toggles (videos)"), ("F  or  F11", "Full screen (Esc to leave)"), ("Ctrl+W", "Close Ginkgo"), ("H", "Hide or show the top bar"), ("/  or  Ctrl+F", "Search"),
         ("G   N   V", "Show General / NSFW / Very files"), ("L", "Equal columns  or  equal rows"), ("+   -   or  Ctrl + wheel", "Picture size"),
         ("R", "Reshuffle (when sorted randomly)"), ("Home   End", "Top / bottom"), ("Page Up   Page Down", "Scroll one screen"),
         ("Enter  or  click", "Open the picture under the mouse"), ("Middle button", "Scroll by moving the mouse"),
