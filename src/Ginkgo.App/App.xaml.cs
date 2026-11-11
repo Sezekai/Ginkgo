@@ -28,7 +28,7 @@ public partial class App : Application
         if (Smoke)
         {
             // the build's start-up check: open, run for a while, close (any error on the way fails the build)
-            w.ContentRendered += async (_, _) => { await System.Threading.Tasks.Task.Delay(15000); w.Close(); };
+            w.ContentRendered += async (_, _) => { await w.SmokeShots(); await System.Threading.Tasks.Task.Delay(8000); w.Close(); };
         }
         w.Show();
     }

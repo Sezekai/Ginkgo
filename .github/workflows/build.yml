@@ -59,8 +59,9 @@ jobs:
           1..4 | ForEach-Object { Copy-Item src/Ginkgo.App/Assets/ginkgo.png "$lib\Art\Set A\pic $_.png"; Copy-Item src/Ginkgo.App/Assets/ginkgo.png "$lib\Photos\p$_.png" }
           $data = Join-Path $env:LOCALAPPDATA 'Ginkgo'; New-Item -ItemType Directory -Force $data | Out-Null
           @{ LibraryRoot = $lib; CacheDir = $cache; FolderRulesVersion = 3; MemoryRulesVersion = 1 } | ConvertTo-Json | Set-Content (Join-Path $data 'settings.json')
+          $env:GINKGO_SHOTS = Join-Path $env:RUNNER_TEMP 'shots'
           $p = Start-Process publish/Ginkgo/Ginkgo.exe -ArgumentList '--smoke' -PassThru
-          if (-not $p.WaitForExit(120000)) { $p.Kill(); Write-Host "::error::Ginkgo did not close within 2 minutes"; exit 1 }
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); Write-Host "::error::Ginkgo did not close within 2 minutes"; exit 1 }
           $log = Join-Path $data 'crash.log'
           if (Test-Path $log) { Get-Content $log; }
           if ($p.ExitCode -ne 0) { Write-Host "::error::Ginkgo failed to start (exit code $($p.ExitCode))"; exit 1 }
@@ -75,6 +76,13 @@ jobs:
           gh release delete latest --yes --cleanup-tag 2>$null
           $global:LASTEXITCODE = 0
           gh release create latest Ginkgo-win-x64.zip --prerelease --target $env:GITHUB_SHA --title "Latest build" --notes "Built from $env:GITHUB_SHA"
+          # pictures of the windows from the start-up check (a separate release, so the download page stays clean)
+          $shots = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'shots') -Filter *.png -ErrorAction SilentlyContinue
+          if ($shots) {
+            gh release delete ci-screens --yes --cleanup-tag 2>$null
+            $global:LASTEXITCODE = 0
+            gh release create ci-screens $shots.FullName --prerelease --target $env:GITHUB_SHA --title "Build pictures" --notes "Pictures of the windows from the start-up check of $env:GITHUB_SHA"
+          }
       - uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
