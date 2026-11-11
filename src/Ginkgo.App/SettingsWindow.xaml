@@ -17,6 +17,15 @@
             <Setter Property="Margin" Value="2,-4,0,8"/>
             <Setter Property="FontSize" Value="11.5"/>
         </Style>
+        <!-- long switch names wrap instead of being cut off -->
+        <Style TargetType="CheckBox" BasedOn="{StaticResource {x:Type CheckBox}}">
+            <Setter Property="ContentTemplate">
+                <Setter.Value>
+                    <DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap"/></DataTemplate>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Margin" Value="0,2,0,6"/>
+        </Style>
         <Style x:Key="SetRow" TargetType="Border">
             <Setter Property="Background" Value="{DynamicResource Bar}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource Edge}"/>

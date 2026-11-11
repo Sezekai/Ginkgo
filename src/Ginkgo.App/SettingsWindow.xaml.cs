@@ -218,7 +218,7 @@ public partial class SettingsWindow : Window
         var d = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
         if (value is not null) { value.Width = 52; value.TextAlignment = TextAlignment.Right; value.VerticalAlignment = VerticalAlignment.Center; DockPanel.SetDock(value, Dock.Right); d.Children.Add(value); }
         DockPanel.SetDock(control, Dock.Right); d.Children.Add(control);
-        d.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) });
+        d.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0), TextWrapping = TextWrapping.Wrap });
         return d;
     }
 

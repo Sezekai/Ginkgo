@@ -198,9 +198,10 @@ public sealed class AppearanceWindow : Window
     /// <summary>Two columns of cards when there is room, one when not.</summary>
     private void FitCards()
     {
-        double avail = Math.Max(300, _scroll.ActualWidth - 40);
-        double w = avail >= 760 ? (avail - 16) / 2 : avail;
-        foreach (FrameworkElement c in _body.Children) c.Width = c.Tag as string == "wide" ? avail : w;
+        // the room inside the scroll area (less the page's margins and the scroll bar); each card has 14 px on its right
+        double avail = Math.Max(300, _scroll.ActualWidth - 26 - 14 - SystemParameters.VerticalScrollBarWidth);
+        double w = avail >= 760 ? Math.Floor((avail - 28) / 2) : avail - 14;
+        foreach (FrameworkElement c in _body.Children) c.Width = c.Tag as string == "wide" ? avail - 14 : w;
     }
 
     /// <summary>Something on the page changed: into effect at once.</summary>
@@ -868,7 +869,7 @@ public sealed class AppearanceWindow : Window
 
     private void BuildOutlines()
     {
-        var card = Card("Video outlines", wide: false);
+        var card = Card("Paused and watched videos", wide: false);
         var ed = new OutlineEditor(_s) { Margin = new Thickness(0) };
         ed.Changed += Changed;
         card.Children.Add(ed);
