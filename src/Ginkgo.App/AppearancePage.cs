@@ -67,12 +67,6 @@ public sealed class AppearancePage : Border
         rail.SetResourceReference(Border.BackgroundProperty, "Bar");
         rail.SetResourceReference(Border.BorderBrushProperty, "Edge");
         var railStack = new DockPanel();
-        var head = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6, 0, 0, 14) };
-        var logo = new LogoView(); logo.Apply(_s.Logo); logo.SetButtonColours(_s.Look); logo.Margin = new Thickness(0, 0, 10, 0);
-        head.Children.Add(logo);
-        head.Children.Add(new TextBlock { Text = "Appearance", FontSize = 15, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
-        DockPanel.SetDock(head, Dock.Top);
-        railStack.Children.Add(head);
         var resetAll = new Button { Content = "Everything back to default…", Height = 28, Margin = new Thickness(0, 10, 0, 0), ToolTip = "Every page back to Ginkgo's own look (your saved looks stay)" };
         resetAll.Click += (_, _) => ResetEverything();
         DockPanel.SetDock(resetAll, Dock.Bottom);
@@ -658,9 +652,9 @@ public sealed class AppearancePage : Border
         bar.SetResourceReference(Border.BackgroundProperty, "BarBack");
         var barRow = new StackPanel { Orientation = Orientation.Horizontal };
         barRow.Children.Add(_logoSmall);
-        barRow.Children.Add(new TextBlock { Text = "Home", FontSize = 16, FontWeight = FontWeights.SemiBold, Margin = new Thickness(10, 0, 12, 0), VerticalAlignment = VerticalAlignment.Center });
-        var sw = new SectionSwitch(); sw.SetResourceReference(HeightProperty, "KeyHeight");
+        var sw = new SectionSwitch { Height = 36, Margin = new Thickness(12, 0, 12, 0), VerticalAlignment = VerticalAlignment.Center };
         barRow.Children.Add(sw);
+        barRow.Children.Add(new TextBlock { Text = "Home", FontSize = 20, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
         bar.Child = barRow;
         pr.Children.Add(_logoBig); pr.Children.Add(bar);
         preview.Children.Add(pr);

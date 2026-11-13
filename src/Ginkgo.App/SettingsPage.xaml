@@ -53,8 +53,7 @@
                 <Button DockPanel.Dock="Right" Content="Appearance" Height="30" Padding="14,0" Margin="0,0,10,0" VerticalAlignment="Center" Click="OnAppearance"
                         ToolTip="Themes, buttons, the logo, backgrounds, folder pop-outs, sets, favourites and video outlines"/>
                 <StackPanel>
-                    <TextBlock Text="Settings" FontSize="18" FontWeight="SemiBold"/>
-                    <TextBlock Text="How Ginkgo behaves: the library, speed and memory, the grid and slideshow, sets, the cache and resets. Changes take effect at once." Foreground="{DynamicResource Dim}" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                    <TextBlock Text="How Ginkgo behaves: the library, speed and memory, the grid and slideshow, sets, the cache and resets. Changes take effect at once." Foreground="{DynamicResource Dim}" TextWrapping="Wrap" Margin="0,2,0,0" VerticalAlignment="Center"/>
                 </StackPanel>
             </DockPanel>
         </Border>
