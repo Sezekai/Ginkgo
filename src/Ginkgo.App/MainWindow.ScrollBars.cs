@@ -48,7 +48,8 @@ public partial class MainWindow
     private double ScrollViewport(double max, double viewport)
     {
         double track = Math.Max(40, Scroll.ActualHeight > 0 ? Scroll.ActualHeight : View.ActualHeight);
-        double want = Math.Clamp((50 + View.TileTarget * 0.55) * Math.Clamp(_settings.ScrollBars.Length, 0.25, 4), 36, track * 0.6);
+        double hi = track * 0.6;
+        double want = Math.Clamp((50 + View.TileTarget * 0.55) * Math.Clamp(_settings.ScrollBars.Length, 0.25, 4), Math.Min(36, hi), hi);
         if (max <= 0) return viewport;
         double natural = track * viewport / (max + viewport);
         if (natural >= want) return viewport;
