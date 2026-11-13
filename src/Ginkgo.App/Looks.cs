@@ -303,3 +303,40 @@ public sealed class ScrollLook
 
     public ScrollLook Copy() => JsonSerializer.Deserialize<ScrollLook>(JsonSerializer.Serialize(this))!;
 }
+
+/// <summary>The top bar's own layout: where and how big the logo, the section switch and the section's name are, the logo's
+/// small place in the title bar while the bar is hidden, and the colours of the switch's icons and the text. Sizes of 0 mean
+/// "fit the bars".</summary>
+public sealed class TopBarLook
+{
+    // the big logo (over the title bar and the top bar)
+    public double LogoSize { get; set; }
+    public double LogoX { get; set; } = 20;
+    public double LogoY { get; set; } = 7;
+    // the logo while the top bar is hidden: small, in the title bar
+    public double SmallSize { get; set; }
+    public double SmallX { get; set; } = 10;
+    public double SmallY { get; set; }
+    /// <summary>How long the logo takes to shrink or grow, in milliseconds.</summary>
+    public double Speed { get; set; } = 280;
+    // the section switch
+    public double SwitchHeight { get; set; } = 44;
+    public double SwitchGap { get; set; } = 14;
+    public double SwitchY { get; set; }
+    public double IconScale { get; set; } = 1;
+    public string IconColour { get; set; } = "";
+    public string IconHoverColour { get; set; } = "";
+    public string IconOnColour { get; set; } = "";
+    // the section's name
+    public double TitleSize { get; set; } = 24;
+    public double TitleGap { get; set; } = 14;
+    public double TitleY { get; set; }
+    public bool TitleBold { get; set; } = true;
+    public string TitleColour { get; set; } = "";
+    // the window's name ("Ginkgo") in the title bar
+    public double NameSize { get; set; } = 12;
+    public double NameGap { get; set; } = 12;
+    public string NameColour { get; set; } = "";
+
+    public TopBarLook Copy() => JsonSerializer.Deserialize<TopBarLook>(JsonSerializer.Serialize(this))!;
+}

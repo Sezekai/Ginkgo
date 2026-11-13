@@ -30,16 +30,24 @@ public partial class MainWindow
             ToggleSlidePanel(SlideshowBtn); await Task.Delay(500);
             if (_slidePopup?.Child is FrameworkElement sl) Shot(sl, Path.Combine(dir, "04-slideshow.png"));
             if (_slidePopup is not null) _slidePopup.IsOpen = false;
-            OpenAppearance();
+            // through the section switch, as a click would: the check fails if the page does not open
+            Navigate("Appearance"); await Task.Delay(500);
+            if (_pageKey != "Appearance") Fail("Appearance did not open from the section switch");
             int n = 10;
-            foreach (var key in new[] { "Theme", "Buttons", "Logo", "Background", "Folders", "Sets", "Favourites", "Video outlines" })
+            foreach (var key in new[] { "Theme", "Buttons", "Top bar", "Logo", "Background", "Folders", "Sets", "Favourites", "Video outlines", "Scroll bars" })
             {
                 _appearance?.ShowPage(key); await Task.Delay(900);
                 Shot(this, Path.Combine(dir, $"{n++}-appearance-{key.Replace(' ', '-').ToLowerInvariant()}.png"));
             }
-            OpenSettings(); await Task.Delay(1500);
-            Shot(this, Path.Combine(dir, "20-settings.png"));
-            LeavePage(); await Task.Delay(300);
+            Navigate("Settings"); await Task.Delay(1500);
+            if (_pageKey != "Settings") Fail("Settings did not open from the section switch");
+            Shot(this, Path.Combine(dir, "30-settings.png"));
+            Navigate("Home"); await Task.Delay(300);
+            if (InPage) Fail("Home did not close Settings");
+            // the logo small in the title bar, as when the top bar slides away
+            SetLogoSmall(true, animate: false); await Task.Delay(300);
+            Shot(this, Path.Combine(dir, "07-logo-small.png"));
+            SetLogoSmall(false, animate: false);
             await GoSection("Browse"); await Task.Delay(1500);
             Shot(this, Path.Combine(dir, "05-browse.png"));
             Keyboard.Focus(Sections); await Task.Delay(400);
@@ -47,6 +55,9 @@ public partial class MainWindow
         }
         catch (Exception ex) { App.LogError("taking the build's pictures", ex); }
     }
+
+    /// <summary>A check that must not fail: thrown outside the pictures' own error catch, so the build's start-up check fails.</summary>
+    private void Fail(string what) => Dispatcher.BeginInvoke(new Action(() => throw new InvalidOperationException("Start-up check: " + what)));
 
     private static void Shot(FrameworkElement el, string path)
     {

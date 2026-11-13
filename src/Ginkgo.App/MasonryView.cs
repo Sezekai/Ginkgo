@@ -785,8 +785,14 @@ public sealed class MasonryView : FrameworkElement
         foreach (var (r, hovered, gif, label, index) in _overlay)
         {
             if (label >= 0) { if (label < CoverCount) DrawCaptionBelow(dc, r, label, dpi); else DrawCaption(dc, r, label, dpi); }
-            if (hovered) dc.DrawRectangle(null, _hover, r);
-            if (index == _selected) { var sr = r; sr.Inflate(1, 1); dc.DrawRectangle(null, SelectPen, sr); }
+            // rounded tiles (Browse's covers) get rounded outlines to match
+            double rad = index < CoverCount ? CoverRadius : 0;
+            if (hovered) { if (rad > 0) dc.DrawRoundedRectangle(null, _hover, r, rad, rad); else dc.DrawRectangle(null, _hover, r); }
+            if (index == _selected)
+            {
+                var sr = r; sr.Inflate(1, 1);
+                if (rad > 0) dc.DrawRoundedRectangle(null, SelectPen, sr, rad + 1, rad + 1); else dc.DrawRectangle(null, SelectPen, sr);
+            }
             bool playingHere = _videos.TryGetValue(index, out var vt) && vt.E.FileId >= 0;
             bool isVideo = gif && Badges is { } vb && index < vb.Length && vb[index] == 2;
             var info = isVideo && VideoInfo is { } vinf ? vinf(index) : (false, -1.0);
@@ -1502,7 +1508,7 @@ public sealed class MasonryView : FrameworkElement
         var ink = new SolidColorBrush(ButtonLook.C(l.InfoText)); ink.Freeze();
         // exactly as wide as the hover outline (2 px, half of it outside the picture), starting just under it
         double half = _hover.Thickness / 2;
-        double left = r.Left - half, width = r.Width + 2 * half, top = r.Bottom + half;
+        double left = Math.Round(r.Left - half), width = Math.Round(r.Right + half) - left, top = Math.Round(r.Bottom + half);
         var ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, Math.Clamp(l.InfoSize, 8, 16), ink, ppd)
         { MaxTextWidth = Math.Max(10, width - 12), MaxLineCount = 1, Trimming = TextTrimming.CharacterEllipsis };
         double h = Math.Ceiling(ft.Height + 6);
@@ -1522,9 +1528,6 @@ public sealed class MasonryView : FrameworkElement
         }
         g.Freeze();
         dc.DrawGeometry(back, null, g);
-        // a line in the outline's colour down each side and along the bottom, so the strip reads as part of the hovered picture
-        var edge = new Pen(_hover.Brush, 1); edge.Freeze();
-        dc.DrawGeometry(null, edge, g);
         dc.DrawText(ft, new Point(left + 6, top + (h - ft.Height) / 2));
     }
 

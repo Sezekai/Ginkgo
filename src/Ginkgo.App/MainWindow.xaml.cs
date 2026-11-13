@@ -1067,6 +1067,12 @@ public partial class MainWindow : Window
 
     private void Navigate(string where)
     {
+        if (where is "Appearance" or "Settings") { ShowPageSection(where); return; }
+        if (InPage)
+        {
+            LeavePage();
+            if (where == _section) return;                                      // back to the pictures as they were
+        }
         if (where is "Home" or "Browse" or "Favourites" or "Tools")
         {
             if (where != _section) _ = GoSection(where);                       // back where it was left

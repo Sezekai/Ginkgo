@@ -78,7 +78,7 @@ public sealed class SectionSwitch : Border
         if (Math.Abs(slot - Slot) > 0.5)
         {
             Slot = slot; _knob.Width = slot;
-            for (int i = 0; i < _slots.Length; i++) { _slots[i].Width = slot; _icons[i].FontSize = Math.Round(h * 0.46); }
+            for (int i = 0; i < _slots.Length; i++) { _slots[i].Width = slot; _icons[i].FontSize = Math.Max(8, Math.Round(h * 0.46 * _iconScale)); }
         }
         _knob.CornerRadius = new CornerRadius(h / 2);
         _knob.Height = h;
@@ -97,6 +97,19 @@ public sealed class SectionSwitch : Border
 
     public string Current => Sections[_at].key;
 
+    /// <summary>Colours of the icons (null: the theme's), and how big the icons are against the switch's height.</summary>
+    public Brush? IconBrush, HoverBrush, OnBrush;
+    private double _iconScale = 1;
+
+    public void SetIconLook(Brush? normal, Brush? hover, Brush? on, double scale)
+    {
+        IconBrush = normal; HoverBrush = hover; OnBrush = on;
+        _iconScale = Math.Clamp(scale, 0.5, 1.6);
+        Slot = -1;              // size the icons again
+        if (IsLoaded) Shape();
+        Paint();
+    }
+
     private void Slide()
     {
         var anim = new DoubleAnimation(_at * Slot, TimeSpan.FromMilliseconds(190)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
@@ -108,7 +121,9 @@ public sealed class SectionSwitch : Border
         for (int i = 0; i < _icons.Length; i++)
         {
             string key = i == _at ? "KeyOnText" : _slots[i].IsMouseOver ? "Text" : "Dim";
-            _icons[i].SetResourceReference(TextBlock.ForegroundProperty, key);
+            var own = i == _at ? OnBrush : _slots[i].IsMouseOver ? HoverBrush : IconBrush;
+            if (own is not null) _icons[i].Foreground = own;
+            else _icons[i].SetResourceReference(TextBlock.ForegroundProperty, key);
         }
         // the keyboard is here: an accent ring
         if (IsKeyboardFocused) { SetResourceReference(BorderBrushProperty, "Accent"); BorderThickness = new Thickness(2); Padding = new Thickness(1); }

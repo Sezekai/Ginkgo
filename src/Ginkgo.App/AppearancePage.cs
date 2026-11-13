@@ -135,6 +135,12 @@ public sealed class AppearancePage : Border
         });
         _pages.Add(new Page
         {
+            Key = "Top bar", Name = "Top bar", Icon = "\uE8A0",
+            Subtitle = "Dial in the top bar: the logo's size and place (big, and small while the bar is hidden), the section switch, the section's name, and their colours.",
+            Get = () => _s.TopBarStyle.Copy(), Set = o => _s.TopBarStyle = ((TopBarLook)o).Copy(), Default = () => new TopBarLook(), Type = typeof(TopBarLook), Build = BuildTopBar,
+        });
+        _pages.Add(new Page
+        {
             Key = "Background", Name = "Backgrounds", Icon = "",
             Subtitle = "Starfields, night skies, gradients and more: for the bars, behind the pictures and the viewer, together or each its own.",
             Get = () => _s.Scenes.Copy(), Set = o => _s.Scenes = ((SceneLook)o).Copy(), Default = () => new SceneLook(), Type = typeof(SceneLook), Build = BuildScenes,
@@ -171,6 +177,49 @@ public sealed class AppearancePage : Border
             Subtitle = "The pictures' scroll bar: when it shows, how long and wide it is, and a glow or shine so it is easy to find.",
             Get = () => _s.ScrollBars.Copy(), Set = o => _s.ScrollBars = ((ScrollLook)o).Copy(), Default = () => new ScrollLook(), Type = typeof(ScrollLook), Build = BuildScrollBars,
         });
+    }
+
+    /// <summary>Set by the main window: shows the small logo for a moment, as when the top bar hides.</summary>
+    public static Action? PreviewSmallLogo;
+
+    private void BuildTopBar()
+    {
+        var t = _s.TopBarStyle;
+        static string Px(double v) => $"{v:0} px";
+        static string Auto(double v) => v <= 0 ? "fits the bars" : $"{v:0} px";
+
+        var big = Card("Logo", "Changes show in the bar above as you make them. The big logo covers the title bar and the top bar (turn that off in Appearance → Logo).");
+        Slide(big, "Size", 0, 160, () => t.LogoSize, v => t.LogoSize = v, Auto, 1);
+        Slide(big, "From the left", 0, 80, () => t.LogoX, v => t.LogoX = v, Px, 1);
+        Slide(big, "From the top", -10, 40, () => t.LogoY, v => t.LogoY = v, Px, 1);
+        Slide(big, "Space before the switch", 0, 60, () => t.SwitchGap, v => t.SwitchGap = v, Px, 1);
+
+        var small = Card("Logo while the bar is hidden", "When you scroll down and the top bar slides away, the logo shrinks into the title bar's top-left corner and the window's name slides along beside it.");
+        Slide(small, "Size", 0, 40, () => t.SmallSize, v => t.SmallSize = v, v => v <= 0 ? "fits the title bar" : $"{v:0} px", 1);
+        Slide(small, "From the left", 0, 60, () => t.SmallX, v => t.SmallX = v, Px, 1);
+        Slide(small, "Up or down", -10, 10, () => t.SmallY, v => t.SmallY = v, Px, 1);
+        Slide(small, "Animation", 60, 1000, () => t.Speed, v => t.Speed = v, v => $"{v:0} ms", 20);
+        small.Children.Add(Small("Try it", () => PreviewSmallLogo?.Invoke(), "The logo goes small for two seconds, as when the bar hides"));
+
+        var sw = Card("Section switch");
+        Slide(sw, "Height", 24, 72, () => t.SwitchHeight, v => t.SwitchHeight = v, Px, 1);
+        Slide(sw, "Icon size", 0.5, 1.6, () => t.IconScale, v => t.IconScale = v, v => $"{v * 100:0}%", 0.05);
+        Slide(sw, "Up or down", -12, 12, () => t.SwitchY, v => t.SwitchY = v, Px, 1);
+        Colour(sw, "Icons", () => t.IconColour, v => t.IconColour = v, allowBlank: true);
+        Colour(sw, "Icon under the mouse", () => t.IconHoverColour, v => t.IconHoverColour = v, allowBlank: true);
+        Colour(sw, "Icon of the open section", () => t.IconOnColour, v => t.IconOnColour = v, allowBlank: true);
+
+        var title = Card("Section name");
+        Slide(title, "Text size", 10, 48, () => t.TitleSize, v => t.TitleSize = v, Px, 1);
+        Slide(title, "Space before it", 0, 60, () => t.TitleGap, v => t.TitleGap = v, Px, 1);
+        Slide(title, "Up or down", -12, 12, () => t.TitleY, v => t.TitleY = v, Px, 1);
+        Check(title, "Bold", () => t.TitleBold, v => t.TitleBold = v);
+        Colour(title, "Colour", () => t.TitleColour, v => t.TitleColour = v, allowBlank: true);
+
+        var name = Card("Window name (\"Ginkgo\" in the title bar)");
+        Slide(name, "Text size", 8, 24, () => t.NameSize, v => t.NameSize = v, Px, 1);
+        Slide(name, "Space after the logo", 0, 40, () => t.NameGap, v => t.NameGap = v, Px, 1);
+        Colour(name, "Colour", () => t.NameColour, v => t.NameColour = v, allowBlank: true);
     }
 
     private void BuildScrollBars()

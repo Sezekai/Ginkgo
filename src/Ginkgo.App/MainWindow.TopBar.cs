@@ -1,23 +1,28 @@
 using System.Windows;
-using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Media.Animation;
 
 namespace Ginkgo.App;
 
 /// <summary>
-/// The big logo: spread over the window's title bar and the top bar together, with the window's name and its line starting after
-/// it. It fades with the top bar when the bar slides away, and in full screen (no title bar) the logo goes back into the bar at
-/// its own size.
+/// The top bar's layout (Appearance → Top bar) and the big logo. The logo spreads over the window's title bar and the top bar
+/// together, with the window's name and the title bar's line starting after it. When the top bar slides away it shrinks into the
+/// title bar's top-left corner and the window's name slides along beside it; when the bar comes back, so does the logo. In full
+/// screen (no title bar) the logo goes back into the bar at its own size.
 /// </summary>
 public partial class MainWindow
 {
     private bool _bigLogoOn;
     private bool _bigHooked;
+    private readonly ScaleTransform _logoScale = new(1, 1);
+    private readonly TranslateTransform _logoMove = new();
 
     private void HookBigLogo()
     {
         if (_bigHooked) return;
         _bigHooked = true;
+        BigLogo.RenderTransformOrigin = new Point(0, 0);
+        BigLogo.RenderTransform = new TransformGroup { Children = { _logoScale, _logoMove } };
         BigLogo.MouseLeftButtonDown += (_, e) => OnTitleDown(TitleBar, e);      // drags the window like the title bar
         TopBar.SizeChanged += (_, _) => { UpdateBigLogo(); PlacePage(); };
         TitleBar.SizeChanged += (_, _) => UpdateBigLogo();
@@ -26,31 +31,64 @@ public partial class MainWindow
         MoveLayer.IsVisibleChanged += (_, _) => UpdateBigLogo();
         TitleBar.IsVisibleChanged += (_, _) => UpdateBigLogo();
         BarHost.IsVisibleChanged += (_, _) => UpdateBigLogo();
+        AppearancePage.PreviewSmallLogo = PreviewSmallLogo;
     }
+
+    /// <summary>The switch, the section's name and the window's name: sizes, gaps, nudges and colours.</summary>
+    private void ApplyTopBarLook()
+    {
+        var t = _settings.TopBarStyle;
+        Sections.Height = Math.Clamp(t.SwitchHeight, 24, 72);
+        Sections.Margin = new Thickness(0, 0, Math.Clamp(t.TitleGap, 0, 80), 0);
+        Sections.RenderTransform = new TranslateTransform(0, t.SwitchY);
+        Sections.SetIconLook(BrushOrNull(t.IconColour), BrushOrNull(t.IconHoverColour), BrushOrNull(t.IconOnColour), t.IconScale);
+        SectionTitleBox.Height = Sections.Height;
+        SectionTitleBox.RenderTransform = new TranslateTransform(0, t.TitleY);
+        SectionTitle.FontSize = Math.Clamp(t.TitleSize, 10, 48);
+        SectionTitle.FontWeight = t.TitleBold ? FontWeights.SemiBold : FontWeights.Normal;
+        if (BrushOrNull(t.TitleColour) is { } tc) SectionTitle.Foreground = tc; else SectionTitle.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, "Text");
+        TitleText.FontSize = Math.Clamp(t.NameSize, 8, 24);
+        if (BrushOrNull(t.NameColour) is { } nc) TitleText.Foreground = nc; else TitleText.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, "Text");
+    }
+
+    private static Brush? BrushOrNull(string hex)
+    {
+        if (string.IsNullOrWhiteSpace(hex)) return null;
+        var b = new SolidColorBrush(ButtonLook.C(hex)); b.Freeze();
+        return b;
+    }
+
+    // ---- where the big logo and the window's name go, big and small ----
+
+    private double BigSize => _settings.TopBarStyle.LogoSize > 0 ? _settings.TopBarStyle.LogoSize : Math.Round(TitleBar.ActualHeight + TopBar.ActualHeight - 14);
+    private double SmallSize => _settings.TopBarStyle.SmallSize > 0 ? Math.Min(_settings.TopBarStyle.SmallSize, BigSize) : Math.Max(12, TitleBar.ActualHeight - 8);
+    private Point SmallAt => new(_settings.TopBarStyle.SmallX, (TitleBar.ActualHeight - SmallSize) / 2 + _settings.TopBarStyle.SmallY);
 
     /// <summary>Big or in the bar, by the setting and the window's state.</summary>
     private void UpdateBigLogo()
     {
         HookBigLogo();
+        ApplyTopBarLook();
+        var t = _settings.TopBarStyle;
         bool big = _settings.Logo.Big && !_fullscreen && TitleBar.Visibility == Visibility.Visible && BarHost.Visibility == Visibility.Visible
                    && TopBar.ActualHeight > 10 && !ViewerOpen && KeysLayer.Visibility != Visibility.Visible && MoveLayer.Visibility != Visibility.Visible;
         _bigLogoOn = big;
         if (big)
         {
-            double h = Math.Round(TitleBar.ActualHeight + TopBar.ActualHeight - 14);
+            double h = BigSize;
             var look = _settings.Logo.Copy(); look.Size = h;
             BigLogo.Apply(look);
             BigLogo.SetButtonColours(_settings.Look);
-            BigLogo.Margin = new Thickness(20, 7, 0, 0);
+            BigLogo.Margin = new Thickness(t.LogoX, t.LogoY, 0, 0);
             BigLogo.Visibility = Visibility.Visible;
             BigLogo.BeginAnimation(OpacityProperty, null);
-            BigLogo.Opacity = _barShown ? 1 : 0;
-            BigLogo.IsHitTestVisible = _barShown;
+            BigLogo.Opacity = 1;
+            BigLogo.IsHitTestVisible = true;
             // the logo in the bar keeps its place empty, so the switch starts after the big one
             Logo.Visibility = Visibility.Hidden;
-            Logo.Width = h; Logo.Height = 10;
-            TitleText.Margin = new Thickness(20 + h + 12, 0, 0, 1);
-            TitleLine.Margin = new Thickness(20 + h + 8, 0, 0, 0);
+            Logo.Width = Math.Max(0, t.LogoX + h - 20); Logo.Height = 10;
+            Logo.Margin = new Thickness(6, 0, Math.Clamp(t.SwitchGap, 0, 80), 0);
+            SetLogoSmall(!_barShown, animate: false);
         }
         else
         {
@@ -58,16 +96,65 @@ public partial class MainWindow
             Logo.Visibility = Visibility.Visible;
             Logo.Apply(_settings.Logo);          // its own size again
             Logo.SetButtonColours(_settings.Look);
+            Logo.Margin = new Thickness(6, 0, Math.Clamp(t.SwitchGap, 0, 80), 0);
+            StopLogoAnimations();
             TitleText.Margin = new Thickness(14, 0, 0, 1);
             TitleLine.Margin = new Thickness(0);
         }
     }
 
-    /// <summary>The big logo comes and goes with the top bar.</summary>
+    /// <summary>The top bar slid away (or came back): the logo shrinks into the title bar's corner, or grows back.</summary>
     private void FadeBigLogo(bool shown)
     {
         if (!_bigLogoOn) return;
-        BigLogo.IsHitTestVisible = shown;
-        BigLogo.BeginAnimation(OpacityProperty, new DoubleAnimation(shown ? 1 : 0, TimeSpan.FromMilliseconds(shown ? 140 : 160)));
+        SetLogoSmall(!shown, animate: true);
+    }
+
+    private void SetLogoSmall(bool small, bool animate)
+    {
+        var t = _settings.TopBarStyle;
+        double h = BigSize, s = SmallSize;
+        var at = SmallAt;
+        double k = small ? s / Math.Max(1, h) : 1;
+        double dx = small ? at.X - t.LogoX : 0, dy = small ? at.Y - t.LogoY : 0;
+        double gap = Math.Clamp(t.NameGap, 0, 60);
+        var name = new Thickness(small ? at.X + s + gap : t.LogoX + h + gap, 0, 0, 1);
+        var line = small ? new Thickness(0) : new Thickness(t.LogoX + h + 8, 0, 0, 0);
+        if (!animate)
+        {
+            StopLogoAnimations();
+            _logoScale.ScaleX = _logoScale.ScaleY = k; _logoMove.X = dx; _logoMove.Y = dy;
+            TitleText.Margin = name; TitleLine.Margin = line;
+            return;
+        }
+        var d = TimeSpan.FromMilliseconds(Math.Clamp(t.Speed, 60, 1500));
+        IEasingFunction ease = new CubicEase { EasingMode = EasingMode.EaseInOut };
+        DoubleAnimation A(double to) => new(to, d) { EasingFunction = ease };
+        _logoScale.BeginAnimation(ScaleTransform.ScaleXProperty, A(k));
+        _logoScale.BeginAnimation(ScaleTransform.ScaleYProperty, A(k));
+        _logoMove.BeginAnimation(TranslateTransform.XProperty, A(dx));
+        _logoMove.BeginAnimation(TranslateTransform.YProperty, A(dy));
+        TitleText.BeginAnimation(MarginProperty, new ThicknessAnimation(name, d) { EasingFunction = ease });
+        TitleLine.BeginAnimation(MarginProperty, new ThicknessAnimation(line, d) { EasingFunction = ease });
+    }
+
+    private void StopLogoAnimations()
+    {
+        _logoScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+        _logoScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+        _logoMove.BeginAnimation(TranslateTransform.XProperty, null);
+        _logoMove.BeginAnimation(TranslateTransform.YProperty, null);
+        TitleText.BeginAnimation(MarginProperty, null);
+        TitleLine.BeginAnimation(MarginProperty, null);
+        _logoScale.ScaleX = _logoScale.ScaleY = 1; _logoMove.X = _logoMove.Y = 0;
+    }
+
+    /// <summary>Appearance → Top bar's "Try it": the logo goes small for two seconds, then back.</summary>
+    private async void PreviewSmallLogo()
+    {
+        if (!_bigLogoOn) return;
+        SetLogoSmall(true, animate: true);
+        await Task.Delay(2000 + (int)_settings.TopBarStyle.Speed);
+        if (_bigLogoOn) SetLogoSmall(!_barShown, animate: true);
     }
 }
