@@ -78,7 +78,7 @@ public static class SceneKit
     private static void Draw(DrawingContext dc, Scene s, double W, double H)
     {
         var rnd = new Random(7);
-        double k = Math.Clamp(s.Strength, 0.1, 2), stars = Math.Clamp(s.Stars, 0, 3);
+        double k = Math.Clamp(s.Strength, 0.1, 2), stars = Math.Clamp(s.Stars, 0, 5);
         Color a = C(s.A), b = C(s.B), c = C(s.C);
         var all = new Rect(0, 0, W, H);
         double M = Math.Max(W, H);

@@ -156,6 +156,7 @@ public sealed class AppSettings
     public FolderLook Folders { get; set; } = new();
     public SetLook SetStyle { get; set; } = new();
     public FavLook FavStyle { get; set; } = new();
+    public ScrollLook ScrollBars { get; set; } = new();
     /// <summary>For each kind of look, the saved look it was last loaded from or saved to ("" = none).</summary>
     public Dictionary<string, string> LookNames { get; set; } = new();
     /// <summary>The slideshow: play GIFs through to the end before the next picture.</summary>
@@ -180,6 +181,7 @@ public sealed class AppSettings
     public const int AutoProfile = 6;
     /// <summary>1 = memory choices were moved to "Automatic" once.</summary>
     public int MemoryRulesVersion { get; set; } = 1;
+    public int FontsVersion { get; set; } = 1;
     public int LookAheadWindows { get; set; } = 1;
     public bool FadeSharpening { get; set; } = true;
 
@@ -207,6 +209,8 @@ public sealed class AppSettings
                 (s.Sort, bool r) = SortTag(s.Sort); if (r) s.SortReverse = true;
                 foreach (var bp in s.BrowseFolders.Values) { (bp.FileSort, bool br) = SortTag(bp.FileSort); if (br) bp.FileReverse = true; }
                 if (!text.Contains("MemoryRulesVersion")) { if (s.CacheProfile == 0) s.CacheProfile = AutoProfile; s.MemoryRulesVersion = 1; }
+                // Ginkgo now brings its own fonts: Inter is the default (a font picked by hand stays)
+                if (!text.Contains("FontsVersion")) { if (s.Theme.Font is "Segoe UI" or "") s.Theme.Font = "Inter"; s.FontsVersion = 1; }
                 return s;
             }
         }

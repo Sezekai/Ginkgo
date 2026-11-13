@@ -17,7 +17,7 @@ public partial class MainWindow
     private readonly CoverStore _covers = CoverStore.Load();
     private long _navAt;
     /// <summary>A place to go back to: a section and folder with its scroll position, and the picture open in the viewer (-1 = none).</summary>
-    private sealed record NavState(string Section, string Folder, double Offset, long ViewerId = -1);
+    private sealed record NavState(string Section, string Folder, double Offset, long ViewerId = -1, bool Cross = false, long TileId = -1);
     private readonly List<NavState> _back = new(), _fwd = new();
 
     private bool InBrowse => _section == "Browse";
@@ -126,12 +126,24 @@ public partial class MainWindow
 
     private void OpenFolder(string path) => _ = Go("Browse", path);
 
+    /// <summary>Open in Browse from Home, Favourites or the viewer: Back (the mouse's back button too) returns to the picture in the
+    /// grid or the viewer it came from. Browse keeps the folder open for when you go to it again.</summary>
+    private void OpenFolderFromElsewhere(string path, long id)
+    {
+        bool other = _section != "Browse";
+        int before = _back.Count;
+        _ = Go("Browse", path);
+        if (other && _back.Count > before) { _back[^1] = _back[^1] with { Cross = true, TileId = id }; UpdateNavButtons(); }
+    }
+
+    private bool CanGoBack => _back.Count > 0 && (_back[^1].Section == _section || _back[^1].Cross);
+
     /// <summary>Back and forward stay within the section you are in (Browse does not step back into Home).</summary>
     private void GoBack()
     {
-        if (_back.Count == 0 || _back[^1].Section != _section) return;
+        if (!CanGoBack) return;
         var s = _back[^1]; _back.RemoveAt(_back.Count - 1);
-        _fwd.Add(Here());
+        if (!s.Cross) _fwd.Add(Here());
         _ = Restore(s);
     }
 
@@ -156,6 +168,11 @@ public partial class MainWindow
         {
             if (ViewerOpen) CloseViewer(fromUser: false);
             View.Offset = s.Offset;
+        }
+        if (s.Cross && s.ViewerId < 0 && s.TileId >= 0)
+        {
+            int at = IndexOfId(s.TileId);                 // the picture it came from, highlighted (and on screen)
+            if (at >= 0) { View.SelectedIndex = at; View.RevealIndex(at, 0); }
         }
         UpdateNavButtons();
     }
@@ -182,7 +199,7 @@ public partial class MainWindow
 
     private void UpdateNavButtons()
     {
-        BackBtn.IsEnabled = _back.Count > 0 && _back[^1].Section == _section;
+        BackBtn.IsEnabled = CanGoBack;
         FwdBtn.IsEnabled = _fwd.Count > 0 && _fwd[^1].Section == _section;
     }
 
@@ -192,8 +209,8 @@ public partial class MainWindow
 
     private void UpdateNavUi()
     {
-        Sections.Show(_section);
-        SectionTitle.Text = _section;
+        Sections.Show(_pageKey ?? _section);
+        SectionTitle.Text = _pageKey ?? _section;
         View.MarkFavourites = !InFavourites;          // in Favourites every picture is one: nothing to mark
         ToolsBar.Visibility = InTools ? Visibility.Visible : Visibility.Collapsed;
         BrowseBar.Visibility = InBrowse ? Visibility.Visible : Visibility.Collapsed;
@@ -334,7 +351,7 @@ public partial class MainWindow
                 bool starred = _fav.IsStarred(_model.Id[row]);
                 Item(starred ? "Remove from Favourites" : "Add to Favourites", () => ToggleFavourite(row), _fav.Ready);
                 menu.Items.Add(new Separator());
-                if (!InFavourites) Item("Open its folder in Browse", () => OpenFolder(_model.Display[row]));
+                if (!InFavourites) Item("Open its folder in Browse", () => OpenFolderFromElsewhere(_model.Display[row], _model.Id[row]));
                 Item("Show in Explorer", () => ShowInExplorer(_model.Path[row], folder: false));
                 Item("Copy path", () => { try { Clipboard.SetText(_model.Path[row]); } catch { } });
                 AddCopiesMenu(menu, row);

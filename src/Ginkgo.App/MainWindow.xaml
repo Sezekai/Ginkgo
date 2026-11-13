@@ -10,11 +10,12 @@
         <shell:WindowChrome CaptionHeight="0" ResizeBorderThickness="6" GlassFrameThickness="0" UseAeroCaptionButtons="False" CornerRadius="0"/>
     </shell:WindowChrome.WindowChrome>
     <Border x:Name="WindowEdge" BorderBrush="#4A4A54" BorderThickness="0">
+    <Grid x:Name="Frame">
     <DockPanel>
     <!-- the window's own title bar: name on the left, window buttons flush in the top-right corner -->
     <Grid x:Name="TitleBar" DockPanel.Dock="Top" Panel.ZIndex="1" Height="29" Background="{DynamicResource BarBack}" MouseLeftButtonDown="OnTitleDown" MouseMove="OnTitleMove" MouseLeftButtonUp="OnTitleUp">
-        <Border VerticalAlignment="Bottom" Height="1" Background="{DynamicResource Edge}" IsHitTestVisible="False"/>
-        <TextBlock Text="Ginkgo" FontSize="12" Foreground="{DynamicResource Text}" VerticalAlignment="Center" Margin="14,0,0,1" IsHitTestVisible="False"/>
+        <Border x:Name="TitleLine" VerticalAlignment="Bottom" Height="1" Background="{DynamicResource Edge}" IsHitTestVisible="False"/>
+        <TextBlock x:Name="TitleText" Text="Ginkgo" FontSize="12" Foreground="{DynamicResource Text}" VerticalAlignment="Center" Margin="14,0,0,1" IsHitTestVisible="False"/>
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
             <Button Style="{StaticResource CaptionButton}" Content="&#xE921;" Click="OnMinimize" ToolTip="Minimise"/>
             <Button x:Name="MaxBtn" Style="{StaticResource CaptionButton}" Content="&#xE922;" Click="OnMaximize" ToolTip="Maximise"/>
@@ -40,6 +41,9 @@
                        VerticalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="560" Visibility="Collapsed"/>
         </Grid>
 
+        <!-- Appearance and Settings: sections of their own, under the top bar -->
+        <Border x:Name="PageHost" Grid.Row="0" Panel.ZIndex="1" Visibility="Collapsed" Background="{DynamicResource WindowBg}"/>
+
         <Border x:Name="StatusBar" Grid.Row="1" Background="{DynamicResource BarBack}" BorderBrush="{DynamicResource Edge}" BorderThickness="0,1,0,0" Padding="14,6">
             <DockPanel>
                 <Button x:Name="UpdateBtn" DockPanel.Dock="Right" Content="Update view" Visibility="Collapsed" Margin="8,0,0,0" Padding="8,2" Click="OnUpdateView"/>
@@ -57,10 +61,12 @@
         <StackPanel x:Name="BarHost" Grid.RowSpan="2" VerticalAlignment="Top">
             <StackPanel.RenderTransform><TranslateTransform x:Name="BarShift"/></StackPanel.RenderTransform>
             <Border x:Name="TopBar" Background="{DynamicResource BarBack}" BorderBrush="{DynamicResource Edge}" BorderThickness="0,0,0,1" MouseLeftButtonDown="OnTitleDown" MouseMove="OnTitleMove" MouseLeftButtonUp="OnTitleUp">
-                <local:BarPanel x:Name="BarRow" Margin="14,14,10,14" VerticalAlignment="Center">
-                        <local:LogoView x:Name="Logo" local:BarPanel.Pinned="True" Margin="0,0,10,0" VerticalAlignment="Center" ToolTip="Ginkgo"/>
-                        <TextBlock x:Name="SectionTitle" local:BarPanel.Pinned="True" Text="Home" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource Text}" VerticalAlignment="Center" Margin="0,0,12,1" MinWidth="40"/>
-                        <local:SectionSwitch x:Name="Sections" local:BarPanel.Pinned="True" Height="{DynamicResource KeyHeight}" Margin="0,3,16,3" VerticalAlignment="Center"/>
+                <local:BarPanel x:Name="BarRow" Margin="14,10,10,10" VerticalAlignment="Center">
+                        <local:LogoView x:Name="Logo" local:BarPanel.Pinned="True" Margin="6,0,14,0" VerticalAlignment="Center" ToolTip="Ginkgo"/>
+                        <local:SectionSwitch x:Name="Sections" local:BarPanel.Pinned="True" Height="44" Margin="0,0,14,0" VerticalAlignment="Center"/>
+                        <Border x:Name="SectionTitleBox" local:BarPanel.Pinned="True" Height="44" Margin="0,0,18,0" VerticalAlignment="Center">
+                            <TextBlock x:Name="SectionTitle" Text="Home" FontSize="24" FontWeight="SemiBold" Foreground="{DynamicResource Text}" VerticalAlignment="Center" Margin="0,0,0,2"/>
+                        </Border>
                         <Button x:Name="FoldersBtn" Style="{StaticResource DropButton}" Content="Select folders" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnFolders"/>
                         <ToggleButton x:Name="ImagesBtn" Content="Images" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged"/>
                         <ToggleButton x:Name="GifsBtn" Content="GIFs" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged"/>
@@ -110,8 +116,6 @@
                         <Button x:Name="PauseAllBtn" Style="{StaticResource IconButton}" Content="&#xE769;" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" ToolTip="Pause every playing video" Click="OnPauseAll" Visibility="Collapsed"/>
                         <Button x:Name="QuickBtn" Style="{StaticResource IconButton}" Content="&#xE9E9;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Quick toggles: videos (Q)" Click="OnQuick"/>
                         <Button x:Name="OptimiseBtn" Style="{StaticResource IconButton}" Content="&#xE9D9;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Optimisations: memory and GIFs" Click="OnOptimise"/>
-                        <Button x:Name="AppearanceBtn" Style="{StaticResource IconButton}" Content="&#xE790;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Appearance: themes, buttons, logo, backgrounds, folder pop-outs, sets, favourites" Click="OnAppearanceBtn"/>
-                        <Button x:Name="SettingsBtn" Style="{StaticResource IconButton}" Content="&#xE713;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Settings" Click="OnSettings"/>
                         <Button x:Name="KeysBtn" Style="{StaticResource IconButton}" Content="&#xE765;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Keyboard shortcuts (K)" Click="OnKeysClick"/>
                         <Button x:Name="MoreBtn" local:BarPanel.Pinned="True" Style="{StaticResource IconButton}" Content="&#xE712;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="More" Click="OnMoreBar"/>
                         <Button x:Name="HideBarBtn" local:BarPanel.Pinned="True" Style="{StaticResource IconButton}" Content="&#xE70E;" Height="{DynamicResource KeyHeight}" Margin="0,3,5,3" VerticalAlignment="Center" ToolTip="Hide this bar (H). Press H again to hide the bottom bar too, and once more to bring both back" Click="OnHideBar"/>
@@ -178,7 +182,7 @@
 
         <!-- saved views: a pop-out from the Views button -->
         <Popup x:Name="SavedPopup" Grid.RowSpan="2" PlacementTarget="{Binding ElementName=ViewsBtn}" Placement="Bottom" AllowsTransparency="True" PopupAnimation="Fade" VerticalOffset="2">
-            <Border Margin="6,0,20,20" Width="340" Background="{DynamicResource Bar}" BorderBrush="{DynamicResource Edge}" BorderThickness="1" CornerRadius="12" Padding="8,10,8,8"
+            <Border Margin="6,0,20,20" Width="390" Background="{DynamicResource Bar}" BorderBrush="{DynamicResource Edge}" BorderThickness="1" CornerRadius="12" Padding="8,10,8,8"
                     TextElement.FontFamily="{DynamicResource AppFont}" TextElement.Foreground="{DynamicResource Text}">
                 <Border.Effect><DropShadowEffect BlurRadius="18" ShadowDepth="4" Opacity="0.55" Color="Black"/></Border.Effect>
                 <StackPanel>
@@ -186,7 +190,7 @@
                         <Button DockPanel.Dock="Right" Content="Save this view…" Padding="10,1" Height="26" Click="OnSaveSearch" ToolTip="Keep everything about this view under a name"/>
                         <TextBlock x:Name="ViewTitle" Text="Saved views" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     </DockPanel>
-                    <ScrollViewer MaxHeight="360" VerticalScrollBarVisibility="Auto">
+                    <ScrollViewer MaxHeight="440" VerticalScrollBarVisibility="Auto">
                         <StackPanel x:Name="SavedList"/>
                     </ScrollViewer>
                     <TextBlock x:Name="SavedEmpty" Text="None yet. Save this view keeps everything about it (section, folder, switches, filters, order and look) under a name. Right-click a saved view to update, rename, move or delete it." Foreground="{DynamicResource Dim}" FontSize="11.5" TextWrapping="Wrap" Margin="8,2,6,6"/>
@@ -283,5 +287,8 @@
         </Grid>
     </Grid>
     </DockPanel>
+    <!-- the big logo: over the title bar and the top bar together (normal size in the bar when full screen) -->
+    <local:LogoView x:Name="BigLogo" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="20,6,0,0" Visibility="Collapsed" ToolTip="Ginkgo"/>
+    </Grid>
     </Border>
 </Window>

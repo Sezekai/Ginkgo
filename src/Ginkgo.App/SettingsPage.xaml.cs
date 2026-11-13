@@ -4,7 +4,7 @@ using System.Windows.Controls;
 
 namespace Ginkgo.App;
 
-public partial class SettingsWindow : Window
+public partial class SettingsPage : UserControl
 {
     private readonly MainWindow _main;
     private readonly AppSettings _s;
@@ -12,10 +12,9 @@ public partial class SettingsWindow : Window
     private CancellationTokenSource? _sharpCts;
     private bool _init = true;
 
-    public SettingsWindow(MainWindow main, AppSettings s, Engine engine)
+    public SettingsPage(MainWindow main, AppSettings s, Engine engine)
     {
         InitializeComponent();
-        Theme.DarkTitleBar(this);
         _main = main; _s = s; _engine = engine;
         LibraryBox.Text = s.LibraryRoot;
         CacheLine.Text = "Small thumbnails: " + (string.IsNullOrEmpty(engine.ThumbDir) ? s.FastCacheDir : engine.ThumbDir) + "   |   sharp versions: " + s.CacheDir + "   |   index: " + AppSettings.IndexPath + (engine.FastCacheNote.Length > 0 ? "   |   " + engine.FastCacheNote : "");
@@ -39,15 +38,15 @@ public partial class SettingsWindow : Window
     private void OnChooseLibrary(object s, RoutedEventArgs e)
     {
         var dlg = new Microsoft.Win32.OpenFolderDialog { Title = "Choose your library folder", InitialDirectory = _s.LibraryRoot };
-        if (dlg.ShowDialog(this) != true) return;
+        if (dlg.ShowDialog(Host) != true) return;
         string old = _s.LibraryRoot;
         _s.LibraryRoot = dlg.FolderName;
         LibraryBox.Text = _s.LibraryRoot;
         // the same library somewhere new (another drive letter): the index's paths move, so nothing is made again
-        if (MessageBox.Show(this, $"Is this the same library, moved from {old}?\n\nYes: Ginkgo matches files by their place inside the library and keeps all thumbnails.\nNo: it is treated as a different library.", "Library folder", MessageBoxButton.YesNo) == MessageBoxResult.Yes)
+        if (MessageBox.Show(Host, $"Is this the same library, moved from {old}?\n\nYes: Ginkgo matches files by their place inside the library and keeps all thumbnails.\nNo: it is treated as a different library.", "Library folder", MessageBoxButton.YesNo) == MessageBoxResult.Yes)
             _s.PendingRelocateFrom = old;
         _main.ApplySettings();
-        if (MessageBox.Show(this, "Restart Ginkgo now to use the new folder?", "Library folder", MessageBoxButton.YesNo) == MessageBoxResult.Yes) App.Restart();
+        if (MessageBox.Show(Host, "Restart Ginkgo now to use the new folder?", "Library folder", MessageBoxButton.YesNo) == MessageBoxResult.Yes) App.Restart();
         else Result.Text = "Library folder changed. It is used from the next start.";
     }
 
@@ -126,9 +125,9 @@ public partial class SettingsWindow : Window
     private void OnMoveCache(object s, RoutedEventArgs e)
     {
         var dlg = new Microsoft.Win32.OpenFolderDialog { Title = "Move the cache to", InitialDirectory = _s.CacheDir };
-        if (dlg.ShowDialog(this) != true) return;
+        if (dlg.ShowDialog(Host) != true) return;
         if (string.Equals(System.IO.Path.GetFullPath(dlg.FolderName).TrimEnd('\\'), System.IO.Path.GetFullPath(_s.CacheDir).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)) return;
-        if (MessageBox.Show(this, $"Move the cache from\n{_s.CacheDir}\nto\n{dlg.FolderName}?\n\nGinkgo restarts and moves it before opening, with progress. Nothing has to be made again.", "Move cache", MessageBoxButton.OKCancel) != MessageBoxResult.OK) return;
+        if (MessageBox.Show(Host, $"Move the cache from\n{_s.CacheDir}\nto\n{dlg.FolderName}?\n\nGinkgo restarts and moves it before opening, with progress. Nothing has to be made again.", "Move cache", MessageBoxButton.OKCancel) != MessageBoxResult.OK) return;
         _s.PendingCacheMove = dlg.FolderName;
         _main.ApplySettings();
         App.Restart();
@@ -141,7 +140,7 @@ public partial class SettingsWindow : Window
             var b = new Button { Content = label, Margin = new Thickness(0, 0, 8, 8) };
             b.Click += (_, _) =>
             {
-                if (MessageBox.Show(this, question + (restart ? "\n\nGinkgo restarts to do it." : ""), label, MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK) return;
+                if (MessageBox.Show(Host, question + (restart ? "\n\nGinkgo restarts to do it." : ""), label, MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK) return;
                 act();
                 _main.ApplySettings();
                 if (restart) App.Restart(); else Result.Text = label + ": done.";
@@ -157,7 +156,7 @@ public partial class SettingsWindow : Window
         Reset("Clear video positions", "Forget where every video was paused, which were watched, and each video's volume?", () => _main.ClearVideoPositions());
         Reset("Clear folder covers", "Forget every folder cover you picked or adjusted (they go back to random)?", () => _main.ClearCovers());
     }
-    private void OnOutlines(object s, RoutedEventArgs e) => new OutlineWindow(_s, _main.OutlinesChanged) { Owner = this }.ShowDialog();
+    private void OnOutlines(object s, RoutedEventArgs e) => new OutlineWindow(_s, _main.OutlinesChanged) { Owner = Host }.ShowDialog();
     private void OnRoundChanged(object s, RoutedEventArgs e) { _s.CoverRounded = RoundBox.IsChecked == true; RadiusSlider.IsEnabled = _s.CoverRounded; _main.ApplySettings(); }
     private void OnRadiusChanged(object s, RoutedPropertyChangedEventArgs<double> e)
     {
@@ -200,7 +199,8 @@ public partial class SettingsWindow : Window
         CleanBtn.IsEnabled = true;
     }
 
-    private void OnClose(object s, RoutedEventArgs e) => Close();
+    private void OnClose(object s, RoutedEventArgs e) => _main.LeavePage();
+    private Window Host => Window.GetWindow(this) ?? Application.Current.MainWindow!;
 
     // ---- GPU grid ----
 
@@ -292,7 +292,7 @@ public partial class SettingsWindow : Window
             if (GpuCheck.SetPreference()) { _gpuStatus.Text = "Windows will now run Ginkgo on the high-performance GPU. Restart Ginkgo for it to take effect."; _restartBtn.Visibility = Visibility.Visible; _prefBtn.Visibility = Visibility.Collapsed; }
             else _gpuStatus.Text = "Couldn't save the Windows graphics preference. You can set it in Windows Settings > System > Display > Graphics.";
         };
-        _restartBtn.Click += (_, _) => { Close(); _main.Restart(); };
+        _restartBtn.Click += (_, _) => _main.Restart();
         buttons.Children.Add(again); buttons.Children.Add(_prefBtn); buttons.Children.Add(_restartBtn);
         GpuPanel.Children.Add(buttons);
 
@@ -363,7 +363,7 @@ public partial class SettingsWindow : Window
         GpuPanel.Children.Add(_gifPanel);
         var tick = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         tick.Tick += (_, _) => GifStat();
-        Loaded += (_, _) => tick.Start(); Closed += (_, _) => tick.Stop();
+        Loaded += (_, _) => tick.Start(); Unloaded += (_, _) => tick.Stop();
         GifStat();
 
         if (_main.Gpu is null && !_main.GpuChecking) RunGpuCheck(); else ShowGpu();

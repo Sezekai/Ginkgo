@@ -73,7 +73,7 @@ public sealed class LogoView : Grid
     public void Apply(LogoLook l)
     {
         _look = l.Copy();
-        double s = Math.Clamp(_look.Size, 16, 64);
+        double s = Math.Clamp(_look.Size, 16, 160);
         Width = s; Height = s;
         if (_look.Tile)
         {

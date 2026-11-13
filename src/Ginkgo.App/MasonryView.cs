@@ -26,7 +26,7 @@ public sealed class MasonryView : FrameworkElement
     /// <summary>The space between tiles (screen units).</summary>
     public float Gap { get => _gap; set { value = Math.Clamp(value, 0, 40); if (Math.Abs(_gap - value) < 0.01) return; _gap = value; Relayout(); } }
     private readonly List<int> _visible = new();
-    private readonly Typeface _face = new("Segoe UI");
+    private static Typeface _face => ThemeKit.AppFace;
     private readonly Brush[] _palette;
     private readonly Pen _hover = MakePen();
     private static Pen MakePen() { var p = new Pen(Brushes.White, 2); p.Freeze(); return p; }
@@ -346,6 +346,20 @@ public sealed class MasonryView : FrameworkElement
     /// building on a scroll still under way (holding an arrow key glides instead of jumping). <paramref name="cover"/> is how
     /// much of the top is under the bar.
     /// </summary>
+    /// <summary>A picture the layout made a little taller than its shape (to close the space above a set): shown cropped to fill
+    /// instead of squashed. Null for every other tile.</summary>
+    public ThumbLoader.Crop? StretchCrop(int i)
+    {
+        var l = _layout; var items = _items;
+        if (l is null || i < 0 || i >= l.Count || i >= items.Length || CoverCount > 0) return null;
+        float a = items[i].Aspect > 0.01f ? items[i].Aspect : 1f;
+        float h = l.H[i], w = l.W[i];
+        if (h <= 1 || w <= 1) return null;
+        float tileA = w / h;
+        if (Math.Abs(tileA - a) / a < 0.02f) return null;
+        return new ThumbLoader.Crop(1f, 0.5f, 0.5f, Math.Max(1f, a / tileA));
+    }
+
     public void RevealIndex(int index, double cover)
     {
         if (_layout is null || index < 0 || index >= _items.Length) return;
@@ -1362,18 +1376,26 @@ public sealed class MasonryView : FrameworkElement
                     dc.Pop();
                 }
             }
-            if (first.Width < 70 || first.Height < 36) continue;
+            double sk = SetScale;
+            if (first.Width < 70 * sk || first.Height < 36 * sk) continue;
             if (!look.Label && !b.Collapsed && !b.Large) continue;      // (a stacked or large set keeps its label: it opens and closes it)
             string text = b.Collapsed ? $"{b.Name}  ·  {b.Total} images  ▸" : b.Large ? $"{b.Name}  ·  {b.Total}  ▴" : $"{b.Name}  ·  {b.Total}";
-            var ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 11, Brushes.White, ppd)
-            { MaxTextWidth = Math.Max(10, first.Width - 24), MaxLineCount = 1, Trimming = TextTrimming.CharacterEllipsis };
+            var ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 11 * sk, Brushes.White, ppd)
+            { MaxTextWidth = Math.Max(10, first.Width - 24 * sk), MaxLineCount = 1, Trimming = TextTrimming.CharacterEllipsis };
             var at = parts[^1];                                    // the bottom-left corner of the set (its last row in equal rows)
-            var box = new Rect(at.Left + 6, at.Bottom - 22, ft.Width + 12, 17);
-            dc.DrawRoundedRectangle(labelBack, labelEdge, box, 4, 4);
-            dc.DrawText(ft, new Point(box.Left + 6, box.Top + (box.Height - ft.Height) / 2));
+            double bh = Math.Round(17 * sk), pad = 6 * sk;
+            var box = new Rect(at.Left + pad, at.Bottom - bh - 5 * sk, ft.Width + 2 * pad, bh);
+            dc.DrawRoundedRectangle(labelBack, labelEdge, box, 4 * sk, 4 * sk);
+            dc.DrawText(ft, new Point(box.Left + pad, box.Top + (box.Height - ft.Height) / 2));
             if (b.Collapsed || b.Large) _setLabels.Add((b.First, box));
         }
     }
+
+    private static readonly Brush LinkShade = MakeLinkShade();
+    private static Brush MakeLinkShade() { var b = new SolidColorBrush(Color.FromArgb(150, 0, 0, 0)); b.Freeze(); return b; }
+
+    /// <summary>How big a set's label and links are: in step with the picture size (smaller pictures, smaller marks).</summary>
+    private double SetScale => Math.Clamp(_tileTarget / 260.0, 0.55, 1.15);
 
     /// <summary>A small link on each seam between neighbouring pictures of a set.</summary>
     private void DrawLinks(DrawingContext dc, SetBlock b, int offPx, double dpi, Brush ink)
@@ -1394,8 +1416,11 @@ public sealed class MasonryView : FrameworkElement
                 at = new Point((Math.Max(a.Left, c.Left) + Math.Min(a.Right, c.Right)) / 2, (a.Bottom + c.Top) / 2);
             else continue;
             if (at.Y < -20 || at.Y > ActualHeight + 20) continue;
-            dc.DrawEllipse(SpeakerBack, new Pen(ink, 1), at, 9, 9);
-            var ft = new FormattedText("\uE71B", CultureInfo.InvariantCulture, FlowDirection.LeftToRight, IconFace, 10, Brushes.White, ppd);
+            // just the link, no circle: a faint shadow under it so it shows on light pictures; smaller with smaller pictures
+            double size = 15 * SetScale;
+            var shade = new FormattedText("\uE71B", CultureInfo.InvariantCulture, FlowDirection.LeftToRight, IconFace, size, LinkShade, ppd);
+            var ft = new FormattedText("\uE71B", CultureInfo.InvariantCulture, FlowDirection.LeftToRight, IconFace, size, ink, ppd);
+            dc.DrawText(shade, new Point(at.X - ft.Width / 2 + 0.8, at.Y - ft.Height / 2 + 0.8));
             dc.DrawText(ft, new Point(at.X - ft.Width / 2, at.Y - ft.Height / 2));
         }
     }
@@ -1475,14 +1500,32 @@ public sealed class MasonryView : FrameworkElement
         var l = _favLook;
         double ppd = VisualTreeHelper.GetDpi(this).PixelsPerDip;
         var ink = new SolidColorBrush(ButtonLook.C(l.InfoText)); ink.Freeze();
+        // exactly as wide as the hover outline (2 px, half of it outside the picture), starting just under it
+        double half = _hover.Thickness / 2;
+        double left = r.Left - half, width = r.Width + 2 * half, top = r.Bottom + half;
         var ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, Math.Clamp(l.InfoSize, 8, 16), ink, ppd)
-        { MaxTextWidth = Math.Max(10, r.Width - 12), MaxLineCount = 1, Trimming = TextTrimming.CharacterEllipsis };
-        double h = ft.Height + 6;
+        { MaxTextWidth = Math.Max(10, width - 12), MaxLineCount = 1, Trimming = TextTrimming.CharacterEllipsis };
+        double h = Math.Ceiling(ft.Height + 6);
         var bc = ButtonLook.C(l.InfoBack);
         var back = new SolidColorBrush(Color.FromArgb((byte)(255 * Math.Clamp(l.InfoOpacity, 0.2, 1)), bc.R, bc.G, bc.B)); back.Freeze();
-        var box = new Rect(r.Left, r.Bottom - 2, r.Width, h);
-        dc.DrawRoundedRectangle(back, null, box, 0, 3);
-        dc.DrawText(ft, new Point(box.Left + 6, box.Top + 3));
+        double rad = Math.Min(4, h / 2);
+        var g = new StreamGeometry();
+        using (var c = g.Open())
+        {
+            // square at the top (it meets the outline), rounded at the bottom
+            c.BeginFigure(new Point(left, top), true, true);
+            c.LineTo(new Point(left + width, top), false, false);
+            c.LineTo(new Point(left + width, top + h - rad), false, false);
+            c.ArcTo(new Point(left + width - rad, top + h), new Size(rad, rad), 0, false, SweepDirection.Clockwise, false, false);
+            c.LineTo(new Point(left + rad, top + h), false, false);
+            c.ArcTo(new Point(left, top + h - rad), new Size(rad, rad), 0, false, SweepDirection.Clockwise, false, false);
+        }
+        g.Freeze();
+        dc.DrawGeometry(back, null, g);
+        // a line in the outline's colour down each side and along the bottom, so the strip reads as part of the hovered picture
+        var edge = new Pen(_hover.Brush, 1); edge.Freeze();
+        dc.DrawGeometry(null, edge, g);
+        dc.DrawText(ft, new Point(left + 6, top + (h - ft.Height) / 2));
     }
 
     private void DrawHoverDetails(DrawingContext dc, Rect r, string text)

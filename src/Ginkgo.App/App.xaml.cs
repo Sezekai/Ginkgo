@@ -11,6 +11,9 @@ public partial class App : Application
         MasonryView.ErrorLog = LogError;
         AppDomain.CurrentDomain.UnhandledException += (_, a) => Crashed(a.ExceptionObject as Exception);
         base.OnStartup(e);
+        if (!Smoke && !TakeInstance()) { Shutdown(); return; }
+        // scroll bars reach the edge of the window or pop-out they are in
+        EventManager.RegisterClassHandler(typeof(System.Windows.Controls.ScrollViewer), FrameworkElement.LoadedEvent, new RoutedEventHandler((s2, _) => EdgeScroll.Fit((System.Windows.Controls.ScrollViewer)s2)));
         var settings = AppSettings.Load();
         ThemeKit.Apply(settings.Theme, settings.Look);
         if (!AppSettings.Exists && !Smoke)
@@ -31,6 +34,57 @@ public partial class App : Application
             w.ContentRendered += async (_, _) => { await w.SmokeShots(); await System.Threading.Tasks.Task.Delay(8000); w.Close(); };
         }
         w.Show();
+    }
+
+    // ---- one Ginkgo at a time: starting it again brings the open one forward ----
+
+    private static System.Threading.Mutex? _instance;
+    private static System.Threading.EventWaitHandle? _wake;
+    private const string InstanceName = "Ginkgo.SingleInstance.6f1c";
+
+    /// <summary>True when this is the only Ginkgo. Otherwise the open one is told to come forward and this one ends. A restart
+    /// (--restart) waits for the closing copy instead.</summary>
+    private bool TakeInstance()
+    {
+        try
+        {
+            string user = Environment.UserName.Replace('\\', '_');
+            _instance = new System.Threading.Mutex(false, $"Local\\{InstanceName}.{user}");
+            bool mine;
+            try { mine = _instance.WaitOne(Environment.GetCommandLineArgs().Contains("--restart") ? 15000 : 0); }
+            catch (System.Threading.AbandonedMutexException) { mine = true; }
+            _wake = new System.Threading.EventWaitHandle(false, System.Threading.EventResetMode.AutoReset, $"Local\\{InstanceName}.{user}.wake");
+            if (!mine) { AllowSetForegroundWindow(-1); _wake.Set(); return false; }
+            var t = new System.Threading.Thread(() =>
+            {
+                while (true)
+                {
+                    try { _wake.WaitOne(); } catch { return; }
+                    Current?.Dispatcher.BeginInvoke(() => BringForward(Current.MainWindow));
+                }
+            }) { IsBackground = true, Name = "Ginkgo: another start" };
+            t.Start();
+            return true;
+        }
+        catch { return true; }          // if Windows won't say, just start
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool AllowSetForegroundWindow(int pid);
+
+    private static void BringForward(Window? w)
+    {
+        if (w is null) return;
+        if (w.WindowState == WindowState.Minimized) w.WindowState = WindowState.Normal;
+        w.Show();
+        w.Activate();
+        w.Topmost = true; w.Topmost = false;           // past Windows' rule against windows taking focus
+        w.Focus();
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        try { _instance?.ReleaseMutex(); } catch { }
+        base.OnExit(e);
     }
 
     /// <summary>Started with --smoke (the build's start-up check): errors end the process with code 3 instead of showing a message.</summary>
@@ -76,7 +130,7 @@ public partial class App : Application
             string? exe = Environment.ProcessPath;
             // a moment's wait, so this copy has closed its files before the next one opens them
             if (exe is not null)
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c ping 127.0.0.1 -n 3 > nul & start \"\" \"{exe}\"")
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c ping 127.0.0.1 -n 3 > nul & start \"\" \"{exe}\" --restart")
                 { CreateNoWindow = true, UseShellExecute = false, WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden });
         }
         catch { }

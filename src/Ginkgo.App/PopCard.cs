@@ -73,6 +73,7 @@ public sealed class PopCard : Grid
             : new SolidColorBrush(e1);
         edge.Freeze();
         double bw = Math.Clamp(l.BorderWidth, 0, 6);
+        Resources["ScrollEdge"] = edge;           // its scroll bar is outlined like the card
         _card.Background = bgBrush; _card.BorderBrush = edge; _card.BorderThickness = new Thickness(bw);
         _card.CornerRadius = new CornerRadius(Math.Clamp(l.Radius, 0, 30));
         _shadow.CornerRadius = _card.CornerRadius;

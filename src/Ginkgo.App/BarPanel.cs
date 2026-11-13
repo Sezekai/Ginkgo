@@ -32,6 +32,10 @@ public sealed class BarPanel : Panel
     private static readonly System.Windows.Media.Pen DropEdge = new(Frozen(System.Windows.Media.Color.FromRgb(58, 58, 66)), 1);
     private static System.Windows.Media.Brush Frozen(System.Windows.Media.Color c) { var b = new System.Windows.Media.SolidColorBrush(c); b.Freeze(); return b; }
 
+    private bool _pinnedOnly;
+    /// <summary>Only the pinned controls show (the logo, the section switch, its name, more and hide): in Appearance and Settings.</summary>
+    public bool PinnedOnly { get => _pinnedOnly; set { if (_pinnedOnly == value) return; _pinnedOnly = value; InvalidateMeasure(); } }
+
     /// <summary>Controls that did not fit at the last layout, in their order in the row.</summary>
     public List<UIElement> Overflow { get; } = new();
 
@@ -43,7 +47,7 @@ public sealed class BarPanel : Panel
     {
         double maxW = double.IsInfinity(available.Width) ? double.MaxValue : available.Width;
         double h = 0;
-        var kids = InternalChildren.Cast<UIElement>().Where(c => c.Visibility != Visibility.Collapsed).ToList();
+        var kids = InternalChildren.Cast<UIElement>().Where(c => c.Visibility != Visibility.Collapsed && (!_pinnedOnly || GetPinned(c))).ToList();
         var nominal = new Dictionary<UIElement, double>();
         var minimum = new Dictionary<UIElement, double>();
         foreach (var c in kids)
@@ -130,6 +134,7 @@ public sealed class BarPanel : Panel
         foreach (UIElement c in InternalChildren)
         {
             if (c.Visibility == Visibility.Collapsed) continue;
+            if (_pinnedOnly && !GetPinned(c)) { c.Arrange(new Rect(-10000, 0, 0, 0)); continue; }
             double w = _width.GetValueOrDefault(c);
             if (_extra.TryGetValue(c, out var er)) { c.Arrange(er); continue; }      // in the open drop-down
             if (w <= 0) { c.Arrange(new Rect(-10000, 0, 0, 0)); continue; }     // in the closed drop-down (or the more button, unused)

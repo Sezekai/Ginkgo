@@ -13,7 +13,7 @@ namespace Ginkgo.App;
 /// favourites and details, video outlines). Every change shows at once in the main window. Each page has its own saved looks:
 /// save the current one under a new name, save changes into the saved look it came from, load, rename and delete them.
 /// </summary>
-public sealed class AppearanceWindow : Window
+public sealed class AppearancePage : Border
 {
     private readonly AppSettings _s;
     private readonly Action _themeChanged, _looksChanged;
@@ -42,16 +42,12 @@ public sealed class AppearanceWindow : Window
 
     private readonly List<Page> _pages = new();
 
-    public AppearanceWindow(AppSettings s, Action themeChanged, Action looksChanged)
+    public AppearancePage(AppSettings s, Action themeChanged, Action looksChanged)
     {
         _s = s; _themeChanged = themeChanged; _looksChanged = looksChanged;
-        Title = "Appearance"; Width = 1180; Height = 820; MinWidth = 820; MinHeight = 560;
-        WindowStartupLocation = WindowStartupLocation.CenterOwner; ShowInTaskbar = true;
-        SetResourceReference(BackgroundProperty, "WindowBg");
-        SetResourceReference(FontFamilyProperty, "AppFont");
+        SetResourceReference(TextElement.FontFamilyProperty, "AppFont");
         SetResourceReference(TextElement.ForegroundProperty, "Text");
-        Icon = Application.Current.MainWindow?.Icon;
-        SourceInitialized += (_, _) => Theme.DarkTitleBar(this);
+        _nav.SetResourceReference(Control.ForegroundProperty, "Text");
         _subtitle.SetResourceReference(TextBlock.ForegroundProperty, "Dim");
         _savedNote.SetResourceReference(TextBlock.ForegroundProperty, "Dim");
         DefinePages();
@@ -60,7 +56,7 @@ public sealed class AppearanceWindow : Window
         foreach (var p in _pages)
         {
             var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(4, 6, 4, 6) };
-            var ic = new TextBlock { Text = p.Icon, FontSize = 15, Width = 28, VerticalAlignment = VerticalAlignment.Center };
+            var ic = new TextBlock { Text = p.Icon, FontSize = 15, Width = 30, Height = 24, TextAlignment = TextAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
             ic.SetResourceReference(TextBlock.FontFamilyProperty, "IconFont");
             row.Children.Add(ic);
             row.Children.Add(new TextBlock { Text = p.Name, VerticalAlignment = VerticalAlignment.Center, FontSize = 13 });
@@ -114,7 +110,7 @@ public sealed class AppearanceWindow : Window
         var root = new DockPanel();
         DockPanel.SetDock(rail, Dock.Left);
         root.Children.Add(rail); root.Children.Add(right);
-        Content = root;
+        Child = root;
         SizeChanged += (_, _) => FitCards();
         _nav.SelectedIndex = 0;
     }
@@ -175,13 +171,41 @@ public sealed class AppearanceWindow : Window
             Set = o => { var v = (VideoOutlineLook)o; _s.PausedOutline = v.Paused.Copy(); _s.WatchedOutline = v.Watched.Copy(); },
             Default = () => new VideoOutlineLook(), Type = typeof(VideoOutlineLook), Build = BuildOutlines,
         });
+        _pages.Add(new Page
+        {
+            Key = "Scroll bars", Name = "Scroll bars", Icon = "\uE8CB",
+            Subtitle = "The pictures' scroll bar: when it shows, how long and wide it is, and a glow or shine so it is easy to find.",
+            Get = () => _s.ScrollBars.Copy(), Set = o => _s.ScrollBars = ((ScrollLook)o).Copy(), Default = () => new ScrollLook(), Type = typeof(ScrollLook), Build = BuildScrollBars,
+        });
+    }
+
+    private void BuildScrollBars()
+    {
+        var l = _s.ScrollBars;
+        var main = Card("The pictures' scroll bar", "It stays out of sight until the mouse comes near the right edge of the window, then fades in. Drag it to jump through the pictures.");
+        Slide(main, "Shows when the mouse is within", 0.02, 0.2, () => l.Reach, v => l.Reach = v, v => $"{v * 100:0}% of the edge", 0.01);
+        Slide(main, "Width", 8, 28, () => l.Width, v => l.Width = v, v => $"{v:0} px", 1);
+        Slide(main, "Length", 0.5, 3, () => l.Length, v => l.Length = v, v => $"{v:0.##}x (longer with bigger pictures)", 0.25);
+        Slide(main, "Outline", 0.5, 4, () => l.OutlineWidth, v => l.OutlineWidth = v, v => $"{v:0.0} px", 0.5);
+        Slide(main, "Filled in", 0, 0.6, () => l.Fill, v => l.Fill = v, v => v < 0.01 ? "just the outline" : $"{v * 100:0}%", 0.02);
+
+        var fx = Card("Easy to find");
+        Choice(fx, "Effect", new[] { ("None", "None"), ("Glow", "Glow"), ("Pulse", "Pulsing glow"), ("Shine", "A shine runs along it"), ("PulseShine", "Pulse and shine") }, () => l.Effect, v => l.Effect = v);
+        Colour(fx, "Colour", () => l.Colour, v => l.Colour = v, allowBlank: true, blankText: "Accent");
+
+        var all = Card("Every other scroll bar", wide: true);
+        all.Children.Add(new TextBlock { Text = "Scroll bars in pages and pop-outs are see-through, reach the edge of what they are in, and have an outline in the colour of its edge.", TextWrapping = TextWrapping.Wrap });
     }
 
     private static void CopyInto(ButtonLook to, ButtonLook from) { foreach (var p in typeof(ButtonLook).GetProperties()) if (p.CanWrite) p.SetValue(to, p.GetValue(from)); }
 
+    /// <summary>A page was opened (its key), so the section can open at it again next time.</summary>
+    public event Action<string>? PageShown;
+
     private void Show(Page p)
     {
         _page = p;
+        PageShown?.Invoke(p.Key);
         _title.Text = p.Name; _subtitle.Text = p.Subtitle;
         FillSaved();
         Rebuild();
@@ -507,7 +531,7 @@ public sealed class AppearanceWindow : Window
 
         var text = Card("Text, density and icons");
         var font = new ComboBox { Width = 240, Height = 28 };
-        foreach (var f in ThemeKit.Fonts) font.Items.Add(new ComboBoxItem { Content = f, FontFamily = new FontFamily(f), Tag = f });
+        foreach (var f in ThemeKit.Fonts) font.Items.Add(new ComboBoxItem { Content = f, FontFamily = ThemeKit.Family(f), Tag = f });
         foreach (ComboBoxItem it in font.Items) if ((string)it.Tag == t.Font) font.SelectedItem = it;
         font.SelectionChanged += (_, _) => { if (font.SelectedItem is ComboBoxItem { Tag: string f }) { t.Font = f; Changed(); } };
         Row(text, "Font", font);
@@ -534,12 +558,12 @@ public sealed class AppearanceWindow : Window
         row.Children.Add(Small("Export…", () =>
         {
             var dlg = new Microsoft.Win32.SaveFileDialog { Title = "Export theme", FileName = t.Name + ".ginkgo-theme.json", Filter = "Ginkgo theme|*.json" };
-            if (dlg.ShowDialog(this) == true) { try { ThemeKit.Export(t, dlg.FileName); } catch (Exception ex) { Message(ex.Message); } }
+            if (dlg.ShowDialog(Host) == true) { try { ThemeKit.Export(t, dlg.FileName); } catch (Exception ex) { Message(ex.Message); } }
         }, "Save the theme as a file to share or keep"));
         row.Children.Add(Small("Import…", () =>
         {
             var dlg = new Microsoft.Win32.OpenFileDialog { Title = "Import theme", Filter = "Ginkgo theme|*.json|All files|*.*" };
-            if (dlg.ShowDialog(this) != true) return;
+            if (dlg.ShowDialog(Host) != true) return;
             if (ThemeKit.Import(dlg.FileName) is not { } th) { Message("That file isn't a Ginkgo theme."); return; }
             if (ThemeKit.BuiltIn.Any(b => b.Name == th.Name)) th.Name += " (imported)";
             ThemeKit.SaveOwn(th); _s.Theme = th; CurrentName = th.Name; Changed(); FillSaved(); Rebuild();
@@ -602,8 +626,15 @@ public sealed class AppearanceWindow : Window
         Colour(on, "Other switches text", () => l.OtherText, v => l.OtherText = v);
 
         var edge = Card("Outline, light, glow and shadow");
-        Choice(edge, "Outline", new[] { ("None", "None"), ("Solid", "Colour"), ("Lighter", "Lighter shade"), ("Gradient", "Gradient") }, () => l.Outline, v => l.Outline = v);
-        Colour(edge, "Outline colour", () => l.OutlineColour, v => l.OutlineColour = v);
+        Choice(edge, "Outline", new[] { ("None", "None"), ("Solid", "Colour"), ("Lighter", "Lighter shade"), ("Gradient", "Gradient") }, () => l.Outline, v => l.Outline = v, Rebuild);
+        if (l.Outline == "Gradient")
+        {
+            Colour(edge, "Gradient colour 1", () => l.OutlineA, v => l.OutlineA = v);
+            Colour(edge, "Gradient colour 2", () => l.OutlineB, v => l.OutlineB = v);
+            Colour(edge, "Gradient colour 3", () => l.OutlineC, v => l.OutlineC = v);
+            Slide(edge, "Gradient direction", 0, 360, () => l.OutlineAngle, v => l.OutlineAngle = v, v => $"{v:0}°", 15);
+        }
+        else Colour(edge, "Outline colour", () => l.OutlineColour, v => l.OutlineColour = v);
         Slide(edge, "Outline thickness", 0.5, 3, () => l.OutlineWidth, v => l.OutlineWidth = Math.Round(v * 2) / 2, v => $"{Math.Round(v * 2) / 2:F1} px");
         Slide(edge, "Light along the top", 0, 1, () => l.Shine, v => l.Shine = v, v => $"{v * 100:F0}%");
         Slide(edge, "Glow when on", 0, 1, () => l.Glow, v => l.Glow = v, v => $"{v * 100:F0}%");
@@ -667,7 +698,8 @@ public sealed class AppearanceWindow : Window
         Slide(light, "Shine every", 2, 30, () => l.ShineEvery, v => l.ShineEvery = v, v => $"{v:0} s", 1);
 
         var size = Card("Size and speed");
-        Slide(size, "Size", 20, 44, () => l.Size, v => l.Size = v, v => $"{v:0} px", 1);
+        Check(size, "Big: over the title bar and the top bar together", () => l.Big, v => l.Big = v, "The window's name and its line start after it. In full screen it goes back to its size in the bar.");
+        Slide(size, "Size in the bar", 20, 52, () => l.Size, v => l.Size = v, v => $"{v:0} px", 1);
         Slide(size, "Speed of movement", 0.25, 3, () => l.Speed, v => l.Speed = v, v => $"{v:0.##}x", 0.25);
         Check(size, "A tile behind the logo", () => l.Tile, v => l.Tile = v);
         Colour(size, "Tile colour", () => l.TileColour, v => l.TileColour = v, allowBlank: true);
@@ -682,6 +714,7 @@ public sealed class AppearanceWindow : Window
         var look = _s.Scenes;
         var where = Card("Where", "One background for the whole window (bars, behind the pictures and the viewer), or a different one for each place.", wide: true);
         Choice(where, "Backgrounds", new[] { ("One", "One for everything"), ("Each", "Each its own") }, () => look.Mode, v => look.Mode = v, Rebuild);
+        Choice(where, "Bars' background", new[] { ("Window", "Spread over the window"), ("Bars", "Fitted into the bars") }, () => look.BarsFit, v => look.BarsFit = v);
         Slide(where, "Bars show through", 0, 0.95, () => look.SeeThrough, v => look.SeeThrough = v, v => v < 0.02 ? "solid" : $"{v * 100:0}%", 0.05);
 
         if (look.Mode == "One") SceneCard("Everywhere", look.All);
@@ -725,7 +758,7 @@ public sealed class AppearanceWindow : Window
             if (s.Kind != "Gradient")
             {
                 Slide(card, "Brightness", 0.2, 1.8, () => s.Strength, v => { s.Strength = v; Refresh(); }, v => $"{v * 100:0}%", 0.05);
-                Slide(card, "Stars", 0, 2.5, () => s.Stars, v => { s.Stars = v; Refresh(); }, v => v < 0.05 ? "none" : $"{v * 100:0}%", 0.05);
+                Slide(card, "Stars", 0, 5, () => s.Stars, v => { s.Stars = v; Refresh(); }, v => v < 0.05 ? "none" : $"{v * 100:0}%", 0.05);
             }
         }
         Refresh();
@@ -776,7 +809,14 @@ public sealed class AppearanceWindow : Window
 
         var edge = Card("Switch outline, light and glow");
         Choice(edge, "Outline", new[] { ("None", "None"), ("Solid", "Colour"), ("Lighter", "Lighter shade"), ("Gradient", "Gradient") }, () => t.Outline, v => t.Outline = v, Rebuild);
-        Colour(edge, "Outline colour", () => t.OutlineColour, v => t.OutlineColour = v);
+        if (t.Outline == "Gradient")
+        {
+            Colour(edge, "Gradient colour 1", () => t.OutlineA, v => t.OutlineA = v);
+            Colour(edge, "Gradient colour 2", () => t.OutlineB, v => t.OutlineB = v);
+            Colour(edge, "Gradient colour 3", () => t.OutlineC, v => t.OutlineC = v);
+            Slide(edge, "Gradient direction", 0, 360, () => t.OutlineAngle, v => t.OutlineAngle = v, v => $"{v:0}°", 15);
+        }
+        else Colour(edge, "Outline colour", () => t.OutlineColour, v => t.OutlineColour = v);
         Slide(edge, "Outline thickness", 0.5, 3, () => t.OutlineWidth, v => t.OutlineWidth = Math.Round(v * 2) / 2, v => $"{Math.Round(v * 2) / 2:0.0} px");
         Slide(edge, "Light along the top", 0, 1, () => t.Shine, v => t.Shine = v, v => $"{v * 100:0}%", 0.05);
         Slide(edge, "Glow when shown", 0, 1, () => t.Glow, v => t.Glow = v, v => $"{v * 100:0}%", 0.05);
@@ -888,10 +928,10 @@ public sealed class AppearanceWindow : Window
         row.Children.Add(ok); row.Children.Add(cancel);
         var p = new StackPanel { Margin = new Thickness(18) };
         p.Children.Add(new TextBlock { Text = prompt }); p.Children.Add(box); p.Children.Add(row);
-        var w = new Window { Title = title, Content = p, SizeToContent = SizeToContent.WidthAndHeight, ResizeMode = ResizeMode.NoResize, Owner = this, WindowStartupLocation = WindowStartupLocation.CenterOwner, ShowInTaskbar = false };
-        w.SetResourceReference(BackgroundProperty, "Bar");
+        var w = new Window { Title = title, Content = p, SizeToContent = SizeToContent.WidthAndHeight, ResizeMode = ResizeMode.NoResize, Owner = Host, WindowStartupLocation = WindowStartupLocation.CenterOwner, ShowInTaskbar = false };
+        w.SetResourceReference(Window.BackgroundProperty, "Bar");
         w.SetResourceReference(TextElement.ForegroundProperty, "Text");
-        w.SetResourceReference(FontFamilyProperty, "AppFont");
+        w.SetResourceReference(Window.FontFamilyProperty, "AppFont");
         w.SourceInitialized += (_, _) => Theme.DarkTitleBar(w);
         ok.Click += (_, _) => w.DialogResult = true;
         w.Loaded += (_, _) => { box.Focus(); box.SelectAll(); };
@@ -900,6 +940,8 @@ public sealed class AppearanceWindow : Window
         return t.Length == 0 ? null : t;
     }
 
-    private void Message(string text) => MessageBox.Show(this, text, "Appearance");
-    private bool Confirm(string text) => MessageBox.Show(this, text, "Appearance", MessageBoxButton.YesNo) == MessageBoxResult.Yes;
+    private Window Host => Window.GetWindow(this) ?? Application.Current.MainWindow!;
+
+    private void Message(string text) => MessageBox.Show(Host, text, "Appearance");
+    private bool Confirm(string text) => MessageBox.Show(Host, text, "Appearance", MessageBoxButton.YesNo) == MessageBoxResult.Yes;
 }

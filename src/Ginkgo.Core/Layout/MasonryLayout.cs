@@ -95,6 +95,10 @@ public static class MasonryLayout
         var heights = new float[columns];
         var counts = new int[columns];
         float pitch = colW + gap;
+        // the picture at the bottom of each column (-1: a set or a wide picture ends it): a set going in over a shorter column
+        // lengthens that picture a little (it is shown cropped to fill), so no empty space is left above the set
+        var lastIn = new int[columns];
+        Array.Fill(lastIn, -1);
 
         // A set (a block) spanning several columns is not dropped in at once: it would sit below the tallest of those columns and
         // leave empty space above it in the shorter ones. It waits while the next pictures fill the shortest columns, and goes in
@@ -119,6 +123,15 @@ public static class MasonryLayout
         void PlaceBlock(int i, int bs, float btop, int bspan, bool oneRow)
         {
             int len = Math.Min(items[i].Block, n - i);
+            for (int c = bs; c < bs + bspan; c++)
+            {
+                float short_ = btop - heights[c];
+                int last = lastIn[c];
+                if (short_ > 0.5f && last >= 0 && short_ <= Math.Max(colW * 0.45f, h[last] * 0.4f))
+                {
+                    h[last] += short_; heights[c] = btop;
+                }
+            }
             float bw = colW * bspan + gap * (bspan - 1), bx = bs * pitch;
             float bh = PlaceRows(items, i, len, bx, btop, bw, oneRow ? float.MaxValue : colW, Math.Max(0, blockGap), x, y, w, h);
             for (int k = i; k < i + len; k++)
@@ -129,7 +142,7 @@ public static class MasonryLayout
                 startCol[k] = (ushort)c0; spanOf[k] = c1 - c0 + 1;
                 for (int c = c0; c <= c1; c++) counts[c]++;
             }
-            for (int c = bs; c < bs + bspan; c++) heights[c] = btop + bh + gap;
+            for (int c = bs; c < bs + bspan; c++) { heights[c] = btop + bh + gap; lastIn[c] = -1; }
         }
 
         // the run of columns where a block leaves the least empty space (ties: the higher one)
@@ -207,7 +220,7 @@ public static class MasonryLayout
             float itemH = itemW / aspect;
             x[i] = best * (colW + gap); y[i] = bestTop; w[i] = itemW; h[i] = itemH;
             startCol[i] = (ushort)best; spanOf[i] = span;
-            for (int c = best; c < best + span; c++) { heights[c] = bestTop + itemH + gap; counts[c]++; }
+            for (int c = best; c < best + span; c++) { heights[c] = bestTop + itemH + gap; counts[c]++; lastIn[c] = span == 1 ? i : -1; }
             if (pending.Count > 0) { for (int p = 0; p < waited.Count; p++) waited[p]++; TryPending(false); }
         }
         TryPending(true);

@@ -208,7 +208,7 @@ public partial class MainWindow
         try
         {
             CleanGpuExit(); SaveSettings();
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(GpuCheck.ExePath) { UseShellExecute = true });
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(GpuCheck.ExePath) { UseShellExecute = true, Arguments = "--restart" });
             Close();
         }
         catch (Exception ex) { StatusText.Text = "Couldn't restart: " + ex.Message; }

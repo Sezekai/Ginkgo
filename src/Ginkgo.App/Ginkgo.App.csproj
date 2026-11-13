@@ -22,6 +22,7 @@
   <ItemGroup>
     <Resource Include="Assets\ginkgo.png" />
     <Resource Include="Assets\ginkgo.ico" />
+    <Resource Include="Assets\Fonts\**\*.ttf" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Ginkgo.Core\Ginkgo.Core.csproj" />

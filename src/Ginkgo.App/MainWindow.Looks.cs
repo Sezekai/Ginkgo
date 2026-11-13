@@ -19,12 +19,14 @@ public partial class MainWindow
     {
         Logo.Apply(_settings.Logo);
         Logo.SetButtonColours(_settings.Look);
+        UpdateBigLogo();
         FolderPanel.SetLook(_settings.Folders.Toggles);
         PopCard.SetLook(_settings.Folders.Panel);
         _folders?.Restyle(); _nsfwPanel?.Restyle(); _veryPanel?.Restyle();
         MasonryView.SetStyle = _settings.SetStyle;
         MasonryView.FavStyle = _settings.FavStyle;
         ApplyVideoLook();
+        ApplyScrollLook();
         ApplyScenes();
         View.RefreshLayout();
         View.ThemeChanged();
@@ -53,16 +55,20 @@ public partial class MainWindow
         var theme = _settings.Theme;
 
         // the bars
-        var bars = SceneKit.Render(look.BarsScene, w, h);
+        bool fitted = look.BarsFit == "Bars";
+        int barH = (int)Math.Max(60, (TopBar.ActualHeight + TitleBar.ActualHeight) * dpi.DpiScaleY);
+        var bars = fitted ? SceneKit.Render(look.BarsScene, w, barH) : SceneKit.Render(look.BarsScene, w, h);
         if (bars is null) R["BarBack"] = Frozen(new SolidColorBrush(ButtonLook.C(theme.Surface)));
         else
         {
+            if (fitted) h = barH;
             var g = new DrawingGroup();
-            var img = new ImageBrush(bars) { Stretch = Stretch.UniformToFill, AlignmentY = AlignmentY.Top, AlignmentX = AlignmentX.Left };
+            var img = new ImageBrush(bars) { Stretch = fitted ? Stretch.Fill : Stretch.UniformToFill, AlignmentY = AlignmentY.Top, AlignmentX = AlignmentX.Left };
             g.Children.Add(new GeometryDrawing(img, null, new RectangleGeometry(new Rect(0, 0, w, h))));
             var bar = ButtonLook.C(theme.Surface); bar.A = (byte)(255 * (1 - Math.Clamp(look.SeeThrough, 0, 0.95)));
             g.Children.Add(new GeometryDrawing(new SolidColorBrush(bar), null, new RectangleGeometry(new Rect(0, 0, w, h))));
-            R["BarBack"] = Frozen(new DrawingBrush(g) { Stretch = Stretch.UniformToFill, AlignmentY = AlignmentY.Top, AlignmentX = AlignmentX.Left });
+            R["BarBack"] = Frozen(new DrawingBrush(g) { Stretch = fitted ? Stretch.Fill : Stretch.UniformToFill, AlignmentY = AlignmentY.Top, AlignmentX = AlignmentX.Left });
+            if (fitted) h = (int)Math.Max(500, ActualHeight * dpi.DpiScaleY);
         }
 
         // behind the pictures: the grid leaves its background clear and the window's shows through

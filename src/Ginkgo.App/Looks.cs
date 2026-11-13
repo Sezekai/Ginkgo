@@ -41,7 +41,9 @@ public sealed class LogoLook
     public double ShineEvery { get; set; } = 6;
     /// <summary>How fast everything moves (0.25 slow ... 3 fast).</summary>
     public double Speed { get; set; } = 1;
-    public double Size { get; set; } = 30;
+    public double Size { get; set; } = 40;
+    /// <summary>The logo spreads over the title bar and the top bar together (the bar's own size in full screen).</summary>
+    public bool Big { get; set; } = true;
     /// <summary>A rounded tile behind the logo ("" colour = the theme's field colour).</summary>
     public bool Tile { get; set; }
     public string TileColour { get; set; } = "";
@@ -94,6 +96,9 @@ public sealed class SceneLook
     public Scene Viewer { get; set; } = new();
     /// <summary>How much of the background shows through the bars (0 = solid bars ... 0.9 = nearly clear).</summary>
     public double SeeThrough { get; set; } = 0.35;
+    /// <summary>"Window": the bars' background is spread over the whole window and the bars show their part of it. "Bars": the
+    /// whole background is fitted into the bars themselves (the top bar and the bottom bar), so its pattern is closer together.</summary>
+    public string BarsFit { get; set; } = "Window";
 
     public SceneLook Copy() => JsonSerializer.Deserialize<SceneLook>(JsonSerializer.Serialize(this))!;
     public Scene BarsScene => Mode == "One" ? All : Bars;
@@ -277,4 +282,24 @@ public static class LookLibrary
 
     /// <summary>Removes every saved look (Reset looks).</summary>
     public static void Reset() { _all = new(); try { File.Delete(FilePath); } catch { } }
+}
+
+/// <summary>The pictures' scroll bar: it shows when the mouse comes near the window's right edge. Every scroll bar is see-through
+/// with an outline; this one can also glow, pulse or have a shine run along it so it is easy to find.</summary>
+public sealed class ScrollLook
+{
+    public double Width { get; set; } = 14;
+    /// <summary>How long the handle is: it grows with the picture size, times this.</summary>
+    public double Length { get; set; } = 1;
+    /// <summary>None, Glow, Pulse (a glow that breathes), Shine (a light runs along it), PulseShine.</summary>
+    public string Effect { get; set; } = "Pulse";
+    /// <summary>"" = the theme's accent.</summary>
+    public string Colour { get; set; } = "";
+    /// <summary>How much the handle is filled in (0 = just the outline).</summary>
+    public double Fill { get; set; } = 0.08;
+    /// <summary>How near the right edge the mouse must be for it to show (a share of the window's width).</summary>
+    public double Reach { get; set; } = 0.05;
+    public double OutlineWidth { get; set; } = 1.5;
+
+    public ScrollLook Copy() => JsonSerializer.Deserialize<ScrollLook>(JsonSerializer.Serialize(this))!;
 }

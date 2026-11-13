@@ -11,6 +11,7 @@
         <SolidColorBrush x:Key="Edge" Color="#3A3A42"/>
         <SolidColorBrush x:Key="WindowBg" Color="#121214"/>
         <SolidColorBrush x:Key="Surface2" Color="#161619"/>
+        <SolidColorBrush x:Key="ScrollEdge" Color="#5A5A66"/>
         <FontFamily x:Key="AppFont">Segoe UI</FontFamily>
         <FontFamily x:Key="IconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
         <sys:Double x:Key="AppFontSize" xmlns:sys="clr-namespace:System;assembly=mscorlib">12</sys:Double>
@@ -482,10 +483,14 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Thumb">
-                        <Border x:Name="T" Margin="2" CornerRadius="4" Background="#66FFFFFF"/>
+                        <Grid>
+                            <Border x:Name="T" Margin="2" CornerRadius="5" Background="Transparent" BorderBrush="{DynamicResource ScrollEdge}" BorderThickness="1.5"/>
+                            <!-- the main grid's bar: a glow and a shine can go on it (Appearance > Scroll bars) -->
+                            <Border x:Name="Shine" Margin="3" CornerRadius="4" IsHitTestVisible="False" Visibility="Collapsed"/>
+                        </Grid>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="T" Property="Background" Value="#99FFFFFF"/></Trigger>
-                            <Trigger Property="IsDragging" Value="True"><Setter TargetName="T" Property="Background" Value="#CCFFFFFF"/></Trigger>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="T" Property="Background" Value="#1FFFFFFF"/><Setter TargetName="T" Property="BorderBrush" Value="{DynamicResource Text}"/></Trigger>
+                            <Trigger Property="IsDragging" Value="True"><Setter TargetName="T" Property="Background" Value="#2EFFFFFF"/><Setter TargetName="T" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -524,16 +529,10 @@
         </Style>
 
         <!-- the grid's own scroll bar: only visible while the mouse is over it -->
+        <!-- the grid's own scroll bar: shows when the mouse comes near the window's right edge (see MainWindow.ScrollBars) -->
         <Style x:Key="HoverBar" TargetType="ScrollBar" BasedOn="{StaticResource {x:Type ScrollBar}}">
             <Setter Property="Width" Value="16"/>
             <Setter Property="Opacity" Value="0"/>
-            <Style.Triggers>
-                <MultiTrigger>
-                    <MultiTrigger.Conditions><Condition Property="IsMouseOver" Value="True"/></MultiTrigger.Conditions>
-                    <Setter Property="Opacity" Value="1"/>
-                </MultiTrigger>
-                <Trigger Property="IsMouseCaptureWithin" Value="True"><Setter Property="Opacity" Value="1"/></Trigger>
-            </Style.Triggers>
         </Style>
 
         <!-- ===== text box ===== -->
@@ -552,6 +551,35 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="B" Property="BorderBrush" Value="{DynamicResource Accent}"/></Trigger>
                             <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ===== list box (Appearance's page list and other lists): theme text, a soft highlight ===== -->
+        <Style TargetType="ListBox">
+            <Setter Property="Foreground" Value="{DynamicResource Text}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+        </Style>
+        <Style TargetType="ListBoxItem">
+            <Setter Property="Foreground" Value="{DynamicResource Text}"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="B" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="8" Padding="{TemplateBinding Padding}" Margin="0,1">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="{DynamicResource Field}"/></Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="B" Property="Background" Value="{DynamicResource KeyOnFill}"/>
+                                <Setter TargetName="B" Property="BorderBrush" Value="{DynamicResource KeyOnBorder}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource KeyOnText}"/>
+                            </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
@@ -678,6 +706,7 @@
         <Style TargetType="Slider">
             <Setter Property="Height" Value="22"/>
             <Setter Property="Focusable" Value="False"/>
+            <Setter Property="IsMoveToPointEnabled" Value="True"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Slider">

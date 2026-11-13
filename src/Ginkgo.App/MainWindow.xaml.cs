@@ -318,8 +318,8 @@ public partial class MainWindow : Window
         _cropApplied = _settings.GridLayout && !_settings.GridFit;
         var gridOrder = result.order; var gridModel = model; int gridFirst = _firstFile; bool gridCrop = _cropApplied;
         double gridTilePx = View.TileTarget * VisualTreeHelper.GetDpi(View).PixelsPerDip;
-        if (covers.Length > 0 || gridCrop)
-            _loader.CropFor = i => i < covers.Length ? covers[i] : gridCrop ? GridCrop(i, gridOrder, gridModel, gridFirst, gridTilePx) : null;
+        // (a picture lengthened to close the space above a set is cropped to fill too)
+        _loader.CropFor = i => i < covers.Length ? covers[i] : gridCrop ? GridCrop(i, gridOrder, gridModel, gridFirst, gridTilePx) : View.StretchCrop(i);
         View.PrefetchBudgetBytes = decoded * 36 / 100;
         _gifs.Clear();
         View.Badges = result.slice.badges;
@@ -455,7 +455,6 @@ public partial class MainWindow : Window
         FoldersBtn.Content = n == 0 ? "Select folders" : $"Select folders ({n:N0} off)";
     }
 
-    private void OnSettings(object s, RoutedEventArgs e) => OpenSettings();
 
     /// <summary>The Optimisations pop-out: thumbnails in memory (on/off and a limit) and how many GIFs play at once.</summary>
     private void OnOptimise(object s, RoutedEventArgs e)
@@ -515,20 +514,8 @@ public partial class MainWindow : Window
         ApplyBar();
     }
 
-    private SettingsWindow? _settingsWindow;
-
-    /// <summary>The Settings window: its own window beside the main one (one at a time).</summary>
-    private void OpenSettings()
-    {
-        if (_settingsWindow is { IsLoaded: true })
-        {
-            if (_settingsWindow.WindowState == WindowState.Minimized) _settingsWindow.WindowState = WindowState.Normal;
-            _settingsWindow.Activate(); return;
-        }
-        _settingsWindow = new SettingsWindow(this, _settings, _engine) { Owner = this, Icon = Icon };
-        _settingsWindow.Closed += (_, _) => { _settingsWindow = null; SaveSettings(); };
-        _settingsWindow.Show();
-    }
+    /// <summary>Settings: a section of its own (S, Ctrl+S, or the switch).</summary>
+    private void OpenSettings() => ShowPageSection("Settings");
 
     private void OnUpdateView(object s, RoutedEventArgs e) => _ = ReloadModel(true);
 
@@ -718,7 +705,7 @@ public partial class MainWindow : Window
     {
         if (_syncing) return;
         long sNow = Stopwatch.GetTimestamp();
-        if (!Scroll.IsMouseOver && !Scroll.IsMouseCaptureWithin && (sNow - _lastSync) * 1000 < 120 * Stopwatch.Frequency) { _syncPending = true; return; }   // the bar is hidden: no need to move it every frame
+        if (!_scrollShown && !Scroll.IsMouseCaptureWithin && (sNow - _lastSync) * 1000 < 120 * Stopwatch.Frequency) { _syncPending = true; return; }   // the bar is hidden: no need to move it every frame
         _lastSync = sNow; _syncPending = false;
         _syncing = true; View.Offset = e.NewValue; _syncing = false;
     }
@@ -729,7 +716,7 @@ public partial class MainWindow : Window
         if (_syncing) return;
         _syncing = true;
         double max = Math.Max(0, View.TotalHeight - View.ActualHeight);
-        Scroll.Maximum = max; Scroll.ViewportSize = View.ActualHeight;
+        Scroll.Maximum = max; Scroll.ViewportSize = ScrollViewport(max, View.ActualHeight);
         Scroll.LargeChange = View.ActualHeight * 0.9; Scroll.SmallChange = 60;
         Scroll.Value = View.Offset;
         _syncing = false;
@@ -746,6 +733,7 @@ public partial class MainWindow : Window
             if (Sections.HandleKey(e)) e.Handled = true;
             return;
         }
+        if (InPage) { if (PageKey(e)) e.Handled = true; return; }
         if (KeysLayer.Visibility == Visibility.Visible)
         {
             if (e.Key is Key.Escape or Key.K or Key.OemQuestion) { KeysLayer.Visibility = Visibility.Collapsed; e.Handled = true; }
@@ -773,9 +761,9 @@ public partial class MainWindow : Window
         if (ctrl && e.Key == Key.W) { Close(); e.Handled = true; return; }
         if (ctrl && e.Key == Key.S) { OpenSettings(); e.Handled = true; return; }
         if (ctrl && e.Key == Key.F) { RevealBar(); SearchBox.Focus(); SearchBox.SelectAll(); e.Handled = true; return; }
-        if (ctrl && e.Key is Key.D1 or Key.D2 or Key.D3 or Key.D4)
+        if (ctrl && SectionForDigit(e.Key) is string where)
         {
-            Navigate(e.Key switch { Key.D1 => "Home", Key.D2 => "Browse", Key.D3 => "Favourites", _ => "Tools" });
+            Navigate(where);
             e.Handled = true; return;
         }
         bool alt = (Keyboard.Modifiers & ModifierKeys.Alt) != 0;
@@ -948,7 +936,7 @@ public partial class MainWindow : Window
     // ---- top bar: slides away on scroll down, back on scroll up; H hides it for good until shown again ----
 
     private bool BarPinned =>
-        _folderPopup.IsOpen || (_optPopup?.IsOpen ?? false) || (_quickPopup?.IsOpen ?? false) || (_vfPopup?.IsOpen ?? false) || LibraryPopupOpen() || (_slidePopup?.IsOpen ?? false) || SavedPopup.IsOpen || Sections.IsKeyboardFocused || BarRow.Expanded || Banner.Visibility == Visibility.Visible || SearchBox.IsKeyboardFocused ||
+        InPage || _folderPopup.IsOpen || (_optPopup?.IsOpen ?? false) || (_quickPopup?.IsOpen ?? false) || (_vfPopup?.IsOpen ?? false) || LibraryPopupOpen() || (_slidePopup?.IsOpen ?? false) || SavedPopup.IsOpen || Sections.IsKeyboardFocused || BarRow.Expanded || Banner.Visibility == Visibility.Visible || SearchBox.IsKeyboardFocused ||
         (TopBar.IsMouseOver && Stopwatch.GetTimestamp() > _ignoreOverUntil) || HoverStrip.IsMouseOver;
 
     private void ApplyBar()
@@ -962,6 +950,7 @@ public partial class MainWindow : Window
         var anim = new System.Windows.Media.Animation.DoubleAnimation(want ? 0 : -h, TimeSpan.FromMilliseconds(want ? 140 : 190))
         { EasingFunction = new System.Windows.Media.Animation.CubicEase { EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut } };
         BarShift.BeginAnimation(TranslateTransform.YProperty, anim);
+        FadeBigLogo(want);
         BarHost.IsHitTestVisible = want;
         HoverStrip.Visibility = want ? Visibility.Collapsed : Visibility.Visible;
         ShowBarBtn.Visibility = !want && _barManual ? Visibility.Visible : Visibility.Collapsed;
@@ -980,7 +969,11 @@ public partial class MainWindow : Window
         if (before != _barAuto) ApplyBar();
     }
 
-    private void UpdateInset() => View.TopInset = _barManual ? 0 : (float)BarHost.ActualHeight;
+    private void UpdateInset()
+    {
+        View.TopInset = _barManual ? 0 : (float)BarHost.ActualHeight;
+        Scroll.Margin = new Thickness(0, View.TopInset + 2, 0, 2);          // the scroll bar starts under the top bar
+    }
 
     /// <summary>Hide, in steps: first the top bar, then the bottom bar too; the next press brings both back.</summary>
     private void OnHideBar(object s, RoutedEventArgs e)
@@ -1099,25 +1092,10 @@ public partial class MainWindow : Window
         StatusText.Text = IsFolderTile(next) ? FolderHoverText(next) : next < _paths.Length ? HoverText(next) : StatusText.Text;
     }
 
-    private void OnAppearanceBtn(object s, RoutedEventArgs e) => OpenAppearance();
 
-    /// <summary>The button look window: changes show at once; Save keeps them.</summary>
-    /// <summary>Appearance: themes, colours, fonts, icons and backgrounds.</summary>
-    private AppearanceWindow? _appearance;
+    /// <summary>Appearance: a section of its own, at a page if asked.</summary>
     public void OpenAppearance() => OpenAppearance(null);
-
-    /// <summary>The Appearance window (one at a time; it stays open beside the main window), at a page if asked.</summary>
-    public void OpenAppearance(string? page)
-    {
-        if (_appearance is null || !_appearance.IsLoaded)
-        {
-            _appearance = new AppearanceWindow(_settings, ThemeApplied, LooksApplied) { Owner = this };
-            _appearance.Closed += (_, _) => { _appearance = null; SaveSettings(); };
-            _appearance.Show();
-        }
-        else { if (_appearance.WindowState == WindowState.Minimized) _appearance.WindowState = WindowState.Normal; _appearance.Activate(); }
-        if (page is not null) _appearance.ShowPage(page);
-    }
+    public void OpenAppearance(string? page) => ShowPageSection("Appearance", page);
 
     /// <summary>The theme changed: the grid repaints, and the window's own frame follows.</summary>
     public void ThemeApplied()
@@ -1155,7 +1133,7 @@ public partial class MainWindow : Window
 
     private static readonly (string keys, string what)[] GridKeys =
     {
-        ("Ctrl+B  or  M", "The section switch: then 1-4 or the arrows, Enter or Esc to go back"), ("Ctrl+1 ... 4", "Home, Browse, Favourites, Tools"), ("S  or  Ctrl+S", "Settings"), ("T", "Open the picture under the mouse (or the first one)"), ("O", "Optimisations (memory, GIFs)"), ("Q", "Quick toggles (videos)"), ("F  or  F11", "Full screen (Esc to leave)"), ("Ctrl+W", "Close Ginkgo"), ("H", "Hide or show the top bar"), ("/  or  Ctrl+F", "Search"),
+        ("Ctrl+B  or  M", "The section switch: then 1-6 or the arrows, Enter or Esc to go back"), ("Ctrl+1 ... 6", "Home, Browse, Favourites, Tools, Appearance, Settings"), ("S  or  Ctrl+S", "Settings"), ("T", "Open the picture under the mouse (or the first one)"), ("O", "Optimisations (memory, GIFs)"), ("Q", "Quick toggles (videos)"), ("F  or  F11", "Full screen (Esc to leave)"), ("Ctrl+W", "Close Ginkgo"), ("H", "Hide or show the top bar"), ("/  or  Ctrl+F", "Search"),
         ("G   N   V", "Show General / NSFW / Very files"), ("L", "Equal columns  or  equal rows"), ("+   -   or  Ctrl + wheel", "Picture size"),
         ("R", "Reshuffle (when sorted randomly)"), ("Home   End", "Top / bottom"), ("Page Up   Page Down", "Scroll one screen"),
         ("Enter  or  click", "Open the picture under the mouse"), ("Middle button", "Scroll by moving the mouse"),
@@ -1226,7 +1204,7 @@ public partial class MainWindow : Window
     }
 
     /// <summary>Mouse back (and Alt+Left): in the viewer it closes it and returns to where you were, however many pictures you went through.</summary>
-    private void NavBack() { if (ViewerOpen) { CloseViewer(); UpdateNavButtons(); return; } GoBack(); }
+    private void NavBack() { if (InPage) { LeavePage(); return; } if (ViewerOpen) { CloseViewer(); UpdateNavButtons(); return; } GoBack(); }
     /// <summary>Mouse forward (and Alt+Right): does nothing in the viewer, and never reopens a closed viewer.</summary>
     private void NavForward() { if (ViewerOpen) return; GoForward(); }
 
@@ -1252,6 +1230,7 @@ public partial class MainWindow : Window
         ViewerRoot.Visibility = Visibility.Collapsed;
         StopViewerGif();
         Pic.Source = null;
+        _vFullBmp = null; _vFullPath = null;
         View.ScrollToIndex(_vIndex);
         View.Focus();
         VideoViewerClosed();
@@ -1456,6 +1435,7 @@ public partial class MainWindow : Window
         string key = path + "|" + (full ? "full" : decodeW + "x" + decodeH);
         BitmapSource? bmp;
         lock (_vCache) _vCache.TryGetValue(key, out bmp);
+        if (full && bmp is null && _vFullPath == path) bmp = _vFullBmp;        // already read in full in the background
         if (bmp is null)
         {
             ViewerNote.Text = "";
@@ -1475,6 +1455,7 @@ public partial class MainWindow : Window
                 finally { _decodeGate.Release(); }
             });
             if (bmp is not null && !full) lock (_vCache) CacheAdd(key, bmp);
+            if (bmp is not null && full) { _vFullPath = path; _vFullBmp = bmp; }
         }
         if (token != _vToken) return;                                 // moved on to another picture meanwhile
         _vFull = full;
@@ -1484,8 +1465,32 @@ public partial class MainWindow : Window
         if (m.Kind[row] == (byte)MediaKind.Gif) StartViewerGif(index, row); else StopViewerGif();
         if (!full)
         {
+            // a picture bigger than the screen is then read at full size in the background, so zooming in is sharp at once
+            if ((decodeW > 0 || decodeH > 0) && m.Kind[row] != (byte)MediaKind.Gif && (long)w * h <= 60_000_000L) _ = LoadFullQuietly(index, token, path);
             _ = Preload(index + 1); _ = Preload(index + 2); _ = Preload(index - 1);
         }
+    }
+
+    private string? _vFullPath;
+    private BitmapSource? _vFullBmp;
+
+    /// <summary>The open picture at full size, read after the screen-sized one is up; it takes over as soon as it is ready.</summary>
+    private async Task LoadFullQuietly(int index, int token, string path)
+    {
+        if (_vFullPath == path && _vFullBmp is not null) { if (token == _vToken) { Pic.Source = _vFullBmp; _vFull = true; } return; }
+        await Task.Delay(120);
+        if (token != _vToken) return;
+        var bmp = await Task.Run(() =>
+        {
+            _decodeGate.Wait();
+            try { return token != _vToken ? null : Decode(path, 0, 0); }
+            finally { _decodeGate.Release(); }
+        });
+        if (bmp is null) return;
+        _vFullPath = path; _vFullBmp = bmp;                 // (only the open picture is kept at full size)
+        if (token != _vToken || _vIndex != index || !ViewerOpen) return;
+        Pic.Source = bmp;
+        _vFull = true;
     }
 
     private void CacheAdd(string key, BitmapSource bmp)
@@ -1656,5 +1661,6 @@ public partial class MainWindow : Window
         WindowEdge.BorderThickness = new Thickness(0);
         UpdateEdges();
         if (!_fullscreen) OnStateChanged(null, EventArgs.Empty);
+        UpdateBigLogo();
     }
 }

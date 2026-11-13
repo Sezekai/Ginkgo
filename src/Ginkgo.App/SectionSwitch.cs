@@ -8,14 +8,15 @@ namespace Ginkgo.App;
 
 /// <summary>
 /// The section switch in the top bar: a pill with an icon for each section and a knob that slides to the one you are in.
-/// Ctrl+B or M puts the keyboard on it; then 1-4 or the arrows move between sections, and Enter, Esc, Ctrl+B or M go back to
+/// Ctrl+B or M puts the keyboard on it; then 1-6 or the arrows move between sections, and Enter, Esc, Ctrl+B or M go back to
 /// the pictures.
 /// </summary>
 public sealed class SectionSwitch : Border
 {
     public static readonly (string key, string name, string glyph)[] Sections =
     {
-        ("Home", "Home", ""), ("Browse", "Browse", ""), ("Favourites", "Favourites", ""), ("Tools", "Tools", ""),
+        ("Home", "Home", "\uE80F"), ("Browse", "Browse", "\uE8B7"), ("Favourites", "Favourites", "\uE734"), ("Tools", "Tools", "\uE90F"),
+        ("Appearance", "Appearance", "\uE790"), ("Settings", "Settings", "\uE713"),
     };
 
     /// <summary>A section was picked (by click or key).</summary>
@@ -29,7 +30,7 @@ public sealed class SectionSwitch : Border
     private readonly TextBlock[] _icons = new TextBlock[Sections.Length];
     private readonly Border[] _slots = new Border[Sections.Length];
     private int _at;
-    private const double Slot = 38;
+    private double Slot = 38;
 
     public SectionSwitch()
     {
@@ -49,11 +50,12 @@ public sealed class SectionSwitch : Border
         for (int i = 0; i < Sections.Length; i++)
         {
             int at = i;
-            var icon = new TextBlock { Text = Sections[i].glyph, FontSize = 14, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            var icon = new TextBlock { Text = Sections[i].glyph, FontSize = 16, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             icon.SetResourceReference(TextBlock.FontFamilyProperty, "IconFont");
             _icons[i] = icon;
             var slot = new Border { Width = Slot, Background = Brushes.Transparent, Child = icon, Cursor = Cursors.Hand, ToolTip = $"{Sections[i].name}  (Ctrl+{i + 1}, or Ctrl+B / M then {i + 1})" };
-            slot.MouseLeftButtonUp += (_, e) => { Pick(at, fromKey: false); e.Handled = true; };
+            // on press: the bar under the switch would otherwise take the mouse to drag the window
+            slot.MouseLeftButtonDown += (_, e) => { Pick(at, fromKey: false); e.Handled = true; };
             slot.MouseEnter += (_, _) => Paint();
             slot.MouseLeave += (_, _) => Paint();
             _slots[i] = slot;
@@ -71,6 +73,13 @@ public sealed class SectionSwitch : Border
     {
         double h = Math.Max(10, ActualHeight - Padding.Top - Padding.Bottom - BorderThickness.Top - BorderThickness.Bottom);
         CornerRadius = new CornerRadius(ActualHeight / 2);
+        // the slots are as wide as the switch is tall, the icons in proportion
+        double slot = Math.Max(30, Math.Round(h * 1.08));
+        if (Math.Abs(slot - Slot) > 0.5)
+        {
+            Slot = slot; _knob.Width = slot;
+            for (int i = 0; i < _slots.Length; i++) { _slots[i].Width = slot; _icons[i].FontSize = Math.Round(h * 0.46); }
+        }
         _knob.CornerRadius = new CornerRadius(h / 2);
         _knob.Height = h;
         _shift.X = _at * Slot;
@@ -125,6 +134,8 @@ public sealed class SectionSwitch : Border
             case Key.D2: case Key.NumPad2: Pick(1, true); return true;
             case Key.D3: case Key.NumPad3: Pick(2, true); return true;
             case Key.D4: case Key.NumPad4: Pick(3, true); return true;
+            case Key.D5: case Key.NumPad5: Pick(4, true); return true;
+            case Key.D6: case Key.NumPad6: Pick(5, true); return true;
             case Key.Left: case Key.Up: Pick(_at - 1, true); return true;
             case Key.Right: case Key.Down: case Key.Tab: Pick(_at + 1 >= Sections.Length && key == Key.Tab ? 0 : _at + 1, true); return true;
             case Key.Home: Pick(0, true); return true;

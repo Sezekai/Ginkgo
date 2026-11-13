@@ -37,6 +37,11 @@ public sealed class ButtonLook
     public string Outline { get; set; } = "Lighter";        // None, Solid, Lighter, Gradient
     public string OutlineColour { get; set; } = "#0E0E12";
     public double OutlineWidth { get; set; } = 0.5;
+    /// <summary>The gradient outline's colours (left, middle, right) and its direction in degrees.</summary>
+    public string OutlineA { get; set; } = "#4F6BFF";
+    public string OutlineB { get; set; } = "#A24BE0";
+    public string OutlineC { get; set; } = "#F28A5B";
+    public double OutlineAngle { get; set; }
     public double Shine { get; set; } = 0.35;              // light along the top edge, 0..1
     public double Glow { get; set; } = 0.75;              // glow round switches that are on, 0..1
     public double Shadow { get; set; } = 0;               // shadow under every button, 0..1
@@ -96,8 +101,8 @@ public sealed class ButtonLook
         {
             "None" => Brushes.Transparent,
             "Lighter" => new SolidColorBrush(Shift(fillA, 0.25)),
-            "Gradient" => Stops(new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 0) },
-                (C("#4F6BFF"), 0), (C("#A24BE0"), 0.5), (C("#F28A5B"), 1)),
+            "Gradient" => Stops(new LinearGradientBrush(Colors.Black, Colors.Black, OutlineAngle) { GradientStops = new GradientStopCollection() },
+                (C(OutlineA), 0), (C(OutlineB), 0.5), (C(OutlineC), 1)),
             _ => new SolidColorBrush(C(OutlineColour)),
         };
         if (!b.IsFrozen) b.Freeze();

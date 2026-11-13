@@ -1,9 +1,8 @@
-<Window x:Class="Ginkgo.App.SettingsWindow"
+<UserControl x:Class="Ginkgo.App.SettingsPage"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Settings" Width="1200" Height="860" MinWidth="760" MinHeight="520" Background="{DynamicResource WindowBg}" WindowStartupLocation="CenterOwner" ShowInTaskbar="True"
         FontFamily="{DynamicResource AppFont}" FontSize="{DynamicResource AppFontSize}" TextElement.Foreground="{DynamicResource Text}">
-    <Window.Resources>
+    <UserControl.Resources>
         <!-- a group's heading, and one setting: what it is (and a note) on the left, its controls on the right -->
         <Style x:Key="Group" TargetType="TextBlock">
             <Setter Property="FontSize" Value="15"/>
@@ -45,13 +44,13 @@
             <Setter Property="FontSize" Value="11.5"/>
             <Setter Property="Margin" Value="0,2,12,0"/>
         </Style>
-    </Window.Resources>
+    </UserControl.Resources>
     <DockPanel>
         <!-- the heading -->
         <Border DockPanel.Dock="Top" Background="{DynamicResource Bar}" BorderBrush="{DynamicResource Edge}" BorderThickness="0,0,0,1" Padding="24,14,24,14">
             <DockPanel>
-                <Button DockPanel.Dock="Right" Content="Close" Width="90" Height="30" VerticalAlignment="Center" Click="OnClose"/>
-                <Button DockPanel.Dock="Right" Content="Appearance…" Height="30" Padding="14,0" Margin="0,0,10,0" VerticalAlignment="Center" Click="OnAppearance"
+                <Button DockPanel.Dock="Right" Content="Done" Width="90" Height="30" VerticalAlignment="Center" Click="OnClose" ToolTip="Back to the pictures (Esc)"/>
+                <Button DockPanel.Dock="Right" Content="Appearance" Height="30" Padding="14,0" Margin="0,0,10,0" VerticalAlignment="Center" Click="OnAppearance"
                         ToolTip="Themes, buttons, the logo, backgrounds, folder pop-outs, sets, favourites and video outlines"/>
                 <StackPanel>
                     <TextBlock Text="Settings" FontSize="18" FontWeight="SemiBold"/>
@@ -208,4 +207,4 @@
             </Grid>
         </ScrollViewer>
     </DockPanel>
-</Window>
+</UserControl>

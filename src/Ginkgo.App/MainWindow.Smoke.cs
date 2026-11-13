@@ -35,12 +35,11 @@ public partial class MainWindow
             foreach (var key in new[] { "Theme", "Buttons", "Logo", "Background", "Folders", "Sets", "Favourites", "Video outlines" })
             {
                 _appearance?.ShowPage(key); await Task.Delay(900);
-                if (_appearance is not null) Shot(_appearance, Path.Combine(dir, $"{n++}-appearance-{key.Replace(' ', '-').ToLowerInvariant()}.png"));
+                Shot(this, Path.Combine(dir, $"{n++}-appearance-{key.Replace(' ', '-').ToLowerInvariant()}.png"));
             }
-            _appearance?.Close();
             OpenSettings(); await Task.Delay(1500);
-            if (_settingsWindow is not null) Shot(_settingsWindow, Path.Combine(dir, "20-settings.png"));
-            _settingsWindow?.Close();
+            Shot(this, Path.Combine(dir, "20-settings.png"));
+            LeavePage(); await Task.Delay(300);
             await GoSection("Browse"); await Task.Delay(1500);
             Shot(this, Path.Combine(dir, "05-browse.png"));
             Keyboard.Focus(Sections); await Task.Delay(400);

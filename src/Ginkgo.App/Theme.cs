@@ -40,12 +40,42 @@ public static class Theme
         catch { }
     }
 
-    /// <summary>Makes the system title bar of a normal window dark (used by the Settings window).</summary>
+    /// <summary>
+    /// Makes a normal window's system title bar match the theme: dark mode, and on Windows 11 the bar takes the theme's panel colour,
+    /// with its text in the theme's text colour. Works whether it is called before or after the window has been created.
+    /// </summary>
     public static void DarkTitleBar(Window w)
     {
-        w.SourceInitialized += (_, _) =>
+        void Apply()
         {
-            try { int on = 1; DwmSetWindowAttribute(new WindowInteropHelper(w).Handle, 20, ref on, 4); } catch { }
-        };
+            try
+            {
+                var h = new WindowInteropHelper(w).Handle;
+                if (h == IntPtr.Zero) return;
+                int dark = IsLight() ? 0 : 1;
+                if (DwmSetWindowAttribute(h, 20, ref dark, 4) != 0) DwmSetWindowAttribute(h, 19, ref dark, 4);   // DWMWA_USE_IMMERSIVE_DARK_MODE (and its old number)
+                if (Application.Current?.TryFindResource("Bar") is System.Windows.Media.SolidColorBrush bar)
+                {
+                    var c = bar.Color; int colour = c.R | (c.G << 8) | (c.B << 16);
+                    DwmSetWindowAttribute(h, 35, ref colour, 4);                                  // DWMWA_CAPTION_COLOR
+                }
+                if (Application.Current?.TryFindResource("Text") is System.Windows.Media.SolidColorBrush tx)
+                {
+                    var c = tx.Color; int colour = c.R | (c.G << 8) | (c.B << 16);
+                    DwmSetWindowAttribute(h, 36, ref colour, 4);                                  // DWMWA_TEXT_COLOR
+                }
+            }
+            catch { }
+        }
+        if (new WindowInteropHelper(w).Handle != IntPtr.Zero) Apply();
+        else w.SourceInitialized += (_, _) => Apply();
+        w.Activated += (_, _) => Apply();                 // the theme may have changed since
+    }
+
+    private static bool IsLight()
+    {
+        if (Application.Current?.TryFindResource("Bar") is System.Windows.Media.SolidColorBrush b)
+            return b.Color.R * 0.3 + b.Color.G * 0.59 + b.Color.B * 0.11 > 150;
+        return false;
     }
 }

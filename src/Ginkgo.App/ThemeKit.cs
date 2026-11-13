@@ -27,7 +27,7 @@ public sealed class AppTheme
     public string ButtonB { get; set; } = "#19191D";
     public string ButtonText { get; set; } = "#E4E4E8";
 
-    public string Font { get; set; } = "Segoe UI";
+    public string Font { get; set; } = "Inter";
     public double FontSize { get; set; } = 12;
     /// <summary>How roomy the controls are: 0.85 compact ... 1.25 roomy.</summary>
     public double Density { get; set; } = 1.0;
@@ -50,8 +50,16 @@ public sealed class AppTheme
 
 public static class ThemeKit
 {
-    /// <summary>The fonts offered (all come with Windows).</summary>
-    public static readonly string[] Fonts =
+    /// <summary>The fonts that come with Ginkgo (the same set as the other apps), then the ones that come with Windows.</summary>
+    public static readonly (string name, string folder)[] Bundled =
+    {
+        ("Inter", "inter"), ("Geist", "geist"), ("Manrope", "manrope"), ("Figtree", "figtree"), ("DM Sans", "dm-sans"), ("Plus Jakarta Sans", "plus-jakarta-sans"),
+        ("Outfit", "outfit"), ("Sora", "sora"), ("Onest", "onest"), ("Albert Sans", "albert-sans"), ("Public Sans", "public-sans"), ("IBM Plex Sans", "ibm-plex-sans"),
+        ("Red Hat Text", "red-hat-text"), ("Nunito Sans", "nunito-sans"), ("Work Sans", "work-sans"), ("Rubik", "rubik"), ("Lexend", "lexend"),
+        ("Atkinson Hyperlegible Next", "atkinson-hyperlegible-next"), ("Space Grotesk", "space-grotesk"), ("Ubuntu", "ubuntu"), ("JetBrains Mono", "jetbrains-mono"),
+    };
+
+    public static readonly string[] WindowsFonts =
     {
         "Segoe UI", "Segoe UI Variable Text", "Segoe UI Variable Display", "Segoe UI Semilight", "Segoe UI Light", "Bahnschrift", "Bahnschrift Light",
         "Bahnschrift SemiCondensed", "Calibri", "Calibri Light", "Cambria", "Candara", "Consolas", "Constantia", "Corbel", "Corbel Light", "Franklin Gothic Medium",
@@ -59,6 +67,30 @@ public static class ThemeKit
         "Microsoft YaHei UI", "MV Boli", "Nirmala UI", "Palatino Linotype", "Segoe Print", "Segoe Script", "Sitka Text", "Sylfaen", "Tahoma",
         "Trebuchet MS", "Verdana", "Yu Gothic UI", "Arial", "Times New Roman", "Comic Sans MS", "Ebrima", "Gadugi",
     };
+
+    /// <summary>Every font offered: Ginkgo's own first, then Windows'.</summary>
+    public static readonly string[] Fonts = Bundled.Select(b => b.name).Concat(WindowsFonts).ToArray();
+
+    private static readonly Dictionary<string, FontFamily> _families = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>A font by name: one of Ginkgo's own (from inside the app) or one installed in Windows. Segoe UI stands in for missing letters.</summary>
+    public static FontFamily Family(string name)
+    {
+        if (_families.TryGetValue(name, out var f)) return f;
+        var b = Bundled.FirstOrDefault(x => string.Equals(x.name, name, StringComparison.OrdinalIgnoreCase));
+        try
+        {
+            f = b.folder is not null
+                ? new FontFamily(new Uri("pack://application:,,,/"), $"./Assets/Fonts/{b.folder}/#{b.name}, Segoe UI")
+                : new FontFamily(name);
+        }
+        catch { f = new FontFamily("Segoe UI"); }
+        _families[name] = f;
+        return f;
+    }
+
+    /// <summary>The app font, for code that draws its own text.</summary>
+    public static Typeface AppFace { get; private set; } = new("Segoe UI");
 
     private static AppTheme Dark(string name, string window, string surface, string accent, string? text = null, string? dim = null)
     {
@@ -128,8 +160,14 @@ public static class ThemeKit
         void Set(string key, string hex) { var b = new SolidColorBrush(ButtonLook.C(hex)); b.Freeze(); R[key] = b; }
         Set("WindowBg", t.Window); Set("Bar", t.Surface); Set("Surface2", t.Inner); Set("Field", t.Field); Set("Edge", t.Edge);
         Set("Text", t.Text); Set("Dim", t.Dim); Set("Accent", t.Accent);
-        Set("BarBack", t.Surface);                  // the bars' background (a scene may replace it: Appearance > Backgrounds)
-        R["AppFont"] = new FontFamily(t.Font);
+        Set("BarBack", t.Surface);
+        {   // scroll bars: an outline like the windows' edges, a little lighter so it can be seen
+            var e = ButtonLook.C(t.Edge); int up = t.Light ? -40 : 34;
+            var sb = new SolidColorBrush(Color.FromRgb((byte)Math.Clamp(e.R + up, 0, 255), (byte)Math.Clamp(e.G + up, 0, 255), (byte)Math.Clamp(e.B + up, 0, 255))); sb.Freeze();
+            R["ScrollEdge"] = sb;
+        }                  // the bars' background (a scene may replace it: Appearance > Backgrounds)
+        R["AppFont"] = Family(t.Font);
+        AppFace = new Typeface(Family(t.Font), FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
         R["AppFontSize"] = Math.Clamp(t.FontSize, 9, 18);
         IconFamily = new FontFamily(t.Icons == "Classic" ? "Segoe MDL2 Assets" : "Segoe Fluent Icons, Segoe MDL2 Assets");
         _iconFace = null;
