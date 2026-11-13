@@ -186,7 +186,7 @@ public sealed class AppearancePage : Border
     {
         var t = _s.TopBarStyle;
         static string Px(double v) => $"{v:0} px";
-        static string Auto(double v) => v <= 0 ? "fits the bars" : $"{v:0} px";
+        static string Auto(double v) => v <= 0 ? "auto" : $"{v:0} px";
 
         var big = Card("Logo", "Changes show in the bar above as you make them. The big logo covers the title bar and the top bar (turn that off in Appearance → Logo).");
         Slide(big, "Size", 0, 160, () => t.LogoSize, v => t.LogoSize = v, Auto, 1);
@@ -195,7 +195,7 @@ public sealed class AppearancePage : Border
         Slide(big, "Space before the switch", 0, 60, () => t.SwitchGap, v => t.SwitchGap = v, Px, 1);
 
         var small = Card("Logo while the bar is hidden", "When you scroll down and the top bar slides away, the logo shrinks into the title bar's top-left corner and the window's name slides along beside it.");
-        Slide(small, "Size", 0, 40, () => t.SmallSize, v => t.SmallSize = v, v => v <= 0 ? "fits the title bar" : $"{v:0} px", 1);
+        Slide(small, "Size", 0, 40, () => t.SmallSize, v => t.SmallSize = v, v => v <= 0 ? "auto" : $"{v:0} px", 1);
         Slide(small, "From the left", 0, 60, () => t.SmallX, v => t.SmallX = v, Px, 1);
         Slide(small, "Up or down", -10, 10, () => t.SmallY, v => t.SmallY = v, Px, 1);
         Slide(small, "Animation", 60, 1000, () => t.Speed, v => t.Speed = v, v => $"{v:0} ms", 20);
