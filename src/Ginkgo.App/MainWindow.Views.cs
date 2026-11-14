@@ -326,8 +326,8 @@ public partial class MainWindow
             var item = new ToggleButton { Style = (Style)FindResource("SideItem"), ToolTip = Describe(v), MinHeight = 44 };
             var dp = new DockPanel();
             // the icon sits in a box of its own, a little bigger than the glyph, so nothing of it is cut off
-            var icon = new TextBlock { Text = "", FontFamily = ThemeKit.IconFamily, FontSize = 15, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-            icon.SetResourceReference(TextBlock.ForegroundProperty, "Dim");
+            var icon = new IconGlyph { Glyph = "", Size = 15, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+            icon.SetResourceReference(IconGlyph.ForegroundProperty, "Dim");
             dp.Children.Add(new Border { Width = 26, Height = 26, Margin = new Thickness(0, 0, 8, 0), Child = icon, VerticalAlignment = VerticalAlignment.Center });
             dp.Children.Add(new TextBlock { Text = v.Name, VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
             item.Content = dp;

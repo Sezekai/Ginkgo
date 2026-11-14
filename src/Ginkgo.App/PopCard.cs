@@ -23,13 +23,23 @@ public sealed class PopCard : Grid
     private readonly Canvas _notch = new() { Height = 10, VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false };
     private readonly TextBlock _title = new() { FontSize = 13, FontWeight = FontWeights.SemiBold, Margin = new Thickness(14, 10, 14, 0) };
     private double _notchX = 30;
+    private static FontFamily? _font;
+    private static double _size;
+
+    /// <summary>The pop-outs' font and text size (Appearance → Text); open ones change at once.</summary>
+    public static void SetFonts(FontFamily font, double size)
+    {
+        _font = font; _size = size;
+        foreach (var w in All) if (w.TryGetTarget(out var c)) { TextElement.SetFontFamily(c, font); TextElement.SetFontSize(c, size); }
+    }
 
     public PopCard(UIElement content, string title)
     {
         Margin = new Thickness(6, 0, 20, 20);
         _title.Text = title;
         _title.SetResourceReference(TextBlock.ForegroundProperty, "Text");
-        TextElement.SetFontFamily(this, (FontFamily)Application.Current.Resources["AppFont"]);
+        TextElement.SetFontFamily(this, _font ?? (FontFamily)Application.Current.Resources["AppFont"]);
+        if (_size > 0) TextElement.SetFontSize(this, _size);
         var stack = new DockPanel();
         DockPanel.SetDock(_title, Dock.Top);
         stack.Children.Add(_title); stack.Children.Add(content);

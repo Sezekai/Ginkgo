@@ -158,6 +158,7 @@ public sealed class AppSettings
     public FavLook FavStyle { get; set; } = new();
     public ScrollLook ScrollBars { get; set; } = new();
     public TopBarLook TopBarStyle { get; set; } = new();
+    public FontsLook Fonts { get; set; } = new();
     /// <summary>For each kind of look, the saved look it was last loaded from or saved to ("" = none).</summary>
     public Dictionary<string, string> LookNames { get; set; } = new();
     /// <summary>The slideshow: play GIFs through to the end before the next picture.</summary>

@@ -34,7 +34,7 @@ public partial class MainWindow
             Navigate("Appearance"); await Task.Delay(500);
             if (_pageKey != "Appearance") Fail("Appearance did not open from the section switch");
             int n = 10;
-            foreach (var key in new[] { "Theme", "Buttons", "Top bar", "Logo", "Background", "Folders", "Sets", "Favourites", "Video outlines", "Scroll bars" })
+            foreach (var key in new[] { "Theme", "Text", "Buttons", "Top bar", "Logo", "Background", "Folders", "Sets", "Favourites", "Video outlines", "Scroll bars" })
             {
                 _appearance?.ShowPage(key); await Task.Delay(900);
                 Shot(this, Path.Combine(dir, $"{n++}-appearance-{key.Replace(' ', '-').ToLowerInvariant()}.png"));

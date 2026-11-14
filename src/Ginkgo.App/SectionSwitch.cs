@@ -27,7 +27,7 @@ public sealed class SectionSwitch : Border
     private readonly Grid _grid = new();
     private readonly Border _knob = new() { IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Left };
     private readonly TranslateTransform _shift = new();
-    private readonly TextBlock[] _icons = new TextBlock[Sections.Length];
+    private readonly IconGlyph[] _icons = new IconGlyph[Sections.Length];
     private readonly Border[] _slots = new Border[Sections.Length];
     private int _at;
     private double Slot = 38;
@@ -50,8 +50,7 @@ public sealed class SectionSwitch : Border
         for (int i = 0; i < Sections.Length; i++)
         {
             int at = i;
-            var icon = new TextBlock { Text = Sections[i].glyph, FontSize = 16, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-            icon.SetResourceReference(TextBlock.FontFamilyProperty, "IconFont");
+            var icon = new IconGlyph { Glyph = Sections[i].glyph, Size = 16, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
             _icons[i] = icon;
             var slot = new Border { Width = Slot, Background = Brushes.Transparent, Child = icon, Cursor = Cursors.Hand, ToolTip = $"{Sections[i].name}  (Ctrl+{i + 1}, or Ctrl+B / M then {i + 1})" };
             // on press: the bar under the switch would otherwise take the mouse to drag the window
@@ -78,7 +77,7 @@ public sealed class SectionSwitch : Border
         if (Math.Abs(slot - Slot) > 0.5)
         {
             Slot = slot; _knob.Width = slot;
-            for (int i = 0; i < _slots.Length; i++) { _slots[i].Width = slot; _icons[i].FontSize = Math.Max(8, Math.Round(h * 0.46 * _iconScale)); }
+            for (int i = 0; i < _slots.Length; i++) { _slots[i].Width = slot; _icons[i].Size = Math.Max(8, Math.Round(h * 0.46 * _iconScale)); }
         }
         _knob.CornerRadius = new CornerRadius(h / 2);
         _knob.Height = h;
@@ -123,7 +122,7 @@ public sealed class SectionSwitch : Border
             string key = i == _at ? "KeyOnText" : _slots[i].IsMouseOver ? "Text" : "Dim";
             var own = i == _at ? OnBrush : _slots[i].IsMouseOver ? HoverBrush : IconBrush;
             if (own is not null) _icons[i].Foreground = own;
-            else _icons[i].SetResourceReference(TextBlock.ForegroundProperty, key);
+            else _icons[i].SetResourceReference(IconGlyph.ForegroundProperty, key);
         }
         // the keyboard is here: an accent ring
         if (IsKeyboardFocused) { SetResourceReference(BorderBrushProperty, "Accent"); BorderThickness = new Thickness(2); Padding = new Thickness(1); }

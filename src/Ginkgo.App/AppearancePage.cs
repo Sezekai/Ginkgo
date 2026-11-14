@@ -56,10 +56,11 @@ public sealed class AppearancePage : Border
         foreach (var p in _pages)
         {
             var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(4, 6, 4, 6) };
-            var ic = new TextBlock { Text = p.Icon, FontSize = 15, Width = 30, Height = 24, TextAlignment = TextAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
-            ic.SetResourceReference(TextBlock.FontFamilyProperty, "IconFont");
+            // the icon centred by its shape in a fixed box, the name centred on the same line
+            var ic = new IconGlyph { Glyph = p.Icon, Size = 15, Width = 30, Height = 24, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
+            ic.SetBinding(IconGlyph.ForegroundProperty, new System.Windows.Data.Binding("Foreground") { RelativeSource = new System.Windows.Data.RelativeSource(System.Windows.Data.RelativeSourceMode.FindAncestor, typeof(ListBoxItem), 1) });
             row.Children.Add(ic);
-            row.Children.Add(new TextBlock { Text = p.Name, VerticalAlignment = VerticalAlignment.Center, FontSize = 13 });
+            row.Children.Add(new TextBlock { Text = p.Name, VerticalAlignment = VerticalAlignment.Center, FontSize = 13, Margin = new Thickness(0, 0, 0, 1) });
             _nav.Items.Add(new ListBoxItem { Content = row, Tag = p, Padding = new Thickness(6, 2, 6, 2) });
         }
         _nav.SelectionChanged += (_, _) => { if (_nav.SelectedItem is ListBoxItem { Tag: Page p }) Show(p); };
@@ -135,6 +136,12 @@ public sealed class AppearancePage : Border
         });
         _pages.Add(new Page
         {
+            Key = "Text", Name = "Text", Icon = "\uE8D2",
+            Subtitle = "A font and size for each part of Ginkgo. A part left on Theme uses the theme's font (Theme page) at its usual size.",
+            Get = () => _s.Fonts.Copy(), Set = o => _s.Fonts = ((FontsLook)o).Copy(), Default = () => new FontsLook(), Type = typeof(FontsLook), Build = BuildText,
+        });
+        _pages.Add(new Page
+        {
             Key = "Top bar", Name = "Top bar", Icon = "\uE8A0",
             Subtitle = "Dial in the top bar: the logo's size and place (big, and small while the bar is hidden), the section switch, the section's name, and their colours.",
             Get = () => _s.TopBarStyle.Copy(), Set = o => _s.TopBarStyle = ((TopBarLook)o).Copy(), Default = () => new TopBarLook(), Type = typeof(TopBarLook), Build = BuildTopBar,
@@ -179,6 +186,27 @@ public sealed class AppearancePage : Border
         });
     }
 
+    private void BuildText()
+    {
+        foreach (var (key, name, usual, min, max, note) in FontsLook.All)
+        {
+            var card = Card(name, note.Length > 0 ? note : null);
+            var pick = _s.Fonts.Get(key);
+            var box = new ComboBox { Width = 240, Height = 28 };
+            box.Items.Add(new ComboBoxItem { Content = "Theme (" + _s.Theme.Font + ")", Tag = "" });
+            foreach (var f in ThemeKit.Fonts) box.Items.Add(new ComboBoxItem { Content = f, FontFamily = ThemeKit.Family(f), Tag = f });
+            foreach (ComboBoxItem it in box.Items) if ((string)it.Tag == pick.Font) box.SelectedItem = it;
+            if (box.SelectedItem is null) box.SelectedIndex = 0;
+            box.SelectionChanged += (_, _) => { if (box.SelectedItem is ComboBoxItem { Tag: string f }) { pick.Font = f; Changed(); } };
+            Row(card, "Font", box);
+            // the section name and the window name keep their size with the top bar's layout
+            if (key == "Section") Slide(card, "Size", min, max, () => _s.TopBarStyle.TitleSize, v => _s.TopBarStyle.TitleSize = v, v => $"{v:0.#} px", 0.5);
+            else if (key == "Window") Slide(card, "Size", min, max, () => _s.TopBarStyle.NameSize, v => _s.TopBarStyle.NameSize = v, v => $"{v:0.#} px", 0.5);
+            else Slide(card, "Size", min - 0.5, max, () => pick.Size <= 0 ? min - 0.5 : pick.Size, v => pick.Size = v < min ? 0 : v,
+                       v => v < min ? $"usual ({(usual > 0 ? usual : _s.Theme.FontSize):0.#})" : $"{v:0.#} px", 0.5);
+        }
+    }
+
     /// <summary>Set by the main window: shows the small logo for a moment, as when the top bar hides.</summary>
     public static Action? PreviewSmallLogo;
 
@@ -216,10 +244,41 @@ public sealed class AppearancePage : Border
         Check(title, "Bold", () => t.TitleBold, v => t.TitleBold = v);
         Colour(title, "Colour", () => t.TitleColour, v => t.TitleColour = v, allowBlank: true);
 
-        var name = Card("Window name (\"Ginkgo\" in the title bar)");
+        var name = Card("Window name (\"Ginkgo\" in the title bar)", "Its own place with the whole top bar showing, and with only the title bar showing (after scrolling down).");
         Slide(name, "Text size", 8, 24, () => t.NameSize, v => t.NameSize = v, Px, 1);
         Slide(name, "Space after the logo", 0, 40, () => t.NameGap, v => t.NameGap = v, Px, 1);
+        Slide(name, "Whole bar: left or right", -200, 600, () => t.NameX, v => t.NameX = v, Px, 1);
+        Slide(name, "Whole bar: up or down", -14, 14, () => t.NameY, v => t.NameY = v, Px, 1);
+        Slide(name, "Title bar only: left or right", -100, 600, () => t.SmallNameX, v => t.SmallNameX = v, Px, 1);
+        Slide(name, "Title bar only: up or down", -14, 14, () => t.SmallNameY, v => t.SmallNameY = v, Px, 1);
         Colour(name, "Colour", () => t.NameColour, v => t.NameColour = v, allowBlank: true);
+
+        var bar = Card("Title bar");
+        Slide(bar, "Height", 20, 64, () => t.TitleHeight, v => t.TitleHeight = v, Px, 1);
+        Choice(bar, "Line under it", new[] { ("Line", "A line"), ("None", "No line") }, () => t.Separator, v => t.Separator = v, Rebuild);
+        if (t.Separator != "None")
+        {
+            Slide(bar, "Line starts after the logo", -100, 400, () => t.LineGap, v => t.LineGap = v, Px, 1);
+            Colour(bar, "Line colour", () => t.LineColour, v => t.LineColour = v, allowBlank: true, blankText: "Edge");
+        }
+
+        var win = Card("Window buttons (minimise, maximise, close)");
+        Check(win, "Outline round them", () => t.CaptionOutline, v => t.CaptionOutline = v, after: Rebuild);
+        if (t.CaptionOutline)
+        {
+            Colour(win, "Outline colour", () => t.CaptionOutlineColour, v => t.CaptionOutlineColour = v, allowBlank: true, blankText: "Edge");
+            Slide(win, "Outline width", 0.5, 4, () => t.CaptionOutlineWidth, v => t.CaptionOutlineWidth = v, v => $"{v:0.0} px", 0.5);
+            Slide(win, "Rounded corners", 0, 20, () => t.CaptionRadius, v => t.CaptionRadius = v, Px, 1);
+        }
+        Slide(win, "Width (each)", 24, 100, () => t.CaptionWidth, v => t.CaptionWidth = v, Px, 1);
+        Slide(win, "Height", 0, 64, () => t.CaptionHeight, v => t.CaptionHeight = v, v => v <= 0 ? "full height" : $"{v:0} px", 1);
+        Slide(win, "Icon size", 6, 20, () => t.CaptionIcon, v => t.CaptionIcon = v, Px, 0.5);
+        Slide(win, "Space from the corner", 0, 20, () => t.CaptionInset, v => t.CaptionInset = v, Px, 1);
+
+        var ctl = Card("Controls under the title bar", "The section switch, its name and the buttons after them.");
+        Slide(ctl, "Up or down", -80, 80, () => t.ControlsY, v => t.ControlsY = v, Px, 1);
+        Slide(ctl, "Space above", 0, 60, () => t.SpaceAbove, v => t.SpaceAbove = v, Px, 1);
+        Slide(ctl, "Space below", 0, 60, () => t.SpaceBelow, v => t.SpaceBelow = v, Px, 1);
     }
 
     private void BuildScrollBars()

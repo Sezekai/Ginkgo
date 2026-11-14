@@ -338,5 +338,66 @@ public sealed class TopBarLook
     public double NameGap { get; set; } = 12;
     public string NameColour { get; set; } = "";
 
+    // the title bar
+    public double TitleHeight { get; set; } = 29;
+    /// <summary>"Line": a line under the title bar, starting after the logo. "None": no line.</summary>
+    public string Separator { get; set; } = "Line";
+    public double LineGap { get; set; } = 8;
+    public string LineColour { get; set; } = "";
+    // the window name's own nudges: with the whole bar showing, and with only the title bar (while scrolling)
+    public double NameX { get; set; }
+    public double NameY { get; set; }
+    public double SmallNameX { get; set; }
+    public double SmallNameY { get; set; }
+    // the window buttons (minimise, maximise, close)
+    public bool CaptionOutline { get; set; }
+    public string CaptionOutlineColour { get; set; } = "";
+    public double CaptionOutlineWidth { get; set; } = 1;
+    public double CaptionRadius { get; set; } = 6;
+    public double CaptionWidth { get; set; } = 42;
+    /// <summary>0: the title bar's full height.</summary>
+    public double CaptionHeight { get; set; }
+    public double CaptionIcon { get; set; } = 9;
+    /// <summary>Space between the buttons and the window's top-right corner.</summary>
+    public double CaptionInset { get; set; }
+    // the controls under it
+    public double ControlsY { get; set; }
+    public double SpaceAbove { get; set; } = 10;
+    public double SpaceBelow { get; set; } = 10;
+
     public TopBarLook Copy() => JsonSerializer.Deserialize<TopBarLook>(JsonSerializer.Serialize(this))!;
+}
+
+/// <summary>One part of the app's text: its font ("" = the theme's font) and size (0 = its usual size).</summary>
+public sealed class FontPick
+{
+    public string Font { get; set; } = "";
+    public double Size { get; set; }
+}
+
+/// <summary>A font and size for each part of the app separately (Appearance → Text). Anything left alone follows the theme.</summary>
+public sealed class FontsLook
+{
+    public Dictionary<string, FontPick> Parts { get; set; } = new();
+
+    public FontPick Get(string key) => Parts.TryGetValue(key, out var p) ? p : Parts[key] = new FontPick();
+
+    /// <summary>The parts, in the order the page lists them: key, name, usual size, smallest, largest, a note.</summary>
+    public static readonly (string key, string name, double usual, double min, double max, string note)[] All =
+    {
+        ("Section", "Section name (beside the switch)", 24, 10, 48, ""),
+        ("Window", "Window name (\"Ginkgo\" in the title bar)", 12, 8, 24, ""),
+        ("Buttons", "Button text", 0, 8, 20, "The top bar's buttons and every other button."),
+        ("Switches", "Folder switches", 0, 8, 20, "The folder names in the folder pop-outs."),
+        ("Popouts", "Pop-outs", 0, 8, 20, "Text in the folder, filter, views and slideshow pop-outs."),
+        ("Path", "Browse's folder path", 0, 8, 22, ""),
+        ("Grid", "Labels on the pictures", 11, 7, 18, "Set names, folder names and the size strip under a picture."),
+        ("Status", "Status bar", 0, 8, 18, ""),
+        ("Pages", "Appearance and Settings", 0, 9, 18, ""),
+        ("Viewer", "Viewer text", 12, 8, 22, "The picture's details and the messages that show over it."),
+        ("Menus", "Right-click menus", 0, 8, 20, ""),
+        ("Tooltips", "Tooltips", 0, 8, 18, ""),
+    };
+
+    public FontsLook Copy() => JsonSerializer.Deserialize<FontsLook>(JsonSerializer.Serialize(this))!;
 }

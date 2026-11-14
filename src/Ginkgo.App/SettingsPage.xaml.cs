@@ -29,10 +29,11 @@ public partial class SettingsPage : UserControl
         BuildGpu();
         BuildSets();
         BuildView();
-        BuildFolderTree();
         BuildResets();
         _init = false;
-        OnMeasure(this, new RoutedEventArgs());
+        // the slow parts (adding up the cache from the index, listing the library's folders on its drive) run in the
+        // background each time the page is shown, so it opens at once
+        Loaded += (_, _) => { OnMeasure(this, new RoutedEventArgs()); _ = BuildFolderTreeAsync(); };
     }
 
     private void OnChooseLibrary(object s, RoutedEventArgs e)
@@ -66,12 +67,31 @@ public partial class SettingsPage : UserControl
 
     private readonly HashSet<string> _excl = new(StringComparer.OrdinalIgnoreCase);
 
-    private void BuildFolderTree()
+    private bool _treeBuilt;
+
+    /// <summary>The library's folders, read from the drive in the background (a big library on a hard drive takes a moment).</summary>
+    private async Task BuildFolderTreeAsync()
     {
+        if (_treeBuilt) return;
+        _treeBuilt = true;
+        _excl.Clear();
         foreach (var e in _s.ExcludedFolders) _excl.Add(e.Replace('/', '\\'));
         FolderTree.Items.Clear();
-        if (!System.IO.Directory.Exists(_s.LibraryRoot)) { FolderTree.Items.Add(new TreeViewItem { Header = "(the library folder can't be found right now)" }); return; }
-        foreach (var d in Kids(_s.LibraryRoot)) FolderTree.Items.Add(Node(d));
+        FolderTree.Items.Add(new TreeViewItem { Header = "Reading the library's folders...", Foreground = ThemeKit.Brush("Dim") });
+        string root = _s.LibraryRoot;
+        var tops = await Task.Run(() =>
+        {
+            if (!System.IO.Directory.Exists(root)) return null;
+            return Kids(root).Select(d => (d, HasKids(d))).ToList();
+        });
+        FolderTree.Items.Clear();
+        if (tops is null) { FolderTree.Items.Add(new TreeViewItem { Header = "(the library folder can't be found right now)" }); return; }
+        foreach (var (d, kids) in tops) FolderTree.Items.Add(Node(d, kids));
+    }
+
+    private static bool HasKids(string dir)
+    {
+        try { return System.IO.Directory.EnumerateDirectories(dir).Any(); } catch { return false; }
     }
 
     private static IEnumerable<string> Kids(string dir)
@@ -80,7 +100,7 @@ public partial class SettingsPage : UserControl
         catch { return Array.Empty<string>(); }
     }
 
-    private TreeViewItem Node(string full)
+    private TreeViewItem Node(string full, bool hasKids)
     {
         string rel = System.IO.Path.GetRelativePath(_s.LibraryRoot, full);
         var cb = new CheckBox { Content = System.IO.Path.GetFileName(full), IsChecked = !_excl.Contains(rel), Foreground = ThemeKit.Brush("Text") };
@@ -91,15 +111,16 @@ public partial class SettingsPage : UserControl
             ApplyFoldersBtn.IsEnabled = true;
             FoldersNote.Text = $"{_excl.Count} folder{(_excl.Count == 1 ? "" : "s")} left out";
         };
-        if (Kids(full).Any())
+        if (hasKids)
         {
-            item.Items.Add("…");                                    // filled when opened
-            item.Expanded += (_, _) =>
+            item.Items.Add("…");                                    // filled when opened, from the drive in the background
+            item.Expanded += async (_, _) =>
             {
                 if (item.Items.Count == 1 && item.Items[0] is string)
                 {
+                    var kids = await Task.Run(() => Kids(full).Select(k => (k, HasKids(k))).ToList());
                     item.Items.Clear();
-                    foreach (var k in Kids(full)) item.Items.Add(Node(k));
+                    foreach (var (k, more) in kids) item.Items.Add(Node(k, more));
                 }
             };
         }
@@ -181,9 +202,12 @@ public partial class SettingsPage : UserControl
     private void OnSharpAll(object s, RoutedEventArgs e) => _ = RunSharp(true);
     private void OnSharpStop(object s, RoutedEventArgs e) => _sharpCts?.Cancel();
 
-    private void OnMeasure(object s, RoutedEventArgs e)
+    private async void OnMeasure(object s, RoutedEventArgs e)
     {
-        var usage = _engine.CacheUsage();
+        if (UsageText.Text.Length == 0) UsageText.Text = "Measuring...";
+        IReadOnlyList<TierUsage> usage;
+        try { usage = await Task.Run(() => _engine.CacheUsage()); }
+        catch (Exception ex) { UsageText.Text = "Couldn't measure: " + ex.Message; return; }
         UsageText.Text = usage.Count == 0 ? "(not ready yet)" : string.Join("\n", usage.Select(u =>
             $"{u.Name,-6} {u.OnDisk / 1048576.0,9:F0} MB on disk   {u.Wasted / 1048576.0,7:F0} MB unused"));
     }

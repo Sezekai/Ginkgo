@@ -16,11 +16,14 @@
     <Grid x:Name="TitleBar" DockPanel.Dock="Top" Panel.ZIndex="1" Height="29" Background="{DynamicResource BarBack}" MouseLeftButtonDown="OnTitleDown" MouseMove="OnTitleMove" MouseLeftButtonUp="OnTitleUp">
         <Border x:Name="TitleLine" VerticalAlignment="Bottom" Height="1" Background="{DynamicResource Edge}" IsHitTestVisible="False"/>
         <TextBlock x:Name="TitleText" Text="Ginkgo" FontSize="12" Foreground="{DynamicResource Text}" VerticalAlignment="Center" Margin="14,0,0,1" IsHitTestVisible="False"/>
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button Style="{StaticResource CaptionButton}" Content="&#xE921;" Click="OnMinimize" ToolTip="Minimise"/>
-            <Button x:Name="MaxBtn" Style="{StaticResource CaptionButton}" Content="&#xE922;" Click="OnMaximize" ToolTip="Maximise"/>
-            <Button Style="{StaticResource CaptionClose}" Content="&#xE8BB;" Click="OnClose" ToolTip="Close"/>
-        </StackPanel>
+        <!-- the window buttons: can have an outline round them, and their own size (Appearance → Top bar) -->
+        <Border x:Name="CaptionFrame" HorizontalAlignment="Right" BorderBrush="{DynamicResource Edge}" BorderThickness="0">
+            <StackPanel x:Name="CaptionBox" Orientation="Horizontal">
+                <Button x:Name="MinBtn" Style="{StaticResource CaptionButton}" Content="&#xE921;" Click="OnMinimize" ToolTip="Minimise"/>
+                <Button x:Name="MaxBtn" Style="{StaticResource CaptionButton}" Content="&#xE922;" Click="OnMaximize" ToolTip="Maximise"/>
+                <Button x:Name="CloseBtn" Style="{StaticResource CaptionClose}" Content="&#xE8BB;" Click="OnClose" ToolTip="Close"/>
+            </StackPanel>
+        </Border>
     </Grid>
     <Grid x:Name="Root">
         <Grid.RowDefinitions>

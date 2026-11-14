@@ -26,7 +26,14 @@ public sealed class MasonryView : FrameworkElement
     /// <summary>The space between tiles (screen units).</summary>
     public float Gap { get => _gap; set { value = Math.Clamp(value, 0, 40); if (Math.Abs(_gap - value) < 0.01) return; _gap = value; Relayout(); } }
     private readonly List<int> _visible = new();
-    private static Typeface _face => ThemeKit.AppFace;
+    private static Typeface? _labelFace;
+    private static double LS = 1;           // the labels' size, against their usual size (Appearance → Text)
+    private static Typeface _face => _labelFace ?? ThemeKit.AppFace;
+
+    /// <summary>The font of the labels drawn on the pictures, and how big they are against their usual size.</summary>
+    public static void SetLabelFont(Typeface face, double scale) { _labelFace = face; LS = Math.Clamp(scale, 0.5, 2); _fontVersion++; }
+    private static int _fontVersion;
+    private int _seenFontVersion;
     private readonly Brush[] _palette;
     private readonly Pen _hover = MakePen();
     private static Pen MakePen() { var p = new Pen(Brushes.White, 2); p.Freeze(); return p; }
@@ -378,7 +385,11 @@ public sealed class MasonryView : FrameworkElement
     public bool InRelayout { get; private set; }
 
     /// <summary>Lays the tiles out again (a look that changes the layout, such as sets without gaps).</summary>
-    public void RefreshLayout() => Relayout();
+    public void RefreshLayout()
+    {
+        if (_seenFontVersion != _fontVersion) { _seenFontVersion = _fontVersion; _textCache.Clear(); _subCache.Clear(); }
+        Relayout();
+    }
 
     private void Relayout()
     {
@@ -1168,11 +1179,11 @@ public sealed class MasonryView : FrameworkElement
         double maxW = Math.Max(10, r.Width - 2);
         if (!_textCache.TryGetValue(i, out var ft) || Math.Abs(ft.MaxTextWidth - maxW) > 0.5)
         {
-            ft = new FormattedText(name, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, _face, 13, Brushes.White, dpi)
+            ft = new FormattedText(name, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, _face, (13) * LS, Brushes.White, dpi)
             { MaxTextWidth = maxW, MaxLineCount = sub.Length > 0 ? 1 : 2, Trimming = TextTrimming.CharacterEllipsis };
             ft.SetFontWeight(FontWeights.SemiBold);
             _textCache[i] = ft;
-            _subCache[i] = new FormattedText(sub, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, _face, 11.5, CaptionDim, dpi)
+            _subCache[i] = new FormattedText(sub, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, _face, (11.5) * LS, CaptionDim, dpi)
             { MaxTextWidth = maxW, MaxLineCount = 2, Trimming = TextTrimming.CharacterEllipsis };
         }
         dc.DrawText(ft, new Point(r.Left + 1, r.Bottom + 5));
@@ -1188,13 +1199,13 @@ public sealed class MasonryView : FrameworkElement
         double maxW = Math.Max(10, r.Width - 16);
         if (!_textCache.TryGetValue(i, out var ft) || Math.Abs(ft.MaxTextWidth - maxW) > 0.5)
         {
-            ft = new FormattedText("\uE8B7  " + name, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, _face, 14, Brushes.White, dpi)
+            ft = new FormattedText("\uE8B7  " + name, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, _face, (14) * LS, Brushes.White, dpi)
             { MaxTextWidth = maxW, MaxLineCount = 1, Trimming = TextTrimming.CharacterEllipsis };
             ft.SetFontFamily(ThemeKit.IconFamily, 0, 1);
-            ft.SetFontSize(12, 0, 1);
+            ft.SetFontSize(12 * LS, 0, 1);
             ft.SetFontWeight(FontWeights.SemiBold, 1, ft.Text.Length - 1);
             _textCache[i] = ft;
-            _subCache[i] = new FormattedText(sub, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, _face, 11.5, CaptionDim, dpi)
+            _subCache[i] = new FormattedText(sub, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, _face, (11.5) * LS, CaptionDim, dpi)
             { MaxTextWidth = maxW, MaxLineCount = 2, Trimming = TextTrimming.CharacterEllipsis };
         }
         var st = _subCache[i];
@@ -1386,7 +1397,7 @@ public sealed class MasonryView : FrameworkElement
             if (first.Width < 70 * sk || first.Height < 36 * sk) continue;
             if (!look.Label && !b.Collapsed && !b.Large) continue;      // (a stacked or large set keeps its label: it opens and closes it)
             string text = b.Collapsed ? $"{b.Name}  ·  {b.Total} images  ▸" : b.Large ? $"{b.Name}  ·  {b.Total}  ▴" : $"{b.Name}  ·  {b.Total}";
-            var ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 11 * sk, Brushes.White, ppd)
+            var ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, (11 * sk) * LS, Brushes.White, ppd)
             { MaxTextWidth = Math.Max(10, first.Width - 24 * sk), MaxLineCount = 1, Trimming = TextTrimming.CharacterEllipsis };
             var at = parts[^1];                                    // the bottom-left corner of the set (its last row in equal rows)
             double bh = Math.Round(17 * sk), pad = 6 * sk;
@@ -1534,7 +1545,7 @@ public sealed class MasonryView : FrameworkElement
     private void DrawHoverDetails(DrawingContext dc, Rect r, string text)
     {
         double ppd = VisualTreeHelper.GetDpi(this).PixelsPerDip;
-        var ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 10.5, Brushes.White, ppd)
+        var ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, (10.5) * LS, Brushes.White, ppd)
         { MaxTextWidth = Math.Max(10, r.Width - 56), MaxLineCount = 1, Trimming = TextTrimming.CharacterEllipsis };
         var box = new Rect(r.Right - ft.Width - 16, r.Top + 6, ft.Width + 10, 17);
         dc.DrawRoundedRectangle(BadgeBack, null, box, 3, 3);
@@ -1546,7 +1557,7 @@ public sealed class MasonryView : FrameworkElement
     {
         if (busyCorner) return;
         double ppd = VisualTreeHelper.GetDpi(this).PixelsPerDip;
-        var ft = new FormattedText("+" + n, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 10.5, Brushes.White, ppd);
+        var ft = new FormattedText("+" + n, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, (10.5) * LS, Brushes.White, ppd);
         var box = new Rect(r.Right - ft.Width - 16, r.Bottom - 22, ft.Width + 10, 16);
         dc.DrawRoundedRectangle(BadgeBack, null, box, 3, 3);
         dc.DrawText(ft, new Point(box.Left + 5, box.Top + (16 - ft.Height) / 2));
@@ -1565,7 +1576,7 @@ public sealed class MasonryView : FrameworkElement
         string key = k < 1 ? text + "|" + k : text;
         if (!_badgeCache.TryGetValue(key, out var ft))
         {
-            ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 11 * k, Brushes.White, VisualTreeHelper.GetDpi(this).PixelsPerDip);
+            ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, (11 * k) * LS, Brushes.White, VisualTreeHelper.GetDpi(this).PixelsPerDip);
             if (_badgeCache.Count > 500) _badgeCache.Clear();
             _badgeCache[key] = ft;
         }
@@ -1590,7 +1601,7 @@ public sealed class MasonryView : FrameworkElement
         double k = UiScale(r);
         if (r.Width < 56 || !LabelsFit(r)) return;
         double fs = 11 * k, bh = Math.Round(16 * k);
-        var ft = new FormattedText(time, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, fs, Brushes.White, ppd);
+        var ft = new FormattedText(time, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, (fs) * LS, Brushes.White, ppd);
         FormattedText? pz = paused ? new FormattedText("Paused", CultureInfo.InvariantCulture, FlowDirection.LeftToRight, new Typeface(_face.FontFamily, FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal), fs, PausedText, ppd) : null;
         double pad = 5 * k;
         double wBox = ft.Width + 2 * pad + (pz is null ? 0 : pz.Width + 7 * k);
@@ -1667,7 +1678,7 @@ public sealed class MasonryView : FrameworkElement
                 double fh = tr.Height * shownVol / 100.0;
                 dc.DrawRoundedRectangle(TimelineArt.Played, null, new Rect(tr.Left, tr.Bottom - fh, tr.Width, fh), 2, 2);
                 dc.DrawEllipse(TimelineArt.Knob, null, new Point(tr.Left + tr.Width / 2, tr.Bottom - fh), 5 * k, 5 * k);
-                var nt = new FormattedText(shownVol.ToString(), CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, 10.5 * k, Brushes.White, ppd);
+                var nt = new FormattedText(shownVol.ToString(), CultureInfo.InvariantCulture, FlowDirection.LeftToRight, _face, (10.5 * k) * LS, Brushes.White, ppd);
                 dc.DrawText(nt, new Point(panel.Left + (panel.Width - nt.Width) / 2, panel.Bottom - 6 * k - nt.Height));
             }
         }

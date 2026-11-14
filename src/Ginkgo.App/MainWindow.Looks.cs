@@ -27,6 +27,7 @@ public partial class MainWindow
         MasonryView.FavStyle = _settings.FavStyle;
         ApplyVideoLook();
         ApplyScrollLook();
+        ApplyFonts();
         ApplyScenes();
         View.RefreshLayout();
         View.ThemeChanged();

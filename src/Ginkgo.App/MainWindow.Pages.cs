@@ -23,16 +23,20 @@ public partial class MainWindow
         if (_pageKey != key)
         {
             _pageKey = key;
+            // each page is built the first time it is opened and kept, so opening it again is instant
             if (key == "Appearance")
             {
-                _appearance = new AppearancePage(_settings, ThemeApplied, LooksApplied);
-                _appearance.PageShown += k => _appearanceAt = k;
-                if (_appearanceAt is not null) _appearance.ShowPage(_appearanceAt);
+                if (_appearance is null)
+                {
+                    _appearance = new AppearancePage(_settings, ThemeApplied, LooksApplied);
+                    _appearance.PageShown += k => _appearanceAt = k;
+                    if (_appearanceAt is not null) _appearance.ShowPage(_appearanceAt);
+                }
                 PageHost.Child = _appearance;
             }
             else
             {
-                _settingsPage = new SettingsPage(this, _settings, _engine);
+                _settingsPage ??= new SettingsPage(this, _settings, _engine);
                 PageHost.Child = _settingsPage;
             }
         }
@@ -51,7 +55,6 @@ public partial class MainWindow
         _pageKey = null;
         PageHost.Visibility = Visibility.Collapsed;
         PageHost.Child = null;
-        _appearance = null; _settingsPage = null;
         BarRow.PinnedOnly = false;
         SaveSettings();
         UpdateNavUi();

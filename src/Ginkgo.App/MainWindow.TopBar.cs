@@ -48,7 +48,37 @@ public partial class MainWindow
         SectionTitle.FontWeight = t.TitleBold ? FontWeights.SemiBold : FontWeights.Normal;
         if (BrushOrNull(t.TitleColour) is { } tc) SectionTitle.Foreground = tc; else SectionTitle.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, "Text");
         TitleText.FontSize = Math.Clamp(t.NameSize, 8, 24);
+        // the title bar, its line and the window buttons
+        TitleBar.Height = Math.Clamp(t.TitleHeight, 20, 64);
+        TitleLine.Visibility = t.Separator == "None" ? Visibility.Collapsed : Visibility.Visible;
+        if (BrushOrNull(t.LineColour) is { } lc) TitleLine.Background = lc; else TitleLine.SetResourceReference(System.Windows.Controls.Border.BackgroundProperty, "Edge");
+        double inset = Math.Clamp(t.CaptionInset, 0, 20);
+        double bh = t.CaptionHeight > 0 ? Math.Min(t.CaptionHeight, TitleBar.Height - inset * 2) : double.NaN;
+        CaptionFrame.Margin = new Thickness(0, inset, inset, inset);
+        CaptionFrame.VerticalAlignment = double.IsNaN(bh) ? VerticalAlignment.Stretch : VerticalAlignment.Center;
+        CaptionFrame.BorderThickness = new Thickness(t.CaptionOutline ? Math.Clamp(t.CaptionOutlineWidth, 0.5, 4) : 0);
+        CaptionFrame.CornerRadius = new CornerRadius(t.CaptionOutline ? Math.Clamp(t.CaptionRadius, 0, 20) : 0);
+        if (BrushOrNull(t.CaptionOutlineColour) is { } cc) CaptionFrame.BorderBrush = cc; else CaptionFrame.SetResourceReference(System.Windows.Controls.Border.BorderBrushProperty, "Edge");
+        foreach (var b in new[] { MinBtn, MaxBtn, CloseBtn })
+        {
+            b.Width = Math.Clamp(t.CaptionWidth, 24, 100);
+            b.Height = bh;
+            b.FontSize = Math.Clamp(t.CaptionIcon, 6, 20);
+        }
+        // the hover colour stays inside the rounded outline
+        CaptionBox.SizeChanged -= ClipCaptions; CaptionBox.SizeChanged += ClipCaptions;
+        ClipCaptions(null, null);
+        // the controls under the title bar: space above and below, and nudged up or down
+        BarRow.Margin = new Thickness(14, Math.Clamp(t.SpaceAbove, 0, 60), 10, Math.Clamp(t.SpaceBelow, 0, 60));
+        BarRow.RenderTransform = new TranslateTransform(0, Math.Clamp(t.ControlsY, -80, 80));
         if (BrushOrNull(t.NameColour) is { } nc) TitleText.Foreground = nc; else TitleText.SetResourceReference(System.Windows.Controls.TextBlock.ForegroundProperty, "Text");
+    }
+
+    private void ClipCaptions(object? s, SizeChangedEventArgs? e)
+    {
+        var t = _settings.TopBarStyle;
+        double r = t.CaptionOutline ? Math.Max(0, Math.Clamp(t.CaptionRadius, 0, 20) - CaptionFrame.BorderThickness.Left) : 0;
+        CaptionBox.Clip = r > 0 ? new RectangleGeometry(new Rect(CaptionBox.RenderSize), r, r) : null;
     }
 
     private static Brush? BrushOrNull(string hex)
@@ -98,7 +128,7 @@ public partial class MainWindow
             Logo.SetButtonColours(_settings.Look);
             Logo.Margin = new Thickness(6, 0, Math.Clamp(t.SwitchGap, 0, 80), 0);
             StopLogoAnimations();
-            TitleText.Margin = new Thickness(14, 0, 0, 1);
+            TitleText.Margin = new Thickness(14 + t.NameX, t.NameY, 0, 1 - t.NameY);
             TitleLine.Margin = new Thickness(0);
         }
     }
@@ -118,8 +148,10 @@ public partial class MainWindow
         double k = small ? s / Math.Max(1, h) : 1;
         double dx = small ? at.X - t.LogoX : 0, dy = small ? at.Y - t.LogoY : 0;
         double gap = Math.Clamp(t.NameGap, 0, 60);
-        var name = new Thickness(small ? at.X + s + gap : t.LogoX + h + gap, 0, 0, 1);
-        var line = small ? new Thickness(0) : new Thickness(t.LogoX + h + 8, 0, 0, 0);
+        // the window name: after the logo, then nudged by its own amounts for each state
+        double nx = small ? t.SmallNameX : t.NameX, ny = small ? t.SmallNameY : t.NameY;
+        var name = new Thickness((small ? at.X + s + gap : t.LogoX + h + gap) + nx, ny, 0, 1 - ny);
+        var line = small ? new Thickness(0) : new Thickness(t.LogoX + h + Math.Clamp(t.LineGap, -200, 400), 0, 0, 0);
         if (!animate)
         {
             StopLogoAnimations();

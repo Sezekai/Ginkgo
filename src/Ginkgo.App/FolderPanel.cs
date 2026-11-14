@@ -41,7 +41,7 @@ public sealed class FolderPanel : Border
     private readonly Dictionary<string, Node> _nodes = new(StringComparer.OrdinalIgnoreCase);
     private List<Node> _roots = new();
     private string _sort = "Name"; private bool _reverse;
-    private sealed class Btn { public Border B = null!; public Border Shine = null!; public TextBlock Name = null!; public TextBlock? Arrow; public Node N = null!; public bool Own; public Brush Fill = null!, Hover = null!; public int Depth; }
+    private sealed class Btn { public Border B = null!; public Border Shine = null!; public TextBlock Name = null!; public IconGlyph? Arrow; public Node N = null!; public bool Own; public Brush Fill = null!, Hover = null!; public int Depth; }
     private readonly List<Btn> _btns = new();
     private bool _painting, _paintOn;
 
@@ -50,6 +50,11 @@ public sealed class FolderPanel : Border
     private static ButtonLook.Kit[] MakeKits(ButtonLook l) => new[] { l.KitFor(0), l.KitFor(1), l.KitFor(2) };
     private static bool _glow, _outlined;
     /// <summary>Puts a new look on the folder switches (open panels follow with <see cref="Restyle"/>).</summary>
+    private static FontFamily? _switchFont;
+    private static double _switchSize;
+    /// <summary>The folder switches' font and size (Appearance → Text); used the next time the switches are built.</summary>
+    public static void SetSwitchFont(FontFamily f, double size) { _switchFont = f; _switchSize = size; }
+
     public static void SetLook(ButtonLook l) { _kits = MakeKits(l); _glow = l.Glow > 0.01; _outlined = l.Outline != "None"; }
     /// <summary>Re-colours every switch after a look change.</summary>
     public void Restyle() => Rebuild();
@@ -304,10 +309,10 @@ public sealed class FolderPanel : Border
         var row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
         if (hasKids)
         {
-            var arrow = new TextBlock
+            var arrow = new IconGlyph
             {
-                Text = open ? "\uE70D" : "\uE76C", FontFamily = ThemeKit.IconFamily, FontSize = 10, Foreground = Txt,
-                VerticalAlignment = VerticalAlignment.Center, Padding = new Thickness(7, 6, 7, 6), Margin = new Thickness(-8, -4, 2, -4),
+                Glyph = open ? "\uE70D" : "\uE76C", Size = 10, Foreground = Txt, Width = 24, Height = 22,
+                VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(-8, -4, 2, -4),
                 Background = Brushes.Transparent, Cursor = Cursors.Hand, ToolTip = open ? "Close subfolders" : "Show subfolders"
             };
             arrow.MouseLeftButtonDown += (_, e) => e.Handled = true;           // the arrow only opens; it doesn't start painting
@@ -319,7 +324,7 @@ public sealed class FolderPanel : Border
         }
         string name = ownOnly ? "files here" : pathLabel ? PathLabel(n.Path) : n.Name;
         int count = ownOnly ? n.Own : n.Sub;
-        x.Name = new TextBlock { Text = name, Foreground = Txt, VerticalAlignment = VerticalAlignment.Center, FontStyle = ownOnly ? FontStyles.Italic : FontStyles.Normal, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 520 };
+        x.Name = new TextBlock { Text = name, Foreground = Txt, FontFamily = _switchFont ?? ThemeKit.Family("Inter"), FontSize = _switchSize > 0 ? _switchSize : 12, VerticalAlignment = VerticalAlignment.Center, FontStyle = ownOnly ? FontStyles.Italic : FontStyles.Normal, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 520 };
         row.Children.Add(x.Name);
         row.Children.Add(new TextBlock { Text = count.ToString("N0"), Foreground = Dim, Opacity = 0.75, FontSize = 11, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 1, 0, 0) });
         x.Shine = new Border { BorderThickness = new Thickness(1), IsHitTestVisible = false, Margin = new Thickness(-10, -5, -10, -5) };
