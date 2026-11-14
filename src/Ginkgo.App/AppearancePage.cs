@@ -192,7 +192,7 @@ public sealed class AppearancePage : Border
         {
             var card = Card(name, note.Length > 0 ? note : null);
             var pick = _s.Fonts.Get(key);
-            var box = new ComboBox { Width = 240, Height = 28 };
+            var box = new ComboBox { Width = 190, Height = 28 };
             box.Items.Add(new ComboBoxItem { Content = "Theme (" + _s.Theme.Font + ")", Tag = "" });
             foreach (var f in ThemeKit.Fonts) box.Items.Add(new ComboBoxItem { Content = f, FontFamily = ThemeKit.Family(f), Tag = f });
             foreach (ComboBoxItem it in box.Items) if ((string)it.Tag == pick.Font) box.SelectedItem = it;
@@ -632,7 +632,7 @@ public sealed class AppearancePage : Border
         Colour(colours, "Accent", () => t.Accent, v => t.Accent = v);
 
         var text = Card("Text, density and icons");
-        var font = new ComboBox { Width = 240, Height = 28 };
+        var font = new ComboBox { Width = 190, Height = 28 };
         foreach (var f in ThemeKit.Fonts) font.Items.Add(new ComboBoxItem { Content = f, FontFamily = ThemeKit.Family(f), Tag = f });
         foreach (ComboBoxItem it in font.Items) if ((string)it.Tag == t.Font) font.SelectedItem = it;
         font.SelectionChanged += (_, _) => { if (font.SelectedItem is ComboBoxItem { Tag: string f }) { t.Font = f; Changed(); } };
