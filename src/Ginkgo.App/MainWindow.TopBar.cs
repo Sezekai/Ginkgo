@@ -52,8 +52,9 @@ public partial class MainWindow
         TitleBar.Height = Math.Clamp(t.TitleHeight, 20, 64);
         TitleLine.Visibility = t.Separator == "None" ? Visibility.Collapsed : Visibility.Visible;
         if (BrushOrNull(t.LineColour) is { } lc) TitleLine.Background = lc; else TitleLine.SetResourceReference(System.Windows.Controls.Border.BackgroundProperty, "Edge");
-        double inset = Math.Clamp(t.CaptionInset, 0, 20);
-        double bh = t.CaptionHeight > 0 ? Math.Min(t.CaptionHeight, TitleBar.Height - inset * 2) : double.NaN;
+        // the buttons always keep at least 8 px: the space from the corner gives way first in a short title bar
+        double inset = Math.Clamp(t.CaptionInset, 0, Math.Max(0, (TitleBar.Height - 8) / 2));
+        double bh = t.CaptionHeight > 0 ? Math.Max(8, Math.Min(t.CaptionHeight, TitleBar.Height - inset * 2)) : double.NaN;
         CaptionFrame.Margin = new Thickness(0, inset, inset, inset);
         CaptionFrame.VerticalAlignment = double.IsNaN(bh) ? VerticalAlignment.Stretch : VerticalAlignment.Center;
         CaptionFrame.BorderThickness = new Thickness(t.CaptionOutline ? Math.Clamp(t.CaptionOutlineWidth, 0.5, 4) : 0);

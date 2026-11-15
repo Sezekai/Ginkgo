@@ -17,20 +17,35 @@ public partial class MainWindow
     /// <summary>Every look in effect (at start and whenever Appearance changes one).</summary>
     private void ApplyLooks()
     {
-        Logo.Apply(_settings.Logo);
-        Logo.SetButtonColours(_settings.Look);
-        UpdateBigLogo();
-        FolderPanel.SetLook(_settings.Folders.Toggles);
-        PopCard.SetLook(_settings.Folders.Panel);
-        _folders?.Restyle(); _nsfwPanel?.Restyle(); _veryPanel?.Restyle();
+        // each look is put into effect on its own: one that fails (a setting that can't be shown) is logged, put back to
+        // Ginkgo's default and tried again, so a bad setting can never stop Ginkgo from starting
+        Safe("logo", () => { Logo.Apply(_settings.Logo); Logo.SetButtonColours(_settings.Look); }, () => _settings.Logo = new LogoLook());
+        Safe("top bar", UpdateBigLogo, () => _settings.TopBarStyle = new TopBarLook());
+        Safe("folder pop-outs", () =>
+        {
+            FolderPanel.SetLook(_settings.Folders.Toggles);
+            PopCard.SetLook(_settings.Folders.Panel);
+            _folders?.Restyle(); _nsfwPanel?.Restyle(); _veryPanel?.Restyle();
+        }, () => _settings.Folders = new FolderLook());
         MasonryView.SetStyle = _settings.SetStyle;
         MasonryView.FavStyle = _settings.FavStyle;
-        ApplyVideoLook();
-        ApplyScrollLook();
-        ApplyFonts();
-        ApplyScenes();
+        Safe("video outlines", ApplyVideoLook, () => { });
+        Safe("scroll bars", ApplyScrollLook, () => _settings.ScrollBars = new ScrollLook());
+        Safe("text", ApplyFonts, () => _settings.Fonts = new FontsLook());
+        Safe("backgrounds", ApplyScenes, () => _settings.Scenes = new SceneLook());
         View.RefreshLayout();
         View.ThemeChanged();
+    }
+
+    private void Safe(string what, Action apply, Action reset)
+    {
+        try { apply(); }
+        catch (Exception ex)
+        {
+            App.LogError($"applying the {what} look (put back to its default)", ex);
+            reset();
+            try { apply(); SaveSettings(); } catch (Exception ex2) { App.LogError($"applying the default {what} look", ex2); }
+        }
     }
 
     /// <summary>Called by the Appearance window after any change other than the theme.</summary>
