@@ -30,7 +30,14 @@ public partial class SettingsPage : UserControl
         BuildSets();
         BuildView();
         BuildResets();
+        Reg(CacheBox, nameof(AppSettings.CacheProfile));
+        Reg(LookBox, nameof(AppSettings.LookAheadWindows));
+        Reg(WarmBox, nameof(AppSettings.WarmCache));
+        Reg(RoundBox, nameof(AppSettings.CoverRounded));
+        Reg(RadiusSlider, nameof(AppSettings.CoverRadius));
+        Reg(FadeBox, nameof(AppSettings.FadeSharpening));
         _init = false;
+        WireResets();
         // the slow parts (adding up the cache from the index, listing the library's folders on its drive) run in the
         // background each time the page is shown, so it opens at once
         Loaded += (_, _) => { OnMeasure(this, new RoutedEventArgs()); _ = BuildFolderTreeAsync(); };
@@ -252,14 +259,14 @@ public partial class SettingsPage : UserControl
         var gap = new Slider { Width = 160, Minimum = 0, Maximum = 20, IsSnapToTickEnabled = true, TickFrequency = 1, Value = Math.Clamp(_s.Spacing, 0, 20), VerticalAlignment = VerticalAlignment.Center };
         var gapText = new TextBlock { Text = $"{_s.Spacing:0} px" };
         gap.ValueChanged += (_, e) => { gapText.Text = $"{e.NewValue:0} px"; if (_init) return; _s.Spacing = (float)e.NewValue; _main.ApplySpacing(); _main.ApplySettings(); };
-        ViewPanel.Children.Add(Row("Space between pictures", gap, null, gapText));
+        ViewPanel.Children.Add(Row("Space between pictures", gap, null, gapText)); Reg(gap, nameof(AppSettings.Spacing));
         var hover = new CheckBox { Content = "Show size and dimensions in the corner of the picture under the mouse", Foreground = ThemeKit.Brush("Text"), IsChecked = _s.HoverDetails, Margin = new Thickness(0, 0, 0, 10) };
         hover.Click += (_, _) => { _s.HoverDetails = hover.IsChecked == true; _main.ApplySettings(); };
-        ViewPanel.Children.Add(hover);
+        ViewPanel.Children.Add(hover); Reg(hover, nameof(AppSettings.HoverDetails));
         var secs = new Slider { Width = 160, Minimum = 1, Maximum = 60, IsSnapToTickEnabled = true, TickFrequency = 1, Value = Math.Clamp(_s.SlideSeconds, 1, 60), VerticalAlignment = VerticalAlignment.Center };
         var secsText = new TextBlock { Text = $"{_s.SlideSeconds:0} s" };
         secs.ValueChanged += (_, e) => { secsText.Text = $"{e.NewValue:0} s"; if (_init) return; _s.SlideSeconds = e.NewValue; _main.ApplySettings(); };
-        ViewPanel.Children.Add(Row("Slideshow: each picture shows for", secs, null, secsText));
+        ViewPanel.Children.Add(Row("Slideshow: each picture shows for", secs, null, secsText)); Reg(secs, nameof(AppSettings.SlideSeconds));
         CheckBox Box(string text, bool on, Action<bool> set)
         {
             var b = new CheckBox { Content = text, Foreground = ThemeKit.Brush("Text"), IsChecked = on, Margin = new Thickness(0, 0, 0, 6) };
@@ -267,9 +274,9 @@ public partial class SettingsPage : UserControl
             ViewPanel.Children.Add(b);
             return b;
         }
-        Box("Shuffle (otherwise the view's own order)", _s.SlideShuffle, v => _s.SlideShuffle = v);
-        Box("Start again from the beginning at the end", _s.SlideLoop, v => _s.SlideLoop = v);
-        Box("Play each video to its end before moving on (otherwise videos get the same time as pictures)", _s.SlideVideosToEnd, v => _s.SlideVideosToEnd = v);
+        Reg(Box("Shuffle (otherwise the view's own order)", _s.SlideShuffle, v => _s.SlideShuffle = v), nameof(AppSettings.SlideShuffle));
+        Reg(Box("Start again from the beginning at the end", _s.SlideLoop, v => _s.SlideLoop = v), nameof(AppSettings.SlideLoop));
+        Reg(Box("Play each video to its end before moving on (otherwise videos get the same time as pictures)", _s.SlideVideosToEnd, v => _s.SlideVideosToEnd = v), nameof(AppSettings.SlideVideosToEnd));
     }
 
     /// <summary>How sets show (a block up to a size, a stacked tile above it), how they sort, and whether copies of a file show once.</summary>
@@ -278,13 +285,13 @@ public partial class SettingsPage : UserControl
         var limit = new Slider { Width = 160, Minimum = 1, Maximum = 20, IsSnapToTickEnabled = true, TickFrequency = 1, Value = Math.Clamp(_s.SetLimit, 1, 20), VerticalAlignment = VerticalAlignment.Center };
         var limitText = new TextBlock { Text = $"{_s.SetLimit}" };
         limit.ValueChanged += (_, e) => { limitText.Text = $"{(int)e.NewValue}"; if (_init) return; _s.SetLimit = (int)e.NewValue; _main.ApplySettings(); _main.RebuildView(); };
-        SetsPanel.Children.Add(Row("Sets with up to this many images show as one block; bigger ones as a stacked tile that opens with a click", limit, null, limitText));
+        SetsPanel.Children.Add(Row("Sets with up to this many images show as one block; bigger ones as a stacked tile that opens with a click", limit, null, limitText)); Reg(limit, nameof(AppSettings.SetLimit));
         var first = new CheckBox { Content = "Sort every set by its first image (otherwise: name by the set's folder, size by its total, dates by its newest file)", Foreground = ThemeKit.Brush("Text"), IsChecked = _s.SetsByFirst, Margin = new Thickness(0, 0, 0, 6) };
         first.Click += (_, _) => { _s.SetsByFirst = first.IsChecked == true; _main.ApplySettings(); _main.RebuildView(); };
-        SetsPanel.Children.Add(first);
+        SetsPanel.Children.Add(first); Reg(first, nameof(AppSettings.SetsByFirst));
         var copies = new CheckBox { Content = "Show a file once when the exact same file is in several folders (a +1 in its corner; right-click lists the other places)", Foreground = ThemeKit.Brush("Text"), IsChecked = _s.HideCopies, Margin = new Thickness(0, 0, 0, 6) };
         copies.Click += (_, _) => { _s.HideCopies = copies.IsChecked == true; _main.ApplySettings(); _main.RebuildView(); };
-        SetsPanel.Children.Add(copies);
+        SetsPanel.Children.Add(copies); Reg(copies, nameof(AppSettings.HideCopies));
     }
 
     private void BuildGpu()
@@ -298,7 +305,7 @@ public partial class SettingsPage : UserControl
             _main.SetRenderer((string)((ComboBoxItem)_drawBox.SelectedItem).Tag);
             if (_s.Renderer == "GPU") RunGpuCheck(); else ShowGpu();
         };
-        GpuPanel.Children.Add(Row("Drawing", _drawBox));
+        GpuPanel.Children.Add(Row("Drawing", _drawBox)); Reg(_drawBox, nameof(AppSettings.Renderer));
         GpuPanel.Children.Add(new TextBlock
         {
             TextWrapping = TextWrapping.Wrap, Foreground = ThemeKit.Brush("Dim"),
@@ -307,7 +314,7 @@ public partial class SettingsPage : UserControl
         GpuPanel.Children.Add(_gpuStatus);
         var cardOnly = new CheckBox { Content = "Keep decoded pictures only on the graphics card (frees the memory they took; F3 shows how much)", Foreground = ThemeKit.Brush("Text"), IsChecked = _s.GpuCardOnly, Margin = new Thickness(0, 0, 0, 6) };
         cardOnly.Click += (_, _) => { _s.GpuCardOnly = cardOnly.IsChecked == true; _main.ApplySettings(); };
-        GpuPanel.Children.Add(cardOnly);
+        GpuPanel.Children.Add(cardOnly); Reg(cardOnly, nameof(AppSettings.GpuCardOnly));
         var buttons = new WrapPanel();
         var again = new Button { Content = "Check again" };
         again.Click += (_, _) => RunGpuCheck();
@@ -324,13 +331,13 @@ public partial class SettingsPage : UserControl
         _gifPanel.Children.Add(_gifOff);
         var animate = new CheckBox { Content = "Animate GIFs in the grid (off: still covers; they play on hover)", Foreground = ThemeKit.Brush("Text"), IsChecked = _s.GifAnimate, Margin = new Thickness(0, 0, 0, 6) };
         animate.Click += (_, _) => { _s.GifAnimate = animate.IsChecked == true; _main.ApplySettings(); };
-        _gifPanel.Children.Add(animate);
+        _gifPanel.Children.Add(animate); Reg(animate, nameof(AppSettings.GifAnimate));
 
         var lenText = new TextBlock();
         var len = new Slider { Width = 160, Minimum = 1, Maximum = 15, IsSnapToTickEnabled = true, TickFrequency = 1, Value = _s.GifLengthSec, VerticalAlignment = VerticalAlignment.Center };
         lenText.Text = $"{_s.GifLengthSec:0} s";
         len.ValueChanged += (_, e) => { lenText.Text = $"{e.NewValue:0} s"; if (_init) return; _s.GifLengthSec = e.NewValue; _main.ApplySettings(); };
-        _gifPanel.Children.Add(Row("GIF length in the grid (longer GIFs loop this much; full length on hover)", len, null, lenText));
+        _gifPanel.Children.Add(Row("GIF length in the grid (longer GIFs loop this much; full length on hover)", len, null, lenText)); Reg(len, nameof(AppSettings.GifLengthSec));
 
         var fadeText = new TextBlock();
         var fadeLen = new Slider { Width = 120, Minimum = 0.1, Maximum = 1.0, IsSnapToTickEnabled = true, TickFrequency = 0.1, Value = _s.GifCrossFadeSec, VerticalAlignment = VerticalAlignment.Center, IsEnabled = _s.GifCrossFade };
@@ -343,7 +350,7 @@ public partial class SettingsPage : UserControl
         DockPanel.SetDock(fadeText, Dock.Right); fadeRow.Children.Add(fadeText);
         DockPanel.SetDock(fadeLen, Dock.Right); fadeRow.Children.Add(fadeLen);
         fadeRow.Children.Add(fade);
-        _gifPanel.Children.Add(fadeRow);
+        _gifPanel.Children.Add(fadeRow); Reg(fade, nameof(AppSettings.GifCrossFade)); Reg(fadeLen, nameof(AppSettings.GifCrossFadeSec));
 
         var fps = new ComboBox { MinWidth = 120 };
         foreach (var (label, v) in new[] { ("Automatic", 0), ("8 fps", 8), ("10 fps", 10), ("15 fps", 15), ("20 fps", 20) })
@@ -354,7 +361,7 @@ public partial class SettingsPage : UserControl
         }
         if (fps.SelectedItem is null) fps.SelectedIndex = 0;
         fps.SelectionChanged += (_, _) => { if (_init) return; _s.GifFps = (int)((ComboBoxItem)fps.SelectedItem).Tag; _main.ApplySettings(); };
-        _gifPanel.Children.Add(Row("GIF frame rate (Automatic lowers it when many GIFs are on screen)", fps));
+        _gifPanel.Children.Add(Row("GIF frame rate (Automatic lowers it when many GIFs are on screen)", fps)); Reg(fps, nameof(AppSettings.GifFps));
         _gifStat.Foreground = ThemeKit.Brush("Dim"); _gifStat.TextWrapping = TextWrapping.Wrap; _gifStat.Margin = new Thickness(0, 4, 0, 0);
         _gifPanel.Children.Add(_gifStat);
 
@@ -434,4 +441,115 @@ public partial class SettingsPage : UserControl
         _gifPanel.Opacity = gpuOn ? 1 : 0.55;
         _gifOff.Text = gpuOn ? "GIFs play from their GPU versions as they're made (until then, the first frame shows). Hovering a GIF plays the original at full length." : "These apply only while the GPU grid is drawing.";
     }
+
+    // ---- back to the default: each setting has its own reset, and each group a Reset for everything in it ----
+
+    private static readonly AppSettings Defaults = new();
+    private readonly List<(FrameworkElement control, System.Reflection.PropertyInfo prop)> _resettable = new();
+    private readonly List<Action> _marks = new();
+
+    private void Reg(FrameworkElement control, string prop)
+    {
+        var pi = typeof(AppSettings).GetProperty(prop);
+        if (pi is not null) _resettable.Add((control, pi));
+    }
+
+    private bool AtDefault(System.Reflection.PropertyInfo pi)
+    {
+        object? now = pi.GetValue(_s), def = pi.GetValue(Defaults);
+        if (now is double a && def is double b) return Math.Abs(a - b) < 1e-6;
+        if (now is float fa && def is float fb) return Math.Abs(fa - fb) < 1e-4;
+        return Equals(now, def);
+    }
+
+    /// <summary>Puts one setting back through its own control, so everything that control does on a change happens too.</summary>
+    private bool Reset(FrameworkElement control, System.Reflection.PropertyInfo pi)
+    {
+        if (AtDefault(pi)) return false;
+        object? def = pi.GetValue(Defaults);
+        switch (control)
+        {
+            case Slider sl: sl.Value = Convert.ToDouble(def); break;
+            case CheckBox cb:
+                cb.IsChecked = def is true;
+                cb.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent, cb));
+                break;
+            case ComboBox co:
+                var match = co.Items.OfType<ComboBoxItem>().FirstOrDefault(it => it.Tag is not null && it.Tag.ToString() == def?.ToString());
+                if (match is not null) co.SelectedItem = match; else if (def is int n && n >= 0 && n < co.Items.Count) co.SelectedIndex = n;
+                break;
+        }
+        if (!AtDefault(pi)) pi.SetValue(_s, def);      // (if the control kept the setting from changing, set it directly)
+        _main.ApplySettings();
+        return true;
+    }
+
+    private void MarkAll() { foreach (var m in _marks) m(); }
+
+    private void WireResets()
+    {
+        var groups = new Dictionary<TextBlock, List<(FrameworkElement, System.Reflection.PropertyInfo)>>();
+        foreach (var (control, pi) in _resettable)
+        {
+            // the reset sits beside the control: the control is wrapped together with it, in the control's place
+            var owner = LogicalTreeHelper.GetParent(control);
+            if (owner is not Panel and not Decorator) continue;
+            var wrap = new DockPanel { Margin = control.Margin, VerticalAlignment = control.VerticalAlignment, HorizontalAlignment = control.HorizontalAlignment };
+            DockPanel.SetDock(wrap, DockPanel.GetDock(control));
+            control.Margin = new Thickness(0);
+            int at = -1;
+            if (owner is Panel parent) { at = parent.Children.IndexOf(control); parent.Children.RemoveAt(at); }
+            else ((Decorator)owner).Child = null;
+            var b = new Button { Content = "\uE7A7", Style = (Style)FindResource("IconButton"), Width = 24, Height = 24, FontSize = 11, Margin = new Thickness(6, 0, 0, 0),
+                                 VerticalAlignment = VerticalAlignment.Center, ToolTip = $"Back to the default ({Show(pi.GetValue(Defaults))})" };
+            var c = control; var p = pi;
+            b.Click += (_, _) => { Reset(c, p); MarkAll(); };
+            void Mark() => b.Opacity = AtDefault(p) ? 0.3 : 1;
+            _marks.Add(Mark);
+            DockPanel.SetDock(b, Dock.Right);
+            wrap.Children.Add(b);
+            wrap.Children.Add(control);
+            if (owner is Panel pp) pp.Children.Insert(at, wrap); else ((Decorator)owner).Child = wrap;
+            switch (control)
+            {
+                case Slider sl: sl.ValueChanged += (_, _) => MarkAll(); break;
+                case CheckBox cb: cb.Click += (_, _) => MarkAll(); break;
+                case ComboBox co: co.SelectionChanged += (_, _) => MarkAll(); break;
+            }
+            if (GroupOf(wrap) is { } g) { if (!groups.TryGetValue(g, out var list)) groups[g] = list = new(); list.Add((control, pi)); }
+        }
+        // each group heading gets a Reset for the settings under it
+        foreach (var (heading, list) in groups)
+        {
+            if (LogicalTreeHelper.GetParent(heading) is not Panel col) continue;
+            int at = col.Children.IndexOf(heading);
+            col.Children.RemoveAt(at);
+            var head = new DockPanel { Margin = heading.Margin };
+            heading.Margin = new Thickness(0);
+            var reset = new Button { Content = "Reset", Height = 24, Padding = new Thickness(8, 0, 8, 0), FontSize = 11, VerticalAlignment = VerticalAlignment.Center,
+                                     ToolTip = $"Put every setting in {heading.Text} back to its default (the other groups stay as they are)" };
+            reset.Click += (_, _) => { foreach (var (c, p) in list) Reset(c, p); MarkAll(); Result.Text = $"{heading.Text}: back to the defaults."; };
+            DockPanel.SetDock(reset, Dock.Right);
+            head.Children.Add(reset);
+            head.Children.Add(heading);
+            col.Children.Insert(at, head);
+        }
+        MarkAll();
+    }
+
+    /// <summary>The group heading above a setting: the nearest heading before the row it sits in.</summary>
+    private TextBlock? GroupOf(DependencyObject d)
+    {
+        var style = (Style)FindResource("Group");
+        for (var e = d; e is not null; e = LogicalTreeHelper.GetParent(e))
+        {
+            if (LogicalTreeHelper.GetParent(e) is not Panel col) continue;
+            int at = col.Children.IndexOf((UIElement)e);
+            for (int i = at - 1; i >= 0; i--)
+                if (col.Children[i] is TextBlock { Style: var st } tb && st == style) return tb;
+        }
+        return null;
+    }
+
+    private static string Show(object? v) => v switch { bool b => b ? "on" : "off", double x => x.ToString("0.##"), float f => f.ToString("0.##"), null => "none", _ => v.ToString() ?? "" };
 }

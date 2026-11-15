@@ -38,6 +38,8 @@ public sealed class AppearancePage : Border
         public Type Type = typeof(object);
         public Action Build = null!;
         public bool Theme;
+        /// <summary>The objects the page's controls change (to find each setting's default in place).</summary>
+        public Func<object[]> Live = () => Array.Empty<object>();
     }
 
     private readonly List<Page> _pages = new();
@@ -120,55 +122,55 @@ public sealed class AppearancePage : Border
         {
             Key = "Theme", Name = "Theme", Icon = "", Theme = true,
             Subtitle = "The colours of everything, the font, density, icons and the viewer's background. Built-in themes and your own.",
-            Get = () => _s.Theme.Copy(), Set = o => _s.Theme = ((AppTheme)o).Copy(), Default = () => new AppTheme(), Type = typeof(AppTheme), Build = BuildTheme,
+            Get = () => _s.Theme.Copy(), Set = o => _s.Theme = ((AppTheme)o).Copy(), Default = () => new AppTheme(), Type = typeof(AppTheme), Build = BuildTheme, Live = () => new object[] { _s.Theme },
         });
         _pages.Add(new Page
         {
             Key = "Buttons", Name = "Buttons", Icon = "",
             Subtitle = "The buttons and switches in the bars: shape, size, fills, outline, light, glow and shadow.",
-            Get = () => _s.Look.Copy(), Set = o => CopyInto(_s.Look, (ButtonLook)o), Default = () => new ButtonLook(), Type = typeof(ButtonLook), Build = BuildButtons,
+            Get = () => _s.Look.Copy(), Set = o => CopyInto(_s.Look, (ButtonLook)o), Default = () => new ButtonLook(), Type = typeof(ButtonLook), Build = BuildButtons, Live = () => new object[] { _s.Look },
         });
         _pages.Add(new Page
         {
             Key = "Logo", Name = "Logo", Icon = "",
             Subtitle = "The logo in the top bar: fill, outline, glow, shadow and moving light. Mix any of them.",
-            Get = () => _s.Logo.Copy(), Set = o => _s.Logo = ((LogoLook)o).Copy(), Default = () => new LogoLook(), Type = typeof(LogoLook), Build = BuildLogo,
+            Get = () => _s.Logo.Copy(), Set = o => _s.Logo = ((LogoLook)o).Copy(), Default = () => new LogoLook(), Type = typeof(LogoLook), Build = BuildLogo, Live = () => new object[] { _s.Logo },
         });
         _pages.Add(new Page
         {
             Key = "Text", Name = "Text", Icon = "\uE8D2",
             Subtitle = "A font and size for each part of Ginkgo. A part left on Theme uses the theme's font (Theme page) at its usual size.",
-            Get = () => _s.Fonts.Copy(), Set = o => _s.Fonts = ((FontsLook)o).Copy(), Default = () => new FontsLook(), Type = typeof(FontsLook), Build = BuildText,
+            Get = () => _s.Fonts.Copy(), Set = o => _s.Fonts = ((FontsLook)o).Copy(), Default = () => new FontsLook(), Type = typeof(FontsLook), Build = BuildText, Live = () => new object[] { _s.Fonts },
         });
         _pages.Add(new Page
         {
             Key = "Top bar", Name = "Top bar", Icon = "\uE8A0",
             Subtitle = "Dial in the top bar: the logo's size and place (big, and small while the bar is hidden), the section switch, the section's name, and their colours.",
-            Get = () => _s.TopBarStyle.Copy(), Set = o => _s.TopBarStyle = ((TopBarLook)o).Copy(), Default = () => new TopBarLook(), Type = typeof(TopBarLook), Build = BuildTopBar,
+            Get = () => _s.TopBarStyle.Copy(), Set = o => _s.TopBarStyle = ((TopBarLook)o).Copy(), Default = () => new TopBarLook(), Type = typeof(TopBarLook), Build = BuildTopBar, Live = () => new object[] { _s.TopBarStyle },
         });
         _pages.Add(new Page
         {
             Key = "Background", Name = "Backgrounds", Icon = "",
             Subtitle = "Starfields, night skies, gradients and more: for the bars, behind the pictures and the viewer, together or each its own.",
-            Get = () => _s.Scenes.Copy(), Set = o => _s.Scenes = ((SceneLook)o).Copy(), Default = () => new SceneLook(), Type = typeof(SceneLook), Build = BuildScenes,
+            Get = () => _s.Scenes.Copy(), Set = o => _s.Scenes = ((SceneLook)o).Copy(), Default = () => new SceneLook(), Type = typeof(SceneLook), Build = BuildScenes, Live = () => new object[] { _s.Scenes },
         });
         _pages.Add(new Page
         {
             Key = "Folders", Name = "Folder pop-outs", Icon = "",
             Subtitle = "Select folders, NSFW and Very: the pop-out card and the folder switches inside it.",
-            Get = () => _s.Folders.Copy(), Set = o => _s.Folders = ((FolderLook)o).Copy(), Default = () => new FolderLook(), Type = typeof(FolderLook), Build = BuildFolders,
+            Get = () => _s.Folders.Copy(), Set = o => _s.Folders = ((FolderLook)o).Copy(), Default = () => new FolderLook(), Type = typeof(FolderLook), Build = BuildFolders, Live = () => new object[] { _s.Folders },
         });
         _pages.Add(new Page
         {
             Key = "Sets", Name = "Connected sets", Icon = "",
             Subtitle = "How the pictures of a Connected Art set are shown to belong together. Changes show in the main window as you make them.",
-            Get = () => _s.SetStyle.Copy(), Set = o => _s.SetStyle = ((SetLook)o).Copy(), Default = () => new SetLook(), Type = typeof(SetLook), Build = BuildSets,
+            Get = () => _s.SetStyle.Copy(), Set = o => _s.SetStyle = ((SetLook)o).Copy(), Default = () => new SetLook(), Type = typeof(SetLook), Build = BuildSets, Live = () => new object[] { _s.SetStyle },
         });
         _pages.Add(new Page
         {
             Key = "Favourites", Name = "Favourites and details", Icon = "",
             Subtitle = "How favourites are marked in the grid (not in Favourites itself), and where a picture's size and resolution show.",
-            Get = () => _s.FavStyle.Copy(), Set = o => _s.FavStyle = ((FavLook)o).Copy(), Default = () => new FavLook(), Type = typeof(FavLook), Build = BuildFavs,
+            Get = () => _s.FavStyle.Copy(), Set = o => _s.FavStyle = ((FavLook)o).Copy(), Default = () => new FavLook(), Type = typeof(FavLook), Build = BuildFavs, Live = () => new object[] { _s.FavStyle },
         });
         _pages.Add(new Page
         {
@@ -182,7 +184,7 @@ public sealed class AppearancePage : Border
         {
             Key = "Scroll bars", Name = "Scroll bars", Icon = "\uE8CB",
             Subtitle = "The pictures' scroll bar: when it shows, how long and wide it is, and a glow or shine so it is easy to find.",
-            Get = () => _s.ScrollBars.Copy(), Set = o => _s.ScrollBars = ((ScrollLook)o).Copy(), Default = () => new ScrollLook(), Type = typeof(ScrollLook), Build = BuildScrollBars,
+            Get = () => _s.ScrollBars.Copy(), Set = o => _s.ScrollBars = ((ScrollLook)o).Copy(), Default = () => new ScrollLook(), Type = typeof(ScrollLook), Build = BuildScrollBars, Live = () => new object[] { _s.ScrollBars },
         });
     }
 
@@ -198,7 +200,8 @@ public sealed class AppearancePage : Border
             foreach (ComboBoxItem it in box.Items) if ((string)it.Tag == pick.Font) box.SelectedItem = it;
             if (box.SelectedItem is null) box.SelectedIndex = 0;
             box.SelectionChanged += (_, _) => { if (box.SelectedItem is ComboBoxItem { Tag: string f }) { pick.Font = f; Changed(); } };
-            Row(card, "Font", box);
+            var fontRow = Row(card, "Font", box);
+            AddReset(card, fontRow, () => pick.Font, v => pick.Font = v);
             // the section name and the window name keep their size with the top bar's layout
             if (key == "Section") Slide(card, "Size", min, max, () => _s.TopBarStyle.TitleSize, v => _s.TopBarStyle.TitleSize = v, v => $"{v:0.#} px", 0.5);
             else if (key == "Window") Slide(card, "Size", min, max, () => _s.TopBarStyle.NameSize, v => _s.TopBarStyle.NameSize = v, v => $"{v:0.#} px", 0.5);
@@ -316,9 +319,120 @@ public sealed class AppearancePage : Border
     private void Rebuild()
     {
         _body.Children.Clear();
+        _cardResets.Clear();
+        _pending.Clear();
+        _marks.Clear();
         _page.Build();
+        ResolveDefaults();
+        // a card's own reset shows only when it has something to put back
+        foreach (var (card, (btn, list)) in _cardResets) btn.Visibility = list.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         FitCards();
         UpdateSavedState();
+    }
+
+    // ---- going back to the default: for one setting, or for one card ----
+
+    private readonly Dictionary<StackPanel, (Button btn, List<Func<bool>> resets)> _cardResets = new();
+    /// <summary>Brightens each reset button whose setting is away from its default (after every change).</summary>
+    private readonly List<Action> _marks = new();
+    /// <summary>The settings on the page, waiting for their defaults: found after the page is built, all at once.</summary>
+    private readonly List<(StackPanel card, DockPanel? row, Func<object?> get, Action<object?> attach)> _pending = new();
+
+    /// <summary>A setting's reset (beside it, and in its card's reset). Its default is read after the page is built.</summary>
+    private void AddReset<T>(StackPanel card, DockPanel? row, Func<T> get, Action<T> set, Func<T, T, bool>? same = null)
+    {
+        same ??= (a, b) => EqualityComparer<T>.Default.Equals(a, b);
+        _pending.Add((card, row, () => get(), d =>
+        {
+            if (d is not T def) return;
+            bool AtDefault() => same(get(), def);
+            if (row is not null)
+            {
+                var b = new Button { Content = "\uE7A7", Style = (Style)FindResource("IconButton"), Width = 24, Height = 24, FontSize = 11, Margin = new Thickness(6, 0, 0, 0),
+                                     VerticalAlignment = VerticalAlignment.Center, ToolTip = $"Back to the default ({ShowValue(def)})" };
+                void Mark() => b.Opacity = AtDefault() ? 0.3 : 1;
+                Mark();
+                b.Click += (_, _) => { if (AtDefault()) return; set(def); Changed(); Rebuild(); };
+                DockPanel.SetDock(b, Dock.Right);
+                row.Children.Insert(Math.Min(1, row.Children.Count), b);
+                if (row.Children.Count == 2 && row.Children[1] == b) { var first = row.Children[0]; row.Children.RemoveAt(0); row.Children.Add(first); }
+                _marks.Add(Mark);
+            }
+            if (_cardResets.TryGetValue(card, out var cr)) cr.resets.Add(() => { if (AtDefault()) return false; set(def); return true; });
+        }));
+    }
+
+    /// <summary>Every look is put to its default in place for a moment, each setting's default is read, and the looks are put back.
+    /// (In place, so the controls' own objects are the ones read.)</summary>
+    private void ResolveDefaults()
+    {
+        if (_pending.Count == 0) return;
+        var swaps = new List<(object live, object saved)>();
+        try
+        {
+            foreach (var p in _pages)
+            {
+                var live = p.Live();
+                if (live.Length != 1) continue;
+                var saved = JsonCopy(live[0]);
+                InPlace(live[0], p.Default());
+                swaps.Add((live[0], saved));
+            }
+            var defs = _pending.Select(x => { try { return x.get(); } catch { return null; } }).ToList();
+            foreach (var (live, saved) in swaps) InPlace(live, saved);
+            swaps.Clear();
+            for (int i = 0; i < _pending.Count; i++) _pending[i].attach(defs[i]);
+        }
+        finally
+        {
+            foreach (var (live, saved) in swaps) InPlace(live, saved);
+            _pending.Clear();
+        }
+    }
+
+    private static object JsonCopy(object o) => System.Text.Json.JsonSerializer.Deserialize(System.Text.Json.JsonSerializer.Serialize(o, o.GetType()), o.GetType())!;
+
+    /// <summary>Copies one look into another of the same kind, keeping the objects inside it (and the dictionary entries) the same.</summary>
+    private static void InPlace(object target, object source)
+    {
+        foreach (var pr in target.GetType().GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+        {
+            if (!pr.CanRead || pr.GetIndexParameters().Length > 0) continue;
+            var t = pr.PropertyType;
+            object? sv = pr.GetValue(source), tv = pr.GetValue(target);
+            if (t.IsValueType || t == typeof(string) || sv is null || tv is null)
+            {
+                if (pr.CanWrite) pr.SetValue(target, sv is null || t.IsValueType || t == typeof(string) ? sv : JsonCopy(sv));
+            }
+            else if (tv is System.Collections.IDictionary td && sv is System.Collections.IDictionary sd)
+            {
+                var valueType = t.IsGenericType ? t.GetGenericArguments()[1] : typeof(object);
+                foreach (var k in td.Keys.Cast<object>().ToList())
+                {
+                    var src = sd.Contains(k) ? sd[k] : Activator.CreateInstance(valueType);
+                    if (td[k] is { } tvk && src is not null && !valueType.IsValueType && valueType != typeof(string)) InPlace(tvk, src); else td[k] = src;
+                }
+                foreach (var k in sd.Keys.Cast<object>()) if (!td.Contains(k)) td[k] = sd[k] is { } x && !valueType.IsValueType && valueType != typeof(string) ? JsonCopy(x) : sd[k];
+            }
+            else if (tv is System.Collections.IEnumerable)
+            {
+                if (pr.CanWrite) pr.SetValue(target, JsonCopy(sv));
+            }
+            else InPlace(tv, sv);
+        }
+    }
+
+    private static string ShowValue(object? v) => v switch
+    {
+        null => "none", string s when s.Length == 0 => "theme", bool b => b ? "on" : "off", double x => x.ToString("0.##"), _ => v.ToString() ?? "",
+    };
+
+    private static bool Near(double a, double b) => Math.Abs(a - b) < 1e-6;
+
+    /// <summary>A whole card's reset that isn't made of single settings (Video outlines).</summary>
+    private void CardReset(StackPanel card, Func<bool> reset)
+    {
+        if (_cardResets.TryGetValue(card, out var cr)) cr.resets.Add(reset);
     }
 
     /// <summary>Two columns of cards when there is room, one when not.</summary>
@@ -333,6 +447,7 @@ public sealed class AppearancePage : Border
     /// <summary>Something on the page changed: into effect at once.</summary>
     private void Changed()
     {
+        foreach (var m in _marks) m();
         if (_page.Theme) { ThemeKit.Apply(_s.Theme, _s.Look); _themeChanged(); }
         else if (_page.Key == "Buttons") { ThemeKit.Apply(_s.Theme, _s.Look); _themeChanged(); }
         else _looksChanged();
@@ -518,8 +633,23 @@ public sealed class AppearancePage : Border
     private StackPanel Card(string title, string? note = null, bool wide = false)
     {
         var st = new StackPanel();
-        var t = new TextBlock { Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, note is null ? 10 : 2) };
-        st.Children.Add(t);
+        var head = new DockPanel { Margin = new Thickness(0, 0, 0, note is null ? 10 : 2) };
+        var t = new TextBlock { Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
+        // the card's own reset: everything in this card back to its default, the rest of the page as it is
+        var reset = new Button { Content = "Reset", Height = 24, Padding = new Thickness(8, 0, 8, 0), Margin = new Thickness(8, 0, 0, 0), FontSize = 11,
+                                 VerticalAlignment = VerticalAlignment.Center, ToolTip = "Put everything in this card back to its default (the rest of the page stays as it is)" };
+        var list = new List<Func<bool>>();
+        reset.Click += (_, _) =>
+        {
+            bool any = false;
+            foreach (var r in list.ToList()) any |= r();
+            if (any) { Changed(); Rebuild(); }
+        };
+        _cardResets[st] = (reset, list);
+        DockPanel.SetDock(reset, Dock.Right);
+        head.Children.Add(reset);
+        head.Children.Add(t);
+        st.Children.Add(head);
         if (note is not null)
         {
             var n = new TextBlock { Text = note, TextWrapping = TextWrapping.Wrap, FontSize = 11.5, Margin = new Thickness(0, 0, 0, 10) };
@@ -547,13 +677,19 @@ public sealed class AppearancePage : Border
 
     private void Colour(StackPanel card, string label, Func<string> get, Action<string> set, bool allowBlank = false, string blankText = "Theme")
     {
-        if (!allowBlank) { Row(card, label, new ColourButton(get().Length > 0 ? get() : "#808080", v => { set(v); Changed(); })); return; }
+        if (!allowBlank)
+        {
+            var r0 = Row(card, label, new ColourButton(get().Length > 0 ? get() : "#808080", v => { set(v); Changed(); }));
+            AddReset(card, r0, get, set, (a, b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase));
+            return;
+        }
         var sp = new StackPanel { Orientation = Orientation.Horizontal };
         var useTheme = new ToggleButton { Content = blankText, Height = 26, Padding = new Thickness(8, 0, 8, 0), Margin = new Thickness(0, 0, 8, 0), IsChecked = get().Length == 0, ToolTip = "Follow the theme" };
         var pick = new ColourButton(get().Length > 0 ? get() : "#8A5CF5", v => { set(v); useTheme.IsChecked = false; Changed(); });
         useTheme.Click += (_, _) => { if (useTheme.IsChecked == true) set(""); else set("#8A5CF5"); Changed(); };
         sp.Children.Add(useTheme); sp.Children.Add(pick);
-        Row(card, label, sp);
+        var row = Row(card, label, sp);
+        AddReset(card, row, get, set, (a, b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase));
     }
 
     private void Slide(StackPanel card, string label, double min, double max, Func<double> get, Action<double> set, Func<double, string> show, double step = 0)
@@ -567,7 +703,8 @@ public sealed class AppearancePage : Border
         s.ValueChanged += (_, e) => { set(e.NewValue); value.Text = show(e.NewValue); Changed(); };
         DockPanel.SetDock(value, Dock.Right);
         dp.Children.Add(value); dp.Children.Add(s);
-        Row(card, label, dp);
+        var row = Row(card, label, dp);
+        AddReset(card, row, get, set, Near);
     }
 
     private void Choice(StackPanel card, string label, (string key, string name)[] options, Func<string> get, Action<string> set, Action? after = null)
@@ -581,7 +718,8 @@ public sealed class AppearancePage : Border
             b.Click += (_, _) => { set(k); foreach (var (bb, kk) in btns) bb.IsChecked = kk == k; Changed(); after?.Invoke(); };
             btns.Add((b, key)); wrap.Children.Add(b);
         }
-        Row(card, label, wrap);
+        var row = Row(card, label, wrap);
+        AddReset(card, row, get, set);
     }
 
     private void Check(StackPanel card, string text, Func<bool> get, Action<bool> set, string? tip = null, Action? after = null)
@@ -589,7 +727,10 @@ public sealed class AppearancePage : Border
         var c = new CheckBox { Content = text, IsChecked = get(), Margin = new Thickness(0, 2, 0, 8), ToolTip = tip };
         c.SetResourceReference(Control.ForegroundProperty, "Text");
         c.Click += (_, _) => { set(c.IsChecked == true); Changed(); after?.Invoke(); };
-        card.Children.Add(c);
+        var row = new DockPanel();
+        row.Children.Add(c);
+        card.Children.Add(row);
+        AddReset(card, row, get, set);
     }
 
     private static Button Small(string text, Action act, string? tip = null)
@@ -636,7 +777,8 @@ public sealed class AppearancePage : Border
         foreach (var f in ThemeKit.Fonts) font.Items.Add(new ComboBoxItem { Content = f, FontFamily = ThemeKit.Family(f), Tag = f });
         foreach (ComboBoxItem it in font.Items) if ((string)it.Tag == t.Font) font.SelectedItem = it;
         font.SelectionChanged += (_, _) => { if (font.SelectedItem is ComboBoxItem { Tag: string f }) { t.Font = f; Changed(); } };
-        Row(text, "Font", font);
+        var themeFontRow = Row(text, "Font", font);
+        AddReset(text, themeFontRow, () => t.Font, v => t.Font = v);
         Slide(text, "Text size", 10, 16, () => t.FontSize, v => t.FontSize = v, v => $"{v:0.#}", 0.5);
         Slide(text, "Density", 0.8, 1.3, () => t.Density, v => t.Density = v, v => v < 0.95 ? "compact" : v > 1.05 ? "roomy" : "normal", 0.05);
         Choice(text, "Icons", new[] { ("Fluent", "Fluent (Windows 11)"), ("Classic", "Classic (Windows 10)") }, () => t.Icons, v => t.Icons = v);
@@ -850,7 +992,8 @@ public sealed class AppearancePage : Border
             };
             btns.Add((b, k)); kinds.Children.Add(b);
         }
-        card.Children.Add(kinds);
+        var kindRow = Row(card, "Kind", kinds);
+        AddReset(card, kindRow, () => s.Kind, v => { var p = SceneKit.Preset(v); s.Kind = v; s.A = p.A; s.B = p.B; s.C = p.C; s.Angle = p.Angle; });
         if (s.Kind != "Theme")
         {
             Colour(card, "Colour 1", () => s.A, v => { s.A = v; Refresh(); });
@@ -1015,6 +1158,7 @@ public sealed class AppearancePage : Border
         var ed = new OutlineEditor(_s) { Margin = new Thickness(0) };
         ed.Changed += Changed;
         card.Children.Add(ed);
+        CardReset(card, () => { _page.Set(_page.Default()); return true; });
     }
 
     // =====================================================================================================================
