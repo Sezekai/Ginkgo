@@ -666,7 +666,7 @@ public sealed class AppearancePage : Border
     private static DockPanel Row(StackPanel card, string label, UIElement control, string? tip = null)
     {
         var row = new DockPanel { Margin = new Thickness(0, 0, 0, 8), ToolTip = tip };
-        var l = new TextBlock { Text = label, Width = 150, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
+        var l = new TextBlock { Text = label, Width = 128, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap };
         DockPanel.SetDock(l, Dock.Left);
         row.Children.Add(l);
         row.Children.Add(control);
