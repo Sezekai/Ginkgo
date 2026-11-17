@@ -31,7 +31,7 @@
             <Setter Property="FontFamily" Value="{DynamicResource Font.Buttons}"/>
             <Setter Property="FontSize" Value="{DynamicResource Size.Buttons}"/>
             <Setter Property="Background" Value="#2C2C32"/>
-            <Setter Property="Padding" Value="12,2"/>
+            <Setter Property="Padding" Value="9,2"/>
             <Setter Property="Margin" Value="0,0,6,0"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Focusable" Value="False"/>
@@ -65,7 +65,7 @@
             <Setter Property="FontFamily" Value="{DynamicResource Font.Buttons}"/>
             <Setter Property="FontSize" Value="{DynamicResource Size.Buttons}"/>
             <Setter Property="Background" Value="#2C2C32"/>
-            <Setter Property="Padding" Value="12,2"/>
+            <Setter Property="Padding" Value="9,2"/>
             <Setter Property="Margin" Value="0,0,6,0"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Focusable" Value="False"/>
@@ -97,6 +97,19 @@
                             <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- the bar's icon buttons: the same key look and height as the other buttons, square, every icon the same size -->
+        <sys:Double x:Key="BarIconSize">14</sys:Double>
+        <Style x:Key="BarIcon" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Padding" Value="0"/>
+            <Setter Property="Width" Value="{DynamicResource KeyHeight}"/>
+            <Setter Property="FontFamily" Value="{DynamicResource IconFont}"/>
+            <Setter Property="ContentTemplate">
+                <Setter.Value>
+                    <DataTemplate><local:IconGlyph Glyph="{Binding}" Size="{DynamicResource BarIconSize}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/></DataTemplate>
                 </Setter.Value>
             </Setter>
         </Style>
@@ -137,7 +150,7 @@
 
         <!-- a button that opens a pop-out: a chevron at its end, turned up while the pop-out is open (Tag = true) -->
         <Style x:Key="DropButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Padding" Value="12,2,9,2"/>
+            <Setter Property="Padding" Value="9,2,7,2"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -315,7 +328,7 @@
                         <Grid>
                             <Border x:Name="B" CornerRadius="{DynamicResource KeyRadius}" BorderThickness="{DynamicResource KeyBorderWidth}" BorderBrush="{DynamicResource KeyBorder}"
                                     Background="{DynamicResource KeyFill}" Effect="{DynamicResource KeyShadow}">
-                                <local:IconGlyph x:Name="Arrow" Glyph="&#xE74A;" Size="13" Foreground="{DynamicResource KeyText}"
+                                <local:IconGlyph x:Name="Arrow" Glyph="&#xE74A;" Size="{DynamicResource BarIconSize}" Foreground="{DynamicResource KeyText}"
                                            HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
                                     <local:IconGlyph.RenderTransform><RotateTransform x:Name="Turn" Angle="0"/></local:IconGlyph.RenderTransform>
                                 </local:IconGlyph>
@@ -398,6 +411,39 @@
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+        </Style>
+        <!-- the viewer's top-left icons: only the icon, nothing behind it (a soft shadow keeps it readable on light pictures) -->
+        <Style x:Key="VPlain" TargetType="ButtonBase">
+            <Setter Property="Foreground" Value="#F0F0F4"/>
+            <Setter Property="FontFamily" Value="{DynamicResource IconFont}"/>
+            <Setter Property="FontSize" Value="18"/>
+            <Setter Property="Width" Value="36"/>
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ButtonBase">
+                        <Grid Background="Transparent">
+                            <local:IconGlyph x:Name="G" Glyph="{TemplateBinding Content}" Size="{TemplateBinding FontSize}" FontFamily="{TemplateBinding FontFamily}" Foreground="{TemplateBinding Foreground}"
+                                             HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+                                <local:IconGlyph.Effect><DropShadowEffect ShadowDepth="0" BlurRadius="6" Opacity="0.85" Color="Black"/></local:IconGlyph.Effect>
+                                <local:IconGlyph.RenderTransform><ScaleTransform x:Name="S"/></local:IconGlyph.RenderTransform>
+                            </local:IconGlyph>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsPressed" Value="True"><Setter TargetName="G" Property="RenderTransform"><Setter.Value><ScaleTransform ScaleX="0.9" ScaleY="0.9"/></Setter.Value></Setter></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="VPlainGroup" TargetType="Border">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Opacity" Value="0.82"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True"><Setter Property="Opacity" Value="1"/></Trigger>
+            </Style.Triggers>
         </Style>
         <Style x:Key="VToggle" TargetType="ToggleButton" BasedOn="{StaticResource VBtn}">
             <Style.Triggers>

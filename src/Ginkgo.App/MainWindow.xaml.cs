@@ -88,7 +88,8 @@ public partial class MainWindow : Window
         };
         _folders.SortChanged += (key, rev) => { _settings.FolderSort = key; _settings.FolderSortReverse = rev; };
         _folders.PlacesChanged += (alone, rare) => { _settings.Standalone = alone.ToList(); _settings.RarelyUsed = rare.ToList(); SaveSettings(); };
-        _folderCard = new PopCard(_folders, "Select folders");
+        _folderCard = new PopCard(_folders, "Folders");
+        _folders.DefaultOff = () => DefaultFor(_section, _folder).OffFolders ?? _startState?.OffFolders ?? new List<string>();
         _folderPopup = new System.Windows.Controls.Primitives.Popup
         {
             PlacementTarget = FoldersBtn, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom, StaysOpen = false,
@@ -452,7 +453,11 @@ public partial class MainWindow : Window
     private void UpdateFoldersLabel()
     {
         int n = _settings.OffFolders.Count;
-        FoldersBtn.Content = n == 0 ? "Select folders" : $"Select folders ({n:N0} off)";
+        // the button stays short ("Folders"); how many are off is in the pop-out's heading and the button's tooltip
+        FoldersBtn.Content = "Folders";
+        string what = n == 0 ? "Folders: all on" : $"Folders  ({n:N0} folder{(n == 1 ? "" : "s")} off)";
+        FoldersBtn.ToolTip = what;
+        if (_folderCard is not null) _folderCard.Title = what;
     }
 
 
@@ -1090,6 +1095,7 @@ public partial class MainWindow : Window
         if (_order.Length == 0) return;
         int cur = View.SelectedIndex;
         double cover = BarHost.Visibility == Visibility.Visible ? Math.Max(0, BarHost.ActualHeight + BarShift.Y) : 0;
+        View.KeyboardMoved();
         if (cur < 0 || cur >= _order.Length) { cur = View.HoverIndex >= 0 ? View.HoverIndex : Math.Max(0, View.VisibleRange().first); View.SelectedIndex = cur; View.RevealIndex(cur, cover); return; }
         int next = View.Neighbour(cur, dx, dy);
         if (next < 0) return;
@@ -1237,7 +1243,8 @@ public partial class MainWindow : Window
         StopViewerGif();
         Pic.Source = null;
         _vFullBmp = null; _vFullPath = null;
-        View.ScrollToIndex(_vIndex);
+        // the picture that was showing is now the grid's highlight, in the middle of the window
+        View.CenterOn(_vIndex);
         View.Focus();
         VideoViewerClosed();
     }

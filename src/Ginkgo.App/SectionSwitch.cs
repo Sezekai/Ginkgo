@@ -68,18 +68,30 @@ public sealed class SectionSwitch : Border
         SizeChanged += (_, _) => Shape();
     }
 
+    private bool _square;
+    private double _radius = 0.25, _widthScale = 1;
+
+    /// <summary>Round (a pill, the default) or square (with corners rounded by <paramref name="radius"/>, a share of the height),
+    /// and each icon's space as wide as the switch is tall times <paramref name="widthScale"/>.</summary>
+    public void SetShape(bool square, double radius, double widthScale)
+    {
+        _square = square; _radius = Math.Clamp(radius, 0, 0.5); _widthScale = Math.Clamp(widthScale, 0.5, 2.5);
+        Slot = -1;
+        if (IsLoaded) Shape();
+    }
+
     private void Shape()
     {
         double h = Math.Max(10, ActualHeight - Padding.Top - Padding.Bottom - BorderThickness.Top - BorderThickness.Bottom);
-        CornerRadius = new CornerRadius(ActualHeight / 2);
-        // the slots are as wide as the switch is tall, the icons in proportion
-        double slot = Math.Max(30, Math.Round(h * 1.08));
+        CornerRadius = new CornerRadius(_square ? ActualHeight * _radius : ActualHeight / 2);
+        // each icon's space: as wide as the switch is tall (times its own width setting); the icons by their own size setting
+        double slot = Math.Max(16, Math.Round(h * 1.08 * _widthScale));
         if (Math.Abs(slot - Slot) > 0.5)
         {
             Slot = slot; _knob.Width = slot;
             for (int i = 0; i < _slots.Length; i++) { _slots[i].Width = slot; _icons[i].Size = Math.Max(8, Math.Round(h * 0.46 * _iconScale)); }
         }
-        _knob.CornerRadius = new CornerRadius(h / 2);
+        _knob.CornerRadius = new CornerRadius(_square ? h * _radius : h / 2);
         _knob.Height = h;
         _shift.X = _at * Slot;
     }
@@ -103,7 +115,7 @@ public sealed class SectionSwitch : Border
     public void SetIconLook(Brush? normal, Brush? hover, Brush? on, double scale)
     {
         IconBrush = normal; HoverBrush = hover; OnBrush = on;
-        _iconScale = Math.Clamp(scale, 0.5, 1.6);
+        _iconScale = Math.Clamp(scale, 0.3, 2.5);
         Slot = -1;              // size the icons again
         if (IsLoaded) Shape();
         Paint();

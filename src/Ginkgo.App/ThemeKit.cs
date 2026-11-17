@@ -22,6 +22,13 @@ public sealed class AppTheme
     public string Text { get; set; } = "#E4E4E8";
     public string Dim { get; set; } = "#9AA0A6";
     public string Accent { get; set; } = "#8A5CF5";
+    /// <summary>Where the accent comes from: "Own" (the colour above), "Gradient" (your own: Accent, AccentB and AccentC),
+    /// "Section" (the colour of the section and filter buttons that are on, a gradient if they use one), "Content" (the
+    /// Images/GIFs/Videos buttons' colour) or "Glow" (the glow round buttons that are on).</summary>
+    public string AccentMode { get; set; } = "Own";
+    public string AccentB { get; set; } = "#C9A8FF";
+    public string AccentC { get; set; } = "";
+    public double AccentAngle { get; set; }
     /// <summary>Buttons that are off, and their text (the shape, glow and the rest stay in Button look).</summary>
     public string ButtonA { get; set; } = "#0E0E12";
     public string ButtonB { get; set; } = "#19191D";
@@ -87,6 +94,32 @@ public static class ThemeKit
         catch { f = new FontFamily("Segoe UI"); }
         _families[name] = f;
         return f;
+    }
+
+    /// <summary>The accent's main colour (for things drawn in a single colour).</summary>
+    public static Color AccentColor { get; private set; } = Color.FromRgb(0x8A, 0x5C, 0xF5);
+
+    private static (Brush brush, Color first) AccentOf(AppTheme t, ButtonLook look)
+    {
+        Brush Grad(double angle, params string[] hex)
+        {
+            var cols = hex.Where(h => !string.IsNullOrWhiteSpace(h)).Select(ButtonLook.C).ToList();
+            if (cols.Count == 1) { var sb = new SolidColorBrush(cols[0]); sb.Freeze(); return sb; }
+            var g = new LinearGradientBrush { StartPoint = new Point(0, 0.5), EndPoint = new Point(1, 0.5) };
+            if (Math.Abs(angle) > 0.01) g.RelativeTransform = new RotateTransform(angle, 0.5, 0.5);
+            for (int i = 0; i < cols.Count; i++) g.GradientStops.Add(new GradientStop(cols[i], i / (double)(cols.Count - 1)));
+            g.Freeze();
+            return g;
+        }
+        bool graded = look.OnStyle is "Vertical" or "Horizontal" or "BottomGlow";
+        return t.AccentMode switch
+        {
+            "Gradient" => (Grad(t.AccentAngle, t.Accent, t.AccentB, t.AccentC), ButtonLook.C(t.Accent)),
+            "Section" => (graded ? Grad(0, look.OtherA, look.OtherB) : Grad(0, look.OtherA), ButtonLook.C(look.OtherA)),
+            "Content" => (graded ? Grad(0, look.ContentA, look.ContentB) : Grad(0, look.ContentA), ButtonLook.C(look.ContentA)),
+            "Glow" => (Grad(0, look.OnStyle == "BottomGlow" ? look.OtherB : look.OtherA), ButtonLook.C(look.OnStyle == "BottomGlow" ? look.OtherB : look.OtherA)),
+            _ => (Grad(0, t.Accent), ButtonLook.C(t.Accent)),
+        };
     }
 
     /// <summary>The app font, for code that draws its own text.</summary>
@@ -159,7 +192,12 @@ public static class ThemeKit
     {
         void Set(string key, string hex) { var b = new SolidColorBrush(ButtonLook.C(hex)); b.Freeze(); R[key] = b; }
         Set("WindowBg", t.Window); Set("Bar", t.Surface); Set("Surface2", t.Inner); Set("Field", t.Field); Set("Edge", t.Edge);
-        Set("Text", t.Text); Set("Dim", t.Dim); Set("Accent", t.Accent);
+        Set("Text", t.Text); Set("Dim", t.Dim);
+        // the accent: a colour, your own gradient, or the colour (or gradient, or glow) of the buttons that are on
+        var (accent, first) = AccentOf(t, look);
+        R["Accent"] = accent;
+        AccentColor = first;
+        Set("AccentSolid", $"#{first.R:X2}{first.G:X2}{first.B:X2}");
         Set("BarBack", t.Surface);
         {   // scroll bars: an outline like the windows' edges, a little lighter so it can be seen
             var e = ButtonLook.C(t.Edge); int up = t.Light ? -40 : 34;

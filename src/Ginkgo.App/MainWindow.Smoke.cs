@@ -27,6 +27,17 @@ public partial class MainWindow
             OnViewsMenu(this, new RoutedEventArgs()); await Task.Delay(500);
             if (SavedPopup.Child is FrameworkElement sv) Shot(sv, Path.Combine(dir, "03-views.png"));
             SavedPopup.IsOpen = false;
+            // the bar at a laptop's width (1920 px at 125%): everything should fit without the More menu
+            double w0 = Width, h0 = Height;
+            Width = 1536; Height = 864; await Task.Delay(1200);
+            Shot(this, Path.Combine(dir, "05-wide.png"));
+            Width = w0; Height = h0; await Task.Delay(800);
+            if (_order.Length > 0)
+            {
+                OpenViewer(0); await Task.Delay(1200);
+                Shot(this, Path.Combine(dir, "06-viewer.png"));
+                CloseViewer(fromUser: false); await Task.Delay(400);
+            }
             ToggleSlidePanel(SlideshowBtn); await Task.Delay(500);
             if (_slidePopup?.Child is FrameworkElement sl) Shot(sl, Path.Combine(dir, "04-slideshow.png"));
             if (_slidePopup is not null) _slidePopup.IsOpen = false;

@@ -47,6 +47,17 @@ public sealed class LogoLook
     /// <summary>A rounded tile behind the logo ("" colour = the theme's field colour).</summary>
     public bool Tile { get; set; }
     public string TileColour { get; set; } = "";
+    /// <summary>The box behind the logo: "Square" (rounded corners as set), "Circle" (round, like the section switch).</summary>
+    public string TileShape { get; set; } = "Square";
+    /// <summary>"Colour" (TileColour, or the theme's field colour), "Gradient" (TileColour to TileColourB), "Accent", "Buttons" (the section buttons'
+    /// colours), "Switch" (the same as the section switch's back).</summary>
+    public string TileFill { get; set; } = "Colour";
+    public string TileColourB { get; set; } = "#C9A8FF";
+    public double TileRadius { get; set; } = 0.24;
+    /// <summary>Room between the box's edge and the logo, as a share of its size.</summary>
+    public double TilePadding { get; set; } = 0.14;
+    public string TileOutline { get; set; } = "";
+    public double TileOutlineWidth { get; set; } = 1;
 
     public LogoLook Copy() => JsonSerializer.Deserialize<LogoLook>(JsonSerializer.Serialize(this))!;
 
@@ -324,6 +335,13 @@ public sealed class TopBarLook
     public double SwitchGap { get; set; } = 14;
     public double SwitchY { get; set; }
     public double IconScale { get; set; } = 1;
+    /// <summary>"Round" (a pill) or "Square" (corners rounded by SwitchRadius, a share of its height).</summary>
+    public string SwitchShape { get; set; } = "Round";
+    public double SwitchRadius { get; set; } = 0.25;
+    /// <summary>How wide each icon's space is, against the switch's height.</summary>
+    public double SwitchWidth { get; set; } = 1;
+    /// <summary>The logo the same height as the switch, beside it in the top bar.</summary>
+    public bool MatchLogo { get; set; }
     public string IconColour { get; set; } = "";
     public string IconHoverColour { get; set; } = "";
     public string IconOnColour { get; set; } = "";

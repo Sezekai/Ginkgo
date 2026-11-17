@@ -83,7 +83,15 @@ public sealed class FolderPanel : Border
         var all = new Button { Content = "All on" }; all.Click += (_, _) => SetAll(true);
         var none = new Button { Content = "All off" }; none.Click += (_, _) => SetAll(false);
         var fold = new Button { Content = "Close all" }; fold.Click += (_, _) => { _open.Clear(); Rebuild(); };
-        head.Children.Add(all); head.Children.Add(none); head.Children.Add(fold); head.Children.Add(_summary);
+        // the default view's folders (the ones this section starts with), when the panel knows them
+        _defaultBtn = new Button { Content = "Show default", Visibility = Visibility.Collapsed, ToolTip = "Switch the folders back to the ones this section's default view shows" };
+        _defaultBtn.Click += (_, _) =>
+        {
+            if (DefaultOff?.Invoke() is not { } off) return;
+            _off.Clear(); foreach (var o in off) _off.Add(o);
+            Rebuild(); Changed?.Invoke(new HashSet<string>(_off, StringComparer.OrdinalIgnoreCase));
+        };
+        head.Children.Add(all); head.Children.Add(none); head.Children.Add(_defaultBtn); head.Children.Add(fold); head.Children.Add(_summary);
 
         var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = 506, Content = _flow };
         _note = new TextBlock
@@ -97,6 +105,15 @@ public sealed class FolderPanel : Border
     }
 
     public event Action<string, bool>? SortChanged;
+
+    private readonly Button _defaultBtn;
+    private Func<IEnumerable<string>?>? _defaultOff;
+    /// <summary>The folders the default view hides (for "Show default"); the button shows only when this is set.</summary>
+    public Func<IEnumerable<string>?>? DefaultOff
+    {
+        get => _defaultOff;
+        set { _defaultOff = value; _defaultBtn.Visibility = value is null ? Visibility.Collapsed : Visibility.Visible; }
+    }
 
     /// <summary>The words under the folders (the NSFW and Very pop-outs say what their switches do).</summary>
     public string NoteText { set => _note.Text = value; }

@@ -65,7 +65,7 @@ public partial class MainWindow
         if (Scroll.Template?.FindName("PART_Track", Scroll) is not Track track || track.Thumb is not Thumb thumb) return;
         thumb.ApplyTemplate();
         if (thumb.Template.FindName("T", thumb) is not Border t || thumb.Template.FindName("Shine", thumb) is not Border shine) return;
-        Color c = l.Colour.Length > 0 ? ButtonLook.C(l.Colour) : (TryFindResource("Accent") as SolidColorBrush)?.Color ?? Colors.MediumPurple;
+        Color c = l.Colour.Length > 0 ? ButtonLook.C(l.Colour) : ThemeKit.AccentColor;
         var edge = new SolidColorBrush(c); edge.Freeze();
         t.BorderBrush = edge;
         t.BorderThickness = new Thickness(Math.Clamp(l.OutlineWidth, 0.5, 4));

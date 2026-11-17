@@ -67,6 +67,7 @@ public sealed class LogoView : Grid
     public void SetButtonColours(ButtonLook l)
     {
         _btnA = ButtonLook.C(l.OtherA); _btnB = ButtonLook.C(l.OtherB); _swA = ButtonLook.C(l.ContentA); _swB = ButtonLook.C(l.ContentB);
+        if (_look.Tile && _look.TileFill == "Buttons") Apply(_look);
         Redraw();
     }
 
@@ -77,12 +78,32 @@ public sealed class LogoView : Grid
         Width = s; Height = s;
         if (_look.Tile)
         {
-            _tile.CornerRadius = new CornerRadius(s * 0.24);
-            if (_look.TileColour.Length > 0) _tile.Background = new SolidColorBrush(ButtonLook.C(_look.TileColour)); else _tile.SetResourceReference(Border.BackgroundProperty, "Field");
-            _tile.Margin = new Thickness(-s * 0.12);
+            // a box (square or round) the size of the logo's space, the logo inside it with room round it
+            _tile.CornerRadius = new CornerRadius(_look.TileShape == "Circle" ? s / 2 : s * Math.Clamp(_look.TileRadius, 0, 0.5));
+            switch (_look.TileFill)
+            {
+                case "Gradient":
+                    var g = new LinearGradientBrush(ButtonLook.C(_look.TileColour.Length > 0 ? _look.TileColour : "#6A3CF0"), ButtonLook.C(_look.TileColourB), 45); g.Freeze();
+                    _tile.Background = g; break;
+                case "Accent": _tile.SetResourceReference(Border.BackgroundProperty, "Accent"); break;
+                case "Buttons": var gb = new LinearGradientBrush(_btnA, _btnB, 90); gb.Freeze(); _tile.Background = gb; break;
+                case "Switch": _tile.SetResourceReference(Border.BackgroundProperty, "KeyFill"); break;
+                default:
+                    if (_look.TileColour.Length > 0) _tile.Background = new SolidColorBrush(ButtonLook.C(_look.TileColour)); else _tile.SetResourceReference(Border.BackgroundProperty, "Field");
+                    break;
+            }
+            if (_look.TileOutline.Length > 0) { _tile.BorderBrush = new SolidColorBrush(ButtonLook.C(_look.TileOutline)); _tile.BorderThickness = new Thickness(Math.Clamp(_look.TileOutlineWidth, 0.5, 6)); }
+            else _tile.BorderThickness = new Thickness(0);
+            _tile.Margin = new Thickness(0);
+            double pad = s * Math.Clamp(_look.TilePadding, 0, 0.4);
+            _shadow.Margin = _glow.Margin = _main.Margin = new Thickness(pad);
             _tile.Visibility = Visibility.Visible;
         }
-        else _tile.Visibility = Visibility.Collapsed;
+        else
+        {
+            _tile.Visibility = Visibility.Collapsed;
+            _shadow.Margin = _glow.Margin = _main.Margin = new Thickness(0);
+        }
         _shadow.Effect = _look.Shadow > 0.01 ? new DropShadowEffect { Color = Colors.Black, ShadowDepth = 1 + s / 30, BlurRadius = 3 + 4 * _look.Shadow, Opacity = Math.Min(1, 0.2 + 0.7 * _look.Shadow), Direction = 290 } : null;
         _shadow.Visibility = _look.Shadow > 0.01 ? Visibility.Visible : Visibility.Collapsed;
         _glow.Visibility = _look.Glow > 0.01 ? Visibility.Visible : Visibility.Collapsed;
@@ -98,7 +119,7 @@ public sealed class LogoView : Grid
         {
             "Solid" or "Gradient" => ButtonLook.C(_look.FillA),
             "Buttons" => _btnB, "Switches" => _swB,
-            "Accent" => (Application.Current.TryFindResource("Accent") as SolidColorBrush)?.Color ?? Colors.MediumPurple,
+            "Accent" => ThemeKit.AccentColor,
             "Iridescent" => Color.FromRgb(0xC9, 0xB8, 0xFF), "Holographic" => Color.FromRgb(0x9B, 0xE7, 0xFF), "Metal" => Color.FromRgb(0xE8, 0xEC, 0xF2),
             _ => Color.FromRgb(0xFF, 0xD4, 0x5A),
         };

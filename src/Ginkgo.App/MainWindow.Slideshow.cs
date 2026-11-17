@@ -148,46 +148,42 @@ public partial class MainWindow
             _slidePopup = Sticky(new Popup
             {
                 PlacementTarget = anchor, Placement = PlacementMode.Bottom, AllowsTransparency = true, PopupAnimation = PopupAnimation.Fade, VerticalOffset = 2,
-                Child = new Border { Margin = new Thickness(6, 6, 20, 20), Child = SlidePanel() },
+                Child = _slideCard = new PopCard(SlidePanel(), "Slideshow"),      // the same card as the other pop-outs
             });
             _slidePopup.Closed += (_, _) => ApplyBar();
         }
         if (_slidePopup.IsOpen) { bool same = ReferenceEquals(_slidePopup.PlacementTarget, anchor); _slidePopup.IsOpen = false; if (same) return; }
         _slidePopup.PlacementTarget = anchor;
-        _slidePopup.Placement = ViewerOpen ? PlacementMode.Top : PlacementMode.Bottom;
+        _slidePopup.Placement = PlacementMode.Bottom;
         foreach (var a in _slideSyncs) a();
         double x0 = anchor.TranslatePoint(new Point(0, 0), this).X;
-        _slidePopup.HorizontalOffset = Math.Min(0, ActualWidth - 10 - 390 - x0);
+        _slidePopup.HorizontalOffset = Math.Min(0, ActualWidth - 10 - 370 - x0);
+        if (_slideCard is not null) _slideCard.NotchX = anchor.ActualWidth / 2 - _slidePopup.HorizontalOffset - 6;
         _slidePopup.IsOpen = true;
         ApplyBar();
     }
 
+    private PopCard? _slideCard;
+
+    /// <summary>The slideshow's settings and Start: the same sizes as the other pop-outs (their font and size, smaller headings,
+    /// buttons of the pop-outs' height).</summary>
     private FrameworkElement SlidePanel()
     {
-        var card = new Border
-        {
-            Width = 360, Padding = new Thickness(16, 12, 16, 14), CornerRadius = new CornerRadius(10), BorderThickness = new Thickness(1),
-            Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 14, ShadowDepth = 3, Opacity = 0.55 },
-        };
-        card.SetResourceReference(Border.BackgroundProperty, "Bar");
-        card.SetResourceReference(Border.BorderBrushProperty, "Edge");
-        System.Windows.Documents.TextElement.SetFontFamily(card, (FontFamily)Application.Current.Resources["AppFont"]);
+        var card = new Border { Width = 340, Padding = new Thickness(14, 2, 14, 12), Background = Brushes.Transparent };
         var st = new StackPanel();
         TextBlock Head(string t)
         {
-            var tb = new TextBlock { Text = t, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 10, 0, 6) };
-            tb.SetResourceReference(TextBlock.ForegroundProperty, "Text");
+            var tb = new TextBlock { Text = t, FontWeight = FontWeights.SemiBold, FontSize = 11.5, Margin = new Thickness(0, 8, 0, 5) };
+            tb.SetResourceReference(TextBlock.ForegroundProperty, "Dim");
             return tb;
         }
-        var title = Head("Slideshow"); title.FontSize = 14; title.Margin = new Thickness(0, 0, 0, 2);
-        st.Children.Add(title);
         st.Children.Add(Head("Each picture shows for"));
         var secs = new WrapPanel();
-        var custom = new TextBox { Width = 54, Height = 26, VerticalContentAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 0, 4, 0), ToolTip = "Any number of seconds" };
+        var custom = new TextBox { Width = 48, Height = 24, VerticalContentAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 0, 4, 0), ToolTip = "Any number of seconds" };
         var choices = new List<(ToggleButton b, double v)>();
         foreach (double v in new double[] { 1, 2, 3, 5, 10 })
         {
-            var b = new ToggleButton { Content = $"{v:0} s", Height = 26, Margin = new Thickness(0, 0, 4, 4), Padding = new Thickness(9, 0, 9, 0) };
+            var b = new ToggleButton { Content = $"{v:0} s", Height = 24, Margin = new Thickness(0, 0, 3, 4), Padding = new Thickness(7, 0, 7, 0) };
             double val = v;
             b.Click += (_, _) => { _settings.SlideSeconds = val; SaveSettings(); foreach (var a in _slideSyncs) a(); };
             choices.Add((b, v)); secs.Children.Add(b);
@@ -218,7 +214,7 @@ public partial class MainWindow
 
         CheckBox Check(string text, string tip, Func<bool> get, Action<bool> set)
         {
-            var c = new CheckBox { Content = text, ToolTip = tip, Margin = new Thickness(0, 0, 0, 6) };
+            var c = new CheckBox { Content = text, ToolTip = tip, Margin = new Thickness(0, 0, 0, 4) };
             c.SetResourceReference(Control.ForegroundProperty, "Text");
             c.Click += (_, _) => { set(c.IsChecked == true); SaveSettings(); };
             _slideSyncs.Add(() => c.IsChecked = get());
@@ -232,11 +228,11 @@ public partial class MainWindow
         Check("Shuffle", "A random order (starting with the picture you are on)", () => _settings.SlideShuffle, v => _settings.SlideShuffle = v);
         Check("Start again at the end", "Off: the slideshow stops after the last one", () => _settings.SlideLoop, v => _settings.SlideLoop = v);
 
-        var start = new Button { Content = "Start slideshow", Height = 30, Padding = new Thickness(16, 0, 16, 0), HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0) };
+        var start = new Button { Content = "Start slideshow", Height = 26, Padding = new Thickness(12, 0, 12, 0), HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0) };
         start.Click += (_, _) => { _slidePopup!.IsOpen = false; if (_slide) StopSlideshow(); StartSlideshow(); };
         _slideSyncs.Add(() => start.Content = _slide ? "Start again from here" : "Start slideshow");
         st.Children.Add(start);
-        var keys = new TextBlock { Text = "While it runs: Space pauses, the arrows step, Esc stops.", FontSize = 11.5, Margin = new Thickness(0, 8, 0, 0), TextWrapping = TextWrapping.Wrap };
+        var keys = new TextBlock { Text = "While it runs: Space pauses, the arrows step, Esc stops.", FontSize = 11, Margin = new Thickness(0, 8, 0, 0), TextWrapping = TextWrapping.Wrap };
         keys.SetResourceReference(TextBlock.ForegroundProperty, "Dim");
         st.Children.Add(keys);
         card.Child = st;

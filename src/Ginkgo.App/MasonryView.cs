@@ -527,6 +527,7 @@ public sealed class MasonryView : FrameworkElement
     private void UpdateCursor()
     {
         if (_autoScroll) return;
+        if (_keyMode) { if (!ReferenceEquals(Cursor, Cursors.None)) Cursor = Cursors.None; return; }
         Cursor want = Cursors.Arrow;
         if (_scrubIndex >= 0 || _dragIndex >= 0) want = Cursors.Hand;
         else if (_volDragIndex < 0 && _mouse.X >= 0)
@@ -564,7 +565,10 @@ public sealed class MasonryView : FrameworkElement
         if (_layout is null) return;
         var p = e.GetPosition(this);
         if (_autoScroll) { _autoMouseY = p.Y; return; }
-        if (Math.Abs(p.X - _mouse.X) + Math.Abs(p.Y - _mouse.Y) > 1) { _mouseMovedAt = Stopwatch.GetTimestamp(); if (_videos.Count > 0) InvalidateVisual(); }
+        bool moved = Math.Abs(p.X - _mouse.X) + Math.Abs(p.Y - _mouse.Y) > 1;
+        if (moved) { _mouseMovedAt = Stopwatch.GetTimestamp(); if (_videos.Count > 0) InvalidateVisual(); }
+        // the mouse moving takes the highlight back from the keys, and the pointer shows again
+        if (moved && _keyMode && _mouse.X >= 0) { _keyMode = false; UpdateCursor(); InvalidateVisual(); }
         if (_starHit.index >= 0 && _starHit.rect.Contains(p) != _starHit.rect.Contains(_mouse)) InvalidateVisual();     // the star lights up under the mouse
         _mouse = p;
         if (_volDragIndex >= 0 && _videos.TryGetValue(_volDragIndex, out var vv)) { VolFromY(vv, _volDragIndex, p.Y); return; }
@@ -591,6 +595,27 @@ public sealed class MasonryView : FrameworkElement
             if (p.X >= _layout.X[i] && p.X <= _layout.X[i] + _layout.W[i] &&
                 p.Y + Math.Round(_offset) >= _layout.Y[i] && p.Y + Math.Round(_offset) <= _layout.Y[i] + _layout.H[i]) { found = i; break; }
         if (found != _hoverIndex) { _hoverIndex = found; HoverChanged?.Invoke(found); InvalidateVisual(); }
+        // one highlight for the mouse and the keys: the picture under the mouse is the one the arrow keys go on from
+        if (!_keyMode && found >= 0 && found != _selected) { _selected = found; InvalidateVisual(); }
+    }
+
+    private bool _keyMode;
+
+    /// <summary>The arrow keys moved the highlight: the pointer hides (until the mouse moves) and the highlight is the keys'.</summary>
+    public void KeyboardMoved()
+    {
+        _keyMode = true;
+        Cursor = Cursors.None;
+        InvalidateVisual();
+    }
+
+    /// <summary>The highlighted tile in the middle of the window (after the viewer closes on it).</summary>
+    public void CenterOn(int index)
+    {
+        if (_layout is null || index < 0 || index >= _items.Length) return;
+        _selected = index;
+        Offset = Math.Clamp(_layout.Y[index] - (ActualHeight - _layout.H[index]) / 2, 0, MaxOffset);
+        InvalidateVisual();
     }
 
     private readonly List<ThumbLoader.PlanItem> _planItems = new();
@@ -764,7 +789,9 @@ public sealed class MasonryView : FrameworkElement
             int below = i < CoverCount ? (int)(CaptionHeight * dpi) : 0;
             bool labelled = _labels is { } lb && i < lb.Length && lb[i] is not null && y < offPx + ph && y + hPx + below > offPx;
             bool starred = e is not null && ((MarkFavourites && Starred is { } stf && stf(i)) || (CopiesOf is { } cof && cof(i) > 0));
-            if (i == _hoverIndex || gif || labelled || starred || i == _selected) _overlay.Add((new Rect(x / dpi, (y - offPx) / dpi, wPx / dpi, hPx / dpi), i == _hoverIndex, gif, labelled ? i : -1, i));
+            // "hovered": under the mouse, or the keys' highlight while the keys are in use (its details and star show too)
+            bool lit = _keyMode ? i == _selected : i == _hoverIndex;
+            if (lit || gif || labelled || starred || i == _selected) _overlay.Add((new Rect(x / dpi, (y - offPx) / dpi, wPx / dpi, hPx / dpi), lit, gif, labelled ? i : -1, i));
         }
         (_sigPrev, _sigNow) = (_sigNow, _sigPrev);
         if (Gifs is not null)
@@ -799,11 +826,8 @@ public sealed class MasonryView : FrameworkElement
             // rounded tiles (Browse's covers) get rounded outlines to match
             double rad = index < CoverCount ? CoverRadius : 0;
             if (hovered) { if (rad > 0) dc.DrawRoundedRectangle(null, _hover, r, rad, rad); else dc.DrawRectangle(null, _hover, r); }
-            if (index == _selected)
-            {
-                var sr = r; sr.Inflate(1, 1);
-                if (rad > 0) dc.DrawRoundedRectangle(null, SelectPen, sr, rad + 1, rad + 1); else dc.DrawRectangle(null, SelectPen, sr);
-            }
+            // the shared highlight: the same white outline as the mouse's
+            if (index == _selected && !hovered) { if (rad > 0) dc.DrawRoundedRectangle(null, _hover, r, rad, rad); else dc.DrawRectangle(null, _hover, r); }
             bool playingHere = _videos.TryGetValue(index, out var vt) && vt.E.FileId >= 0;
             bool isVideo = gif && Badges is { } vb && index < vb.Length && vb[index] == 2;
             var info = isVideo && VideoInfo is { } vinf ? vinf(index) : (false, -1.0);
@@ -1323,7 +1347,7 @@ public sealed class MasonryView : FrameworkElement
     {
         get
         {
-            var b = ThemeKit.Brush("Accent");
+            var b = ThemeKit.Brush("AccentSolid");
             if (_selectPen is null || !ReferenceEquals(_selectPen.Brush, b)) { var p = new Pen(b, 2.5); p.Freeze(); _selectPen = p; }
             return _selectPen;
         }

@@ -27,6 +27,9 @@ public sealed class PopCard : Grid
     private static double _size;
 
     /// <summary>The pop-outs' font and text size (Appearance → Text); open ones change at once.</summary>
+    /// <summary>The words at the top of the card.</summary>
+    public string Title { get => _title.Text; set => _title.Text = value; }
+
     public static void SetFonts(FontFamily font, double size)
     {
         _font = font; _size = size;
@@ -72,7 +75,7 @@ public sealed class PopCard : Grid
     public void Restyle()
     {
         var l = _look;
-        Color accent = (Application.Current.TryFindResource("Accent") as SolidColorBrush)?.Color ?? Colors.MediumPurple;
+        Color accent = ThemeKit.AccentColor;
         Color bar = (Application.Current.TryFindResource("Bar") as SolidColorBrush)?.Color ?? Color.FromRgb(28, 28, 32);
         Color bg = l.Background.Length > 0 ? ButtonLook.C(l.Background) : bar;
         bg.A = (byte)(Math.Clamp(l.Opacity, 0.3, 1) * 255);

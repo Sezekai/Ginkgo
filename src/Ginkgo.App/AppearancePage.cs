@@ -233,8 +233,12 @@ public sealed class AppearancePage : Border
         small.Children.Add(Small("Try it", () => PreviewSmallLogo?.Invoke(), "The logo goes small for two seconds, as when the bar hides"));
 
         var sw = Card("Section switch");
-        Slide(sw, "Height", 24, 72, () => t.SwitchHeight, v => t.SwitchHeight = v, Px, 1);
-        Slide(sw, "Icon size", 0.5, 1.6, () => t.IconScale, v => t.IconScale = v, v => $"{v * 100:0}%", 0.05);
+        Choice(sw, "Shape", new[] { ("Round", "Round"), ("Square", "Square") }, () => t.SwitchShape, v => t.SwitchShape = v, Rebuild);
+        if (t.SwitchShape == "Square") Slide(sw, "Rounded corners", 0, 0.5, () => t.SwitchRadius, v => t.SwitchRadius = v, v => $"{v * 100:0}%", 0.02);
+        Slide(sw, "Height", 20, 80, () => t.SwitchHeight, v => t.SwitchHeight = v, Px, 1);
+        Slide(sw, "Width of each icon's space", 0.5, 2.5, () => t.SwitchWidth, v => t.SwitchWidth = v, v => $"{v * 100:0}%", 0.05);
+        Slide(sw, "Icon size", 0.3, 2.5, () => t.IconScale, v => t.IconScale = v, v => $"{v * 100:0}%", 0.05);
+        Check(sw, "The logo the same size as the switch (beside it, not over the title bar)", () => t.MatchLogo, v => t.MatchLogo = v);
         Slide(sw, "Up or down", -12, 12, () => t.SwitchY, v => t.SwitchY = v, Px, 1);
         Colour(sw, "Icons", () => t.IconColour, v => t.IconColour = v, allowBlank: true);
         Colour(sw, "Icon under the mouse", () => t.IconHoverColour, v => t.IconHoverColour = v, allowBlank: true);
@@ -770,7 +774,19 @@ public sealed class AppearancePage : Border
         Colour(colours, "Edges", () => t.Edge, v => t.Edge = v);
         Colour(colours, "Text", () => t.Text, v => t.Text = v);
         Colour(colours, "Dim text", () => t.Dim, v => t.Dim = v);
-        Colour(colours, "Accent", () => t.Accent, v => t.Accent = v);
+
+        var acc = Card("Accent", "The colour that marks what is chosen or active: sliders, ticks, selected items, focus. Take it from your buttons (a gradient if they use one), their glow, or pick your own colour or gradient.");
+        Choice(acc, "Comes from", new[] { ("Own", "My colour"), ("Gradient", "My gradient"), ("Section", "Section buttons"), ("Content", "Images/GIFs/Videos buttons"), ("Glow", "The buttons' glow") },
+               () => t.AccentMode, v => t.AccentMode = v, Rebuild);
+        if (t.AccentMode is "Own" or "Gradient") Colour(acc, t.AccentMode == "Own" ? "Colour" : "Gradient colour 1", () => t.Accent, v => t.Accent = v);
+        if (t.AccentMode == "Gradient")
+        {
+            Colour(acc, "Gradient colour 2", () => t.AccentB, v => t.AccentB = v);
+            Colour(acc, "Gradient colour 3", () => t.AccentC, v => t.AccentC = v, allowBlank: true, blankText: "None");
+            Slide(acc, "Direction", 0, 360, () => t.AccentAngle, v => t.AccentAngle = v, v => $"{v:0}°", 15);
+        }
+        if (t.AccentMode is "Section" or "Content" or "Glow")
+            acc.Children.Add(new TextBlock { Text = "Change those colours on the Buttons page; the accent follows them.", TextWrapping = TextWrapping.Wrap, Opacity = 0.75 });
 
         var text = Card("Text, density and icons");
         var font = new ComboBox { Width = 190, Height = 28 };
@@ -945,8 +961,20 @@ public sealed class AppearancePage : Border
         Check(size, "Big: over the title bar and the top bar together", () => l.Big, v => l.Big = v, "The window's name and its line start after it. In full screen it goes back to its size in the bar.");
         Slide(size, "Size in the bar", 20, 52, () => l.Size, v => l.Size = v, v => $"{v:0} px", 1);
         Slide(size, "Speed of movement", 0.25, 3, () => l.Speed, v => l.Speed = v, v => $"{v:0.##}x", 0.25);
-        Check(size, "A tile behind the logo", () => l.Tile, v => l.Tile = v);
-        Colour(size, "Tile colour", () => l.TileColour, v => l.TileColour = v, allowBlank: true);
+        var box = Card("A box behind the logo", "Like your other apps' icons: the logo on a coloured square or circle. For a dark logo on it, set Fill to a colour (black) in Logo colours.");
+        Check(box, "Show the box", () => l.Tile, v => l.Tile = v, after: Rebuild);
+        if (l.Tile)
+        {
+            Choice(box, "Shape", new[] { ("Square", "Square"), ("Circle", "Circle") }, () => l.TileShape, v => l.TileShape = v, Rebuild);
+            if (l.TileShape == "Square") Slide(box, "Rounded corners", 0, 0.5, () => l.TileRadius, v => l.TileRadius = v, v => $"{v * 100:0}%", 0.02);
+            Choice(box, "Colour", new[] { ("Colour", "A colour"), ("Gradient", "A gradient"), ("Accent", "Accent"), ("Buttons", "Section buttons"), ("Switch", "Like the switch") },
+                   () => l.TileFill, v => l.TileFill = v, Rebuild);
+            if (l.TileFill is "Colour" or "Gradient") Colour(box, l.TileFill == "Gradient" ? "Gradient colour 1" : "Box colour", () => l.TileColour, v => l.TileColour = v, allowBlank: l.TileFill == "Colour");
+            if (l.TileFill == "Gradient") Colour(box, "Gradient colour 2", () => l.TileColourB, v => l.TileColourB = v);
+            Slide(box, "Room round the logo", 0, 0.4, () => l.TilePadding, v => l.TilePadding = v, v => $"{v * 100:0}%", 0.02);
+            Colour(box, "Outline", () => l.TileOutline, v => l.TileOutline = v, allowBlank: true, blankText: "None");
+            if (l.TileOutline.Length > 0) Slide(box, "Outline width", 0.5, 6, () => l.TileOutlineWidth, v => l.TileOutlineWidth = v, v => $"{v:0.0} px", 0.5);
+        }
     }
 
     // =====================================================================================================================

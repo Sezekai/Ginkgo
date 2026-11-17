@@ -38,10 +38,11 @@ public partial class MainWindow
     private void ApplyTopBarLook()
     {
         var t = _settings.TopBarStyle;
-        Sections.Height = Math.Clamp(t.SwitchHeight, 24, 72);
+        Sections.Height = Math.Clamp(t.SwitchHeight, 20, 80);
         Sections.Margin = new Thickness(0, 0, Math.Clamp(t.TitleGap, 0, 80), 0);
         Sections.RenderTransform = new TranslateTransform(0, t.SwitchY);
         Sections.SetIconLook(BrushOrNull(t.IconColour), BrushOrNull(t.IconHoverColour), BrushOrNull(t.IconOnColour), t.IconScale);
+        Sections.SetShape(t.SwitchShape == "Square", t.SwitchRadius, t.SwitchWidth);
         SectionTitleBox.Height = Sections.Height;
         SectionTitleBox.RenderTransform = new TranslateTransform(0, t.TitleY);
         SectionTitle.FontSize = Math.Clamp(t.TitleSize, 10, 48);
@@ -101,7 +102,7 @@ public partial class MainWindow
         HookBigLogo();
         ApplyTopBarLook();
         var t = _settings.TopBarStyle;
-        bool big = _settings.Logo.Big && !_fullscreen && TitleBar.Visibility == Visibility.Visible && BarHost.Visibility == Visibility.Visible
+        bool big = _settings.Logo.Big && !t.MatchLogo && !_fullscreen && TitleBar.Visibility == Visibility.Visible && BarHost.Visibility == Visibility.Visible
                    && TopBar.ActualHeight > 10 && !ViewerOpen && KeysLayer.Visibility != Visibility.Visible && MoveLayer.Visibility != Visibility.Visible;
         _bigLogoOn = big;
         if (big)
@@ -117,6 +118,7 @@ public partial class MainWindow
             BigLogo.IsHitTestVisible = true;
             // the logo in the bar keeps its place empty, so the switch starts after the big one
             Logo.Visibility = Visibility.Hidden;
+            Logo.RenderTransform = null;
             Logo.Width = Math.Max(0, t.LogoX + h - 20); Logo.Height = 10;
             Logo.Margin = new Thickness(6, 0, Math.Clamp(t.SwitchGap, 0, 80), 0);
             SetLogoSmall(!_barShown, animate: false);
@@ -125,9 +127,14 @@ public partial class MainWindow
         {
             BigLogo.Visibility = Visibility.Collapsed;
             Logo.Visibility = Visibility.Visible;
-            Logo.Apply(_settings.Logo);          // its own size again
+            // its own size in the bar (or the switch's, to match), and moved by the same left/top settings as the big one
+            var own = _settings.Logo.Copy();
+            if (t.MatchLogo) own.Size = Math.Clamp(t.SwitchHeight, 16, 160);
+            Logo.Apply(own);
             Logo.SetButtonColours(_settings.Look);
-            Logo.Margin = new Thickness(6, 0, Math.Clamp(t.SwitchGap, 0, 80), 0);
+            double dx = t.LogoX - 20, dy = t.LogoY - 7;
+            Logo.Margin = new Thickness(Math.Max(-14, 6 + dx), 0, Math.Clamp(t.SwitchGap, 0, 80), 0);
+            Logo.RenderTransform = new TranslateTransform(0, dy);
             StopLogoAnimations();
             TitleText.Margin = new Thickness(14 + t.NameX, t.NameY, 0, 1 - t.NameY);
             TitleLine.Margin = new Thickness(0);

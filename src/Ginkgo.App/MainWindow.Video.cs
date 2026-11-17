@@ -636,7 +636,11 @@ public partial class MainWindow
         if (!_viewerVideo || _vEngine is null || _vEngine.FileId < 0)
         {
             if (InfoBox.Opacity != 1) InfoBox.Opacity = 1;
-            if (ViewerRoot.Cursor is not null) ViewerRoot.Cursor = null;
+            // a picture: the pointer hides when it stays still a moment, unless it's on the icons or a pop-out is open
+            bool idle = (now - _lastMouseMove) > Ms(1.5) && !FavHost.IsMouseOver && Mouse.LeftButton != MouseButtonState.Pressed
+                        && !_sticky.Any(p => p.IsOpen);
+            var pc = idle ? Cursors.None : null;
+            if (!ReferenceEquals(ViewerRoot.Cursor, pc)) ViewerRoot.Cursor = pc;
             return;
         }
         if (_vEngine.FrameSeq != _vSeq && _vEngine.CopyFrame(ref _vFrame, out int w, out int h))
