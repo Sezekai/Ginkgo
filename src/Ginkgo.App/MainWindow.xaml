@@ -67,12 +67,12 @@
                 <local:BarPanel x:Name="BarRow" Margin="14,10,10,10" VerticalAlignment="Center">
                         <local:LogoView x:Name="Logo" local:BarPanel.Pinned="True" Margin="6,0,14,0" VerticalAlignment="Center" ToolTip="Ginkgo"/>
                         <local:SectionSwitch x:Name="Sections" local:BarPanel.Pinned="True" Height="44" Margin="0,0,14,0" VerticalAlignment="Center"/>
-                        <Border x:Name="SectionTitleBox" local:BarPanel.Pinned="True" Height="44" Margin="0,0,18,0" VerticalAlignment="Center">
+                        <Border x:Name="SectionTitleBox" local:BarPanel.Pinned="True" Height="44" Margin="0,0,12,0" VerticalAlignment="Center">
                             <TextBlock x:Name="SectionTitle" Text="Home" FontSize="24" FontWeight="SemiBold" Foreground="{DynamicResource Text}" VerticalAlignment="Center" Margin="0,0,0,2"/>
                         </Border>
-                        <Button x:Name="FoldersBtn" Style="{StaticResource DropButton}" Content="Folders" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnFolders"/>
+                        <Button x:Name="FoldersBtn" Style="{StaticResource DropButton}" Content="Folders" Height="{DynamicResource KeyHeight}" Margin="0,3,6,3" VerticalAlignment="Center" Click="OnFolders"/>
                         <!-- Images, GIFs and Videos side by side, still separate buttons -->
-                        <StackPanel Orientation="Horizontal" Margin="0,3,9,3" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal" Margin="0,3,6,3" VerticalAlignment="Center">
                             <ToggleButton x:Name="ImagesBtn" Content="Images" Height="{DynamicResource KeyHeight}" Margin="0,0,3,0" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged"/>
                             <ToggleButton x:Name="GifsBtn" Content="GIFs" Height="{DynamicResource KeyHeight}" Margin="0,0,3,0" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged"/>
                             <ToggleButton x:Name="VideosBtn" Style="{StaticResource SplitLeft}" Content="Videos" Height="{DynamicResource KeyHeight}" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged"/>
@@ -80,7 +80,7 @@
                                     VerticalAlignment="Center" ToolTip="Which videos to show: watched, paused, not watched" Click="OnVideosMore"/>
                         </StackPanel>
                         <!-- General, NSFW and Very side by side -->
-                        <StackPanel Orientation="Horizontal" Margin="0,3,17,3" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal" Margin="0,3,10,3" VerticalAlignment="Center">
                             <ToggleButton x:Name="GeneralBtn" Style="{StaticResource ContentToggle}" Content="General" Height="{DynamicResource KeyHeight}" Margin="0,0,3,0" VerticalAlignment="Center" IsChecked="True" Click="OnFilterChanged" ToolTip="Show General files (G)"/>
                             <ToggleButton x:Name="NsfwBtn" Style="{StaticResource SplitLeftC}" Content="NSFW" Height="{DynamicResource KeyHeight}" VerticalAlignment="Center" Click="OnFilterChanged" ToolTip="Show NSFW files (N)"/>
                             <Button x:Name="NsfwMoreBtn" Style="{StaticResource SplitRightC}" Tag="{Binding IsChecked, ElementName=NsfwBtn}" Height="{DynamicResource KeyHeight}"
@@ -89,9 +89,9 @@
                             <Button x:Name="VeryMoreBtn" Style="{StaticResource SplitRightC}" Tag="{Binding IsChecked, ElementName=VeryBtn}" Height="{DynamicResource KeyHeight}"
                                     VerticalAlignment="Center" ToolTip="Very folder by folder" Click="OnVeryMore"/>
                         </StackPanel>
-                        <TextBox x:Name="SearchBox" local:BarPanel.PreferredWidth="170" MinWidth="90" Height="{DynamicResource KeyHeight}" Margin="0,3,17,3" VerticalAlignment="Center" VerticalContentAlignment="Center" TextChanged="OnSearchChanged" ToolTip="Search file and folder names (/ or Ctrl+F)"/>
-                        <Button x:Name="FiltersBtn" Style="{StaticResource DropButton}" Content="Filters" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" Click="OnFilters" ToolTip="Format, size, dimensions, shape, video length, dates, favourites, sets"/>
-                        <ComboBox x:Name="SortBox" local:BarPanel.PreferredWidth="130" MinWidth="96" Margin="0,3,2,3" Height="{DynamicResource KeyHeight}" VerticalAlignment="Center" SelectionChanged="OnSortChanged" ToolTip="Order">
+                        <TextBox x:Name="SearchBox" local:BarPanel.PreferredWidth="150" MinWidth="64" Height="{DynamicResource KeyHeight}" Margin="0,3,10,3" VerticalAlignment="Center" VerticalContentAlignment="Center" TextChanged="OnSearchChanged" ToolTip="Search file and folder names (/ or Ctrl+F)"/>
+                        <Button x:Name="FiltersBtn" Style="{StaticResource DropButton}" Content="Filters" Height="{DynamicResource KeyHeight}" Margin="0,3,6,3" VerticalAlignment="Center" Click="OnFilters" ToolTip="Format, size, dimensions, shape, video length, dates, favourites, sets"/>
+                        <ComboBox x:Name="SortBox" local:BarPanel.PreferredWidth="120" MinWidth="88" Margin="0,3,3,3" Height="{DynamicResource KeyHeight}" VerticalAlignment="Center" SelectionChanged="OnSortChanged" ToolTip="Order">
                             <ComboBoxItem Content="First seen" Tag="FirstSeen"/>
                             <ComboBoxItem Content="Modified" Tag="Modified"/>
                             <ComboBoxItem Content="Created" Tag="Created"/>
@@ -105,13 +105,13 @@
                             <ComboBoxItem Content="Video length" Tag="Duration"/>
                             <ComboBoxItem Content="Random" Tag="Random"/>
                         </ComboBox>
-                        <StackPanel Orientation="Horizontal" Margin="0,3,9,3" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal" Margin="0,3,6,3" VerticalAlignment="Center">
                             <ToggleButton x:Name="SortRevBtn" Style="{StaticResource ArrowToggle}" Width="{DynamicResource KeyHeight}" Height="{DynamicResource KeyHeight}" Margin="0,0,3,0" VerticalAlignment="Center" Click="OnSortRev" ToolTip="Reverse the order"/>
                             <Button x:Name="ShuffleBtn" Style="{StaticResource BarIcon}" Content="&#xE8B1;" Height="{DynamicResource KeyHeight}" Margin="0" VerticalAlignment="Center" Visibility="Collapsed" Click="OnReshuffle" ToolTip="Reshuffle"/>
                         </StackPanel>
-                        <Slider x:Name="SizeSlider" local:BarPanel.PreferredWidth="120" MinWidth="60" Minimum="0" Maximum="1" Margin="10,3,12,3" VerticalAlignment="Center" ValueChanged="OnSizeChanged" ToolTip="Picture size (Ctrl + mouse wheel, + and -)"/>
+                        <Slider x:Name="SizeSlider" local:BarPanel.PreferredWidth="110" MinWidth="50" Minimum="0" Maximum="1" Margin="4,3,8,3" VerticalAlignment="Center" ValueChanged="OnSizeChanged" ToolTip="Picture size (Ctrl + mouse wheel, + and -)"/>
                         <!-- Grid, Fit and Equal rows side by side -->
-                        <StackPanel Orientation="Horizontal" Margin="0,3,9,3" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal" Margin="0,3,6,3" VerticalAlignment="Center">
                             <ToggleButton x:Name="GridLayoutBtn" Content="Grid" Height="{DynamicResource KeyHeight}" Margin="0,0,3,0" VerticalAlignment="Center" Click="OnGridLayout" ToolTip="Square cells of one size"/>
                             <ToggleButton x:Name="FitBtn" Content="Fit" Height="{DynamicResource KeyHeight}" Margin="0,0,3,0" VerticalAlignment="Center" Click="OnGridFit" Visibility="Collapsed" ToolTip="On: whole pictures inside their cells. Off: pictures cropped to fill them"/>
                             <ToggleButton x:Name="RowsBtn" Content="Equal rows" Height="{DynamicResource KeyHeight}" Margin="0" VerticalAlignment="Center" Click="OnLayoutChanged" ToolTip="Rows of equal height instead of equal-width columns (L)"/>
@@ -119,12 +119,12 @@
                         <Button x:Name="ViewsBtn" Style="{StaticResource DropButton}" Content="Views" Height="{DynamicResource KeyHeight}" Margin="0,3,4,3" VerticalAlignment="Center" ToolTip="Saved views: open one, save this view, update, rename or delete" Click="OnViewsMenu"/>
                         <Button x:Name="ResetViewBtn" Style="{StaticResource BarIcon}" Content="&#xE72C;" Height="{DynamicResource KeyHeight}" Margin="0,3,3,3" VerticalAlignment="Center" ToolTip="Return to default: this section's own sort, filters, layout and size" Click="OnReturnToDefaultBtn"/>
                         <Button x:Name="SaveViewBtn" Style="{StaticResource BarIcon}" Content="&#xE710;" Height="{DynamicResource KeyHeight}" Margin="0,3,3,3" VerticalAlignment="Center" ToolTip="Save this view… (everything about it, under a name)" Click="OnSaveSearch"/>
-                        <Button x:Name="SaveDefaultBtn" Style="{StaticResource BarIcon}" Content="&#xE74E;" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" ToolTip="Save as default: how this section looks now becomes what it starts with" Click="OnSaveAsDefaultBtn"/>
+                        <Button x:Name="SaveDefaultBtn" Style="{StaticResource BarIcon}" Content="&#xE74E;" Height="{DynamicResource KeyHeight}" Margin="0,3,6,3" VerticalAlignment="Center" ToolTip="Save as default: how this section looks now becomes what it starts with" Click="OnSaveAsDefaultBtn"/>
                         <Button x:Name="SlideshowBtn" Style="{StaticResource BarIcon}" Content="&#xE786;" Height="{DynamicResource KeyHeight}" Margin="0,3,3,3" VerticalAlignment="Center" ToolTip="Slideshow: how long each picture shows, videos and GIFs, then Start" Click="OnSlideshow"/>
                         <Button x:Name="PauseAllBtn" Style="{StaticResource BarIcon}" Content="&#xE769;" Height="{DynamicResource KeyHeight}" Margin="0,3,3,3" VerticalAlignment="Center" ToolTip="Pause every playing video" Click="OnPauseAll" Visibility="Collapsed"/>
                         <Button x:Name="QuickBtn" Style="{StaticResource BarIcon}" Content="&#xE9E9;" Height="{DynamicResource KeyHeight}" Margin="0,3,3,3" VerticalAlignment="Center" ToolTip="Quick toggles: videos (Q)" Click="OnQuick"/>
                         <Button x:Name="OptimiseBtn" Style="{StaticResource BarIcon}" Content="&#xE9D9;" Height="{DynamicResource KeyHeight}" Margin="0,3,3,3" VerticalAlignment="Center" ToolTip="Optimisations: memory and GIFs" Click="OnOptimise"/>
-                        <Button x:Name="KeysBtn" Style="{StaticResource BarIcon}" Content="&#xE765;" Height="{DynamicResource KeyHeight}" Margin="0,3,9,3" VerticalAlignment="Center" ToolTip="Keyboard shortcuts (K)" Click="OnKeysClick"/>
+                        <Button x:Name="KeysBtn" Style="{StaticResource BarIcon}" Content="&#xE765;" Height="{DynamicResource KeyHeight}" Margin="0,3,6,3" VerticalAlignment="Center" ToolTip="Keyboard shortcuts (K)" Click="OnKeysClick"/>
                         <Button x:Name="MoreBtn" local:BarPanel.Pinned="True" Style="{StaticResource BarIcon}" Content="&#xE712;" Height="{DynamicResource KeyHeight}" Margin="0,3,3,3" VerticalAlignment="Center" ToolTip="More" Click="OnMoreBar"/>
                         <Button x:Name="HideBarBtn" local:BarPanel.Pinned="True" Style="{StaticResource BarIcon}" Content="&#xE70E;" Height="{DynamicResource KeyHeight}" Margin="0,3,3,3" VerticalAlignment="Center" ToolTip="Hide this bar (H). Press H again to hide the bottom bar too, and once more to bring both back" Click="OnHideBar"/>
                     </local:BarPanel>

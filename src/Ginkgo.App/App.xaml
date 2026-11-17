@@ -31,7 +31,7 @@
             <Setter Property="FontFamily" Value="{DynamicResource Font.Buttons}"/>
             <Setter Property="FontSize" Value="{DynamicResource Size.Buttons}"/>
             <Setter Property="Background" Value="#2C2C32"/>
-            <Setter Property="Padding" Value="9,2"/>
+            <Setter Property="Padding" Value="8,2"/>
             <Setter Property="Margin" Value="0,0,6,0"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Focusable" Value="False"/>
@@ -65,7 +65,7 @@
             <Setter Property="FontFamily" Value="{DynamicResource Font.Buttons}"/>
             <Setter Property="FontSize" Value="{DynamicResource Size.Buttons}"/>
             <Setter Property="Background" Value="#2C2C32"/>
-            <Setter Property="Padding" Value="9,2"/>
+            <Setter Property="Padding" Value="8,2"/>
             <Setter Property="Margin" Value="0,0,6,0"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Focusable" Value="False"/>
@@ -150,7 +150,7 @@
 
         <!-- a button that opens a pop-out: a chevron at its end, turned up while the pop-out is open (Tag = true) -->
         <Style x:Key="DropButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
-            <Setter Property="Padding" Value="9,2,7,2"/>
+            <Setter Property="Padding" Value="8,2,6,2"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
