@@ -28,10 +28,20 @@ public partial class MainWindow
             if (SavedPopup.Child is FrameworkElement sv) Shot(sv, Path.Combine(dir, "03-views.png"));
             SavedPopup.IsOpen = false;
             // the bar at a laptop's width (1920 px at 125%): everything should fit without the More menu
-            double w0 = Width, h0 = Height;
-            Width = 1536; Height = 864; await Task.Delay(1200);
-            Shot(this, Path.Combine(dir, "05-wide.png"));
-            Width = w0; Height = h0; await Task.Delay(800);
+            // (the build machine's screen is small, so the top bar alone is laid out at those widths and pictured)
+            foreach (int bw in new[] { 1536, 1920 })
+            {
+                double bh = TopBar.ActualHeight;
+                TopBar.Measure(new Size(bw, bh)); TopBar.Arrange(new Rect(0, 0, bw, bh)); TopBar.UpdateLayout();
+                var rt = new RenderTargetBitmap(bw, (int)Math.Ceiling(bh), 96, 96, PixelFormats.Pbgra32);
+                var dv = new DrawingVisual();
+                using (var dc = dv.RenderOpen()) { dc.DrawRectangle(new VisualBrush(TopBar) { Stretch = Stretch.None, AlignmentX = AlignmentX.Left, AlignmentY = AlignmentY.Top }, null, new Rect(0, 0, bw, bh)); }
+                rt.Render(dv);
+                var enc = new PngBitmapEncoder(); enc.Frames.Add(BitmapFrame.Create(rt));
+                using (var f = File.Create(Path.Combine(dir, $"05-bar-{bw}.png"))) enc.Save(f);
+                TopBar.InvalidateMeasure(); InvalidateMeasure(); UpdateLayout();
+                await Task.Delay(300);
+            }
             if (_order.Length > 0)
             {
                 OpenViewer(0); await Task.Delay(1200);
