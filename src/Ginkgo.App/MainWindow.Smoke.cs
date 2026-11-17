@@ -32,7 +32,7 @@ public partial class MainWindow
             foreach (int bw in new[] { 1536, 1920 })
             {
                 double bh = TopBar.ActualHeight;
-                TopBar.Measure(new Size(bw, bh)); TopBar.Arrange(new Rect(0, 0, bw, bh)); TopBar.UpdateLayout();
+                TopBar.Measure(new Size(bw, bh)); TopBar.Arrange(new Rect(0, 0, bw, bh));
                 var rt = new RenderTargetBitmap(bw, (int)Math.Ceiling(bh), 96, 96, PixelFormats.Pbgra32);
                 var dv = new DrawingVisual();
                 using (var dc = dv.RenderOpen()) { dc.DrawRectangle(new VisualBrush(TopBar) { Stretch = Stretch.None, AlignmentX = AlignmentX.Left, AlignmentY = AlignmentY.Top }, null, new Rect(0, 0, bw, bh)); }
