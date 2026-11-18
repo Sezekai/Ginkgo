@@ -42,7 +42,8 @@ public partial class MainWindow
         int files = _paths.Length - _firstFile;
         if (files <= 0) { StatusText.Text = "Nothing to show in a slideshow here."; return; }
         // from the open picture, or the one under the mouse, or the first one on screen
-        int start = ViewerOpen ? _vIndex : View.HoverIndex >= _firstFile ? View.HoverIndex : Math.Max(_firstFile, View.VisibleRange().first);
+        int lit = View.SelectedIndex >= 0 && View.SelectedIndex < _order.Length ? View.SelectedIndex : View.HoverIndex;    // the shared highlight
+        int start = ViewerOpen ? _vIndex : lit >= _firstFile ? lit : Math.Max(_firstFile, View.VisibleRange().first);
         start = Math.Clamp(start, _firstFile, _paths.Length - 1);
         var order = Enumerable.Range(_firstFile, files).ToList();
         if (_settings.SlideShuffle)

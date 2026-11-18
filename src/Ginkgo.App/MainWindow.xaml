@@ -106,7 +106,7 @@
                             <ComboBoxItem Content="Random" Tag="Random"/>
                         </ComboBox>
                         <StackPanel Orientation="Horizontal" Margin="0,3,6,3" VerticalAlignment="Center">
-                            <ToggleButton x:Name="SortRevBtn" Style="{StaticResource ArrowToggle}" Width="{DynamicResource KeyHeight}" Height="{DynamicResource KeyHeight}" Margin="0,0,3,0" VerticalAlignment="Center" Click="OnSortRev" ToolTip="Reverse the order"/>
+                            <ToggleButton x:Name="SortRevBtn" Style="{StaticResource ArrowToggle}" Width="{DynamicResource IconSize}" Height="{DynamicResource KeyHeight}" Margin="0,0,3,0" VerticalAlignment="Center" Click="OnSortRev" ToolTip="Reverse the order"/>
                             <Button x:Name="ShuffleBtn" Style="{StaticResource BarIcon}" Content="&#xE8B1;" Height="{DynamicResource KeyHeight}" Margin="0" VerticalAlignment="Center" Visibility="Collapsed" Click="OnReshuffle" ToolTip="Reshuffle"/>
                         </StackPanel>
                         <Slider x:Name="SizeSlider" local:BarPanel.PreferredWidth="110" MinWidth="50" Minimum="0" Maximum="1" Margin="4,3,8,3" VerticalAlignment="Center" ValueChanged="OnSizeChanged" ToolTip="Picture size (Ctrl + mouse wheel, + and -)"/>

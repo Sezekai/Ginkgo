@@ -1210,7 +1210,7 @@ public partial class MainWindow : Window
     /// <summary>T: the picture under the mouse in the viewer, or the first one when the mouse isn't over a picture.</summary>
     private void OpenHoveredOrFirst()
     {
-        int i = View.HoverIndex;
+        int i = View.SelectedIndex >= 0 && View.SelectedIndex < _order.Length ? View.SelectedIndex : View.HoverIndex;   // the shared highlight
         if (i < _firstFile || i >= _paths.Length || IsFolderTile(i)) i = _firstFile;
         if (i >= _firstFile && i < _paths.Length) OpenViewer(i);
     }

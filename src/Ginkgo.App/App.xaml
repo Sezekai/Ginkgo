@@ -105,11 +105,13 @@
         <sys:Double x:Key="BarIconSize">14</sys:Double>
         <Style x:Key="BarIcon" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="Padding" Value="0"/>
-            <Setter Property="Width" Value="{DynamicResource KeyHeight}"/>
+            <!-- width, icon size and icon colour from Appearance → Buttons ("Icon buttons: width", "Icon size", "Icon colour") -->
+            <Setter Property="Width" Value="{DynamicResource IconSize}"/>
+            <Setter Property="Foreground" Value="{DynamicResource IconText}"/>
             <Setter Property="FontFamily" Value="{DynamicResource IconFont}"/>
             <Setter Property="ContentTemplate">
                 <Setter.Value>
-                    <DataTemplate><local:IconGlyph Glyph="{Binding}" Size="{DynamicResource BarIconSize}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/></DataTemplate>
+                    <DataTemplate><local:IconGlyph Glyph="{Binding}" Size="{DynamicResource IconGlyph}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/></DataTemplate>
                 </Setter.Value>
             </Setter>
         </Style>
@@ -328,7 +330,7 @@
                         <Grid>
                             <Border x:Name="B" CornerRadius="{DynamicResource KeyRadius}" BorderThickness="{DynamicResource KeyBorderWidth}" BorderBrush="{DynamicResource KeyBorder}"
                                     Background="{DynamicResource KeyFill}" Effect="{DynamicResource KeyShadow}">
-                                <local:IconGlyph x:Name="Arrow" Glyph="&#xE74A;" Size="{DynamicResource BarIconSize}" Foreground="{DynamicResource KeyText}"
+                                <local:IconGlyph x:Name="Arrow" Glyph="&#xE74A;" Size="{DynamicResource IconGlyph}" Foreground="{DynamicResource KeyText}"
                                            HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
                                     <local:IconGlyph.RenderTransform><RotateTransform x:Name="Turn" Angle="0"/></local:IconGlyph.RenderTransform>
                                 </local:IconGlyph>

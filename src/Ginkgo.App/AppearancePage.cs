@@ -865,8 +865,8 @@ public sealed class AppearancePage : Border
         Slide(shape, "Roundness", 0, 20, () => Math.Min(l.Radius, 20), v => l.Radius = v >= 19.5 ? 99 : v, v => v >= 19.5 ? "pill" : $"{v:F0}");
         Slide(shape, "Height", 22, 38, () => l.Height, v => l.Height = v, v => $"{v:F0} px", 1);
         Slide(shape, "Icon buttons: roundness", 0, 20, () => Math.Min(l.IconRadius, 20), v => l.IconRadius = v >= 19.5 ? 99 : v, v => v >= 19.5 ? "circle" : $"{v:F0}");
-        Slide(shape, "Icon buttons: width", 24, 44, () => l.IconSize, v => l.IconSize = v, v => $"{v:F0} px", 1);
-        Slide(shape, "Icon size", 9, 18, () => l.IconGlyph, v => l.IconGlyph = v, v => $"{v:F0} px", 1);
+        Slide(shape, "Icon buttons: width", 18, 72, () => l.IconSize, v => l.IconSize = v, v => $"{v:F0} px", 1);
+        Slide(shape, "Icon size (inside them)", 7, 28, () => l.IconGlyph, v => l.IconGlyph = v, v => $"{v:F0} px", 0.5);
         Colour(shape, "Icon colour", () => l.IconColour, v => l.IconColour = v);
 
         var fills = new[] { ("Solid", "Solid"), ("Vertical", "Top to bottom"), ("Horizontal", "Centre out"), ("BottomGlow", "Bottom glow") };
