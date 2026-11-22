@@ -601,6 +601,26 @@ public sealed class MasonryView : FrameworkElement
 
     private bool _keyMode;
 
+    /// <summary>Whether a tile is selected for file operations (Ctrl+click, Ctrl+Space). Drawn with a tint, an accent outline and a tick.</summary>
+    public Func<int, bool>? Picked;
+
+    private void DrawPicked(DrawingContext dc, Rect r, double rad)
+    {
+        var accent = ThemeKit.AccentColor;
+        var tint = new SolidColorBrush(Color.FromArgb(70, accent.R, accent.G, accent.B)); tint.Freeze();
+        var edge = new Pen(new SolidColorBrush(accent), 3); edge.Freeze();
+        var inner = r; inner.Inflate(-1.5, -1.5);
+        if (inner.Width <= 0 || inner.Height <= 0) return;
+        if (rad > 0) { dc.DrawRoundedRectangle(tint, edge, inner, rad, rad); } else dc.DrawRectangle(tint, edge, inner);
+        // a tick in a circle at the top left
+        double d = Math.Clamp(Math.Min(r.Width, r.Height) * 0.14, 16, 26);
+        var c = new Point(r.Left + 6 + d / 2, r.Top + 6 + d / 2);
+        dc.DrawEllipse(new SolidColorBrush(accent), new Pen(Brushes.White, 1.5), c, d / 2, d / 2);
+        var ft = new FormattedText("\uE73E", System.Globalization.CultureInfo.InvariantCulture, FlowDirection.LeftToRight, IconFace, d * 0.55, Brushes.White,
+                                   VisualTreeHelper.GetDpi(this).PixelsPerDip);
+        dc.DrawText(ft, new Point(c.X - ft.Width / 2, c.Y - ft.Height / 2));
+    }
+
     /// <summary>The arrow keys moved the highlight: the pointer hides (until the mouse moves) and the highlight is the keys'.</summary>
     public void KeyboardMoved()
     {
@@ -791,7 +811,8 @@ public sealed class MasonryView : FrameworkElement
             bool starred = e is not null && ((MarkFavourites && Starred is { } stf && stf(i)) || (CopiesOf is { } cof && cof(i) > 0));
             // "hovered": under the mouse, or the keys' highlight while the keys are in use (its details and star show too)
             bool lit = _keyMode ? i == _selected : i == _hoverIndex;
-            if (lit || gif || labelled || starred || i == _selected) _overlay.Add((new Rect(x / dpi, (y - offPx) / dpi, wPx / dpi, hPx / dpi), lit, gif, labelled ? i : -1, i));
+            bool picked = Picked is { } pk && pk(i);
+            if (lit || gif || labelled || starred || picked || i == _selected) _overlay.Add((new Rect(x / dpi, (y - offPx) / dpi, wPx / dpi, hPx / dpi), lit, gif, labelled ? i : -1, i));
         }
         (_sigPrev, _sigNow) = (_sigNow, _sigPrev);
         if (Gifs is not null)
@@ -825,6 +846,7 @@ public sealed class MasonryView : FrameworkElement
             if (label >= 0) { if (label < CoverCount) DrawCaptionBelow(dc, r, label, dpi); else DrawCaption(dc, r, label, dpi); }
             // rounded tiles (Browse's covers) get rounded outlines to match
             double rad = index < CoverCount ? CoverRadius : 0;
+            if (Picked is { } isPicked && isPicked(index)) DrawPicked(dc, r, rad);
             if (hovered) { if (rad > 0) dc.DrawRoundedRectangle(null, _hover, r, rad, rad); else dc.DrawRectangle(null, _hover, r); }
             // the shared highlight: the same white outline as the mouse's
             if (index == _selected && !hovered) { if (rad > 0) dc.DrawRoundedRectangle(null, _hover, r, rad, rad); else dc.DrawRectangle(null, _hover, r); }

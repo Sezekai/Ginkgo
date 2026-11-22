@@ -41,7 +41,7 @@ public partial class MainWindow
     private readonly WorkProgress _toolProgress = new();
     private CancellationTokenSource? _toolCts;
     private volatile bool _toolPaused;
-    private Button _findBtn = null!, _pauseBtn = null!, _stopBtn = null!, _csvBtn = null!;
+    private Button _findBtn = null!, _pauseBtn = null!, _stopBtn = null!;
     private ProgressBar _toolBar = null!;
     private TextBlock _toolText = null!;
     private StackPanel _dupPanel = null!, _lowPanel = null!;
@@ -119,14 +119,12 @@ public partial class MainWindow
         _findBtn = new Button { Content = "Find", Padding = new Thickness(14, 2, 14, 2), Margin = new Thickness(0, 0, 6, 0), Height = 28 };
         _pauseBtn = new Button { Content = "Pause", Padding = new Thickness(10, 2, 10, 2), Margin = new Thickness(0, 0, 6, 0), Height = 28, IsEnabled = false };
         _stopBtn = new Button { Content = "Stop", Padding = new Thickness(10, 2, 10, 2), Margin = new Thickness(0, 0, 6, 0), Height = 28, IsEnabled = false };
-        _csvBtn = new Button { Content = "Export CSV…", Padding = new Thickness(10, 2, 10, 2), Margin = new Thickness(0, 0, 12, 0), Height = 28, IsEnabled = false };
         _findBtn.Click += async (_, _) => await FindDuplicates();
         _pauseBtn.Click += (_, _) => { _toolPaused = !_toolPaused; _pauseBtn.Content = _toolPaused ? "Resume" : "Pause"; };
         _stopBtn.Click += (_, _) => _toolCts?.Cancel();
-        _csvBtn.Click += (_, _) => ExportCsv();
         _toolBar = new ProgressBar { Width = 160, Height = 10, Minimum = 0, Maximum = 1, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed, Margin = new Thickness(0, 0, 10, 0) };
         _toolText = new TextBlock { Foreground = (Brush)FindResource("Dim"), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 900 };
-        run.Children.Add(_findBtn); run.Children.Add(_pauseBtn); run.Children.Add(_stopBtn); run.Children.Add(_csvBtn); run.Children.Add(_toolBar); run.Children.Add(_toolText);
+        run.Children.Add(_findBtn); run.Children.Add(_pauseBtn); run.Children.Add(_stopBtn); run.Children.Add(_toolBar); run.Children.Add(_toolText);
         _dupPanel.Children.Add(run);
         root.Children.Add(_dupPanel);
 
@@ -277,7 +275,6 @@ public partial class MainWindow
             _dupResult = ForModel(Arrange(groups, m), _libModel);   // (the library may have been reloaded while it looked)
             _dupResult!.Near = near;
             _toolText.Text = groups.Count == 0 ? "No copies found." : $"{groups.Count:N0} groups of {(near ? "near" : "exact")} copies, {groups.Sum(g => g.Count):N0} files, {BrowsePage.SizeText(Wasted(groups, m))} taken by the extra copies.";
-            _csvBtn.IsEnabled = groups.Count > 0;
             if (InTools) await BuildViewAsync(false, 0);
         }
         catch (OperationCanceledException) { _toolText.Text = "Stopped. Find again carries on from where it got to (the work done is kept)."; }
@@ -324,24 +321,4 @@ public partial class MainWindow
         _toolText.Text = (_toolPaused ? "Paused: " : "") + $"{p.What}: {p.Fraction * 100:F0}%, {amount}, {Clock(p.Elapsed.TotalSeconds)} so far{left}" + (p.Current.Length > 0 ? "  (" + Path.GetFileName(p.Current) + ")" : "");
     }
 
-    private void ExportCsv()
-    {
-        if (_dupResult is not { } d) return;
-        var m = d.Model;
-        var dlg = new Microsoft.Win32.SaveFileDialog { Title = "Export the groups", FileName = "ginkgo-duplicates.csv", Filter = "CSV files|*.csv" };
-        if (dlg.ShowDialog(this) != true) return;
-        static string Q(string s) => "\"" + s.Replace("\"", "\"\"") + "\"";
-        var lines = new List<string> { "group,path,folder,size_bytes,width,height" };
-        for (int k = 0; k < d.Blocks.Count; k++)
-        {
-            var b = d.Blocks[k];
-            for (int i = b.First; i < b.First + b.Count; i++)
-            {
-                int r = d.Order[i];
-                lines.Add($"{k + 1},{Q(m.Path[r])},{Q(m.Display[r])},{m.Size[r]},{m.W[r]},{m.H[r]}");
-            }
-        }
-        try { File.WriteAllLines(dlg.FileName, lines, new System.Text.UTF8Encoding(true)); StatusText.Text = $"Exported {d.Blocks.Count:N0} groups to {dlg.FileName}"; }
-        catch (Exception ex) { StatusText.Text = "Couldn't export: " + ex.Message; }
-    }
 }

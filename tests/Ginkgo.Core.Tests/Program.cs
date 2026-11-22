@@ -22,6 +22,32 @@ Check(ContentClassifier.ClassifyRelativeFolder("Connected Art/NSFW/Very") == Con
 Check(ContentClassifier.ClassifyRelativeFolder("") == ContentLevel.General, "root General");
 Check(ContentClassifier.IsLevelFolder("NSFW", "A") && !ContentClassifier.IsLevelFolder("Very", "A"), "level folder detection");
 
+// ---- File destinations ----
+{
+    var none = new Func<string, bool>(_ => false);
+    Check(FileDestinations.LevelBase("Anime\\NSFW\\Very") == "Anime", "level base strips NSFW\\Very");
+    Check(FileDestinations.LevelBase("Anime\\NSFW") == "Anime", "level base strips NSFW");
+    Check(FileDestinations.LevelBase("Anime\\Very") == "Anime\\Very", "Very outside NSFW is a normal folder");
+    Check(FileDestinations.ForLevel("Anime", ContentLevel.Nsfw, none) == "Anime\\NSFW", "general to NSFW subfolder");
+    Check(FileDestinations.ForLevel("Anime", ContentLevel.Very, none) == "Anime\\NSFW\\Very", "general to Very subfolder");
+    Check(FileDestinations.ForLevel("Anime\\NSFW", ContentLevel.Very, none) == "Anime\\NSFW\\Very", "NSFW to Very");
+    Check(FileDestinations.ForLevel("Anime\\NSFW\\Very", ContentLevel.General, none) == "Anime", "Very up to General");
+    Check(FileDestinations.ForLevel("Anime\\NSFW\\Very", ContentLevel.Nsfw, none) == "Anime\\NSFW", "Very up to NSFW");
+    Check(FileDestinations.ForLevel("Anime\\NSFW", ContentLevel.General, none) == "Anime", "NSFW up to General");
+    Check(FileDestinations.ForLevel("Anime\\NSFW", ContentLevel.Nsfw, none) is null, "already NSFW");
+    Check(FileDestinations.ForLevel("Anime\\NSFW\\Artist", ContentLevel.General, none) is null, "NSFW from further up: can't go General here");
+    Check(FileDestinations.ForLevel("Anime\\NSFW\\Artist", ContentLevel.Very, none) == "Anime\\NSFW\\Artist\\NSFW\\Very", "Very below an NSFW artist");
+    Check(FileDestinations.ForLevel("Anime", ContentLevel.Nsfw, p => p == "Anime\\[NSFW]") == "Anime\\[NSFW]", "uses the existing spelling");
+    Check(FileDestinations.SortTarget(FileDestinations.Upscale, "Anime Style\\NSFW") == "Sort\\Upscale\\Anime Style\\NSFW", "upscale keeps the folder");
+    Check(FileDestinations.CombineName("Anime Style\\NSFW") == "Anime Style - NSFW", "combine name");
+    Check(FileDestinations.CombineTarget("Anime Style\\NSFW", p => p.EndsWith(" 1") || p.EndsWith(" 2")) == "Sort\\Combine - Join Together\\Anime Style - NSFW 3", "combine numbering");
+    Check(FileDestinations.AverageTarget("", ContentLevel.General, none) == "Average & LQ", "average general");
+    Check(FileDestinations.AverageTarget("", ContentLevel.Very, p => p == "Average & LQ\\[NSFW]" || p == "Average & LQ\\[NSFW]\\[Very]") == "Average & LQ\\[NSFW]\\[Very]", "average very uses [NSFW]\\[Very]");
+    Check(FileDestinations.AverageTarget("AI", ContentLevel.Nsfw, none) == "Average & LQ\\AI\\NSFW", "average subfolder nsfw");
+    Check(FileDestinations.FreeName("a.jpg", n => n == "a.jpg" || n == "a (2).jpg") == "a (3).jpg", "free name");
+    Check(FileDestinations.SameFolder(new[] { "A\\B", "A/B" }) && !FileDestinations.SameFolder(new[] { "A", "B" }), "same folder");
+}
+
 // ---- Masonry ----
 var rnd = new Random(1);
 var specs = new ItemSpec[5000];

@@ -241,6 +241,30 @@ public sealed class Engine : IDisposable
         if (made > 0) { Interlocked.Add(ref _changesSinceView, (int)Math.Min(made, int.MaxValue / 2)); DataChanged?.Invoke(); }
     }
 
+    /// <summary>
+    /// Brings the index in line with a few folders right away (after Ginkgo itself moved, copied, rotated or deleted files there),
+    /// so the view can be updated at once instead of waiting for the watcher. Folders are relative to the library; destinations
+    /// should come before sources so a moved file is recognised as moved (it keeps its entry, thumbnails and favourites).
+    /// Then thumbnails are made for anything new or changed, in the background.
+    /// </summary>
+    public int ScanFolders(IEnumerable<string> relFolders)
+    {
+        if (Db is null || LibraryOffline) return 0;
+        int changes = 0;
+        foreach (var rel in relFolders.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var r = LibraryScanner.Scan(Db, Settings.LibraryRoot, Excluded, null, CancellationToken.None,
+                    new ScanOptions { SubFolder = rel, Recursive = false, SkipRecentSeconds = 0, AcceptLargeRemoval = true });
+                changes += r.Added + r.Changed + r.Removed + r.Moved + r.Restored;
+            }
+            catch (Exception ex) { Status = "problem looking at " + rel + ": " + ex.Message; }
+        }
+        if (changes > 0) _ = Task.Run(() => Refresh(scan: false, confirmLargeRemoval: false));
+        return changes;
+    }
+
     private void StartWatcher()
     {
         if (Db is null || LibraryOffline || _watcher is not null) return;

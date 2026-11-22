@@ -52,6 +52,9 @@
                 <Button x:Name="UpdateBtn" DockPanel.Dock="Right" Content="Update view" Visibility="Collapsed" Margin="8,0,0,0" Padding="8,2" Click="OnUpdateView"/>
                 <Button x:Name="DiagMoreBtn" DockPanel.Dock="Right" Content="Full status" Visibility="Collapsed" Margin="8,0,0,0" Padding="8,0" Height="22" ToolTip="Show the whole F3 status" Click="OnDiagMore"/>
                 <TextBlock x:Name="DiagText" DockPanel.Dock="Right" TextTrimming="CharacterEllipsis" Foreground="#E0B060" FontFamily="Consolas" Margin="12,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
+                <!-- a file operation under way: how many, the share done, the time taken and the time left -->
+                <TextBlock x:Name="OpText" DockPanel.Dock="Right" Foreground="{DynamicResource Text}" Margin="8,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
+                <ProgressBar x:Name="OpBar" DockPanel.Dock="Right" Width="160" Minimum="0" Maximum="1" Margin="12,0,0,0" Visibility="Collapsed" VerticalAlignment="Center"/>
                 <TextBlock x:Name="CountText" DockPanel.Dock="Right" Foreground="{DynamicResource Text}" Margin="12,0,0,0" VerticalAlignment="Center"/>
                 <ProgressBar x:Name="IdBar" DockPanel.Dock="Right" Width="120" Minimum="0" Maximum="1" Margin="12,0,0,0" Visibility="Collapsed" VerticalAlignment="Center"/>
                 <ProgressBar x:Name="DetailsBar" DockPanel.Dock="Right" Width="120" Minimum="0" Maximum="1" Margin="12,0,0,0" Visibility="Collapsed" VerticalAlignment="Center" ToolTip="Reading photo dates or looking for copies of the same file"/>
@@ -264,6 +267,10 @@
                         Visibility="{Binding Visibility, ElementName=InfoBox}" Opacity="{Binding Opacity, ElementName=InfoBox}">
                 <Border Style="{StaticResource VPlainGroup}">
                     <Button x:Name="FavBtn" Style="{StaticResource VPlain}" Content="&#xE734;" Click="OnViewerFav" ToolTip="Add to Favourites"/>
+                </Border>
+                <!-- select the open file for file operations (X); lit in the accent colour when it is selected -->
+                <Border Style="{StaticResource VPlainGroup}">
+                    <Button x:Name="PickBtn" Style="{StaticResource VPlain}" Content="&#xE739;" Click="OnViewerPick" ToolTip="Select (X)"/>
                 </Border>
                 <Border Style="{StaticResource VPlainGroup}">
                     <StackPanel Orientation="Horizontal">

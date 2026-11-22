@@ -105,7 +105,8 @@ public partial class MainWindow : Window
         View.ScrollChanged += BarScroll;
         View.ScrollChanged += () => Interlocked.Exchange(ref _engine.Pipe.LastUiActivity, Stopwatch.GetTimestamp());
         View.HoverChanged += i => StatusText.Text = IsFolderTile(i) ? FolderHoverText(i) : i >= 0 && i < _paths.Length ? HoverText(i) : StatusLine();
-        View.ItemActivated += i => { if (RecentlyNavigated() || (Stopwatch.GetTimestamp() - _viewerClosedAt) * 1000 < 500 * Stopwatch.Frequency) return; if (IsFolderTile(i)) OpenFolder(_page!.Tiles[i].Path); else OpenViewer(i); };
+        InitFileOps();
+        View.ItemActivated += i => { if ((Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Shift)) != 0) return; if (RecentlyNavigated() || (Stopwatch.GetTimestamp() - _viewerClosedAt) * 1000 < 500 * Stopwatch.Frequency) return; if (IsFolderTile(i)) OpenFolder(_page!.Tiles[i].Path); else OpenViewer(i); };
         InitBrowse();
         InitVideo();
         InitFavourites();
@@ -758,6 +759,7 @@ public partial class MainWindow : Window
         if (e.Key == Key.Escape)
         {
             if (CloseSticky()) { e.Handled = true; }
+            else if (_picked.Count > 0 && !typing) { ClearPicks(); e.Handled = true; }
             else if (_fullscreen && !typing) { ToggleFullscreen(); e.Handled = true; }
             else if (typing) { SearchBox.Text = ""; View.Focus(); e.Handled = true; }
             return;
@@ -778,6 +780,14 @@ public partial class MainWindow : Window
         if (alt && key == Key.Up) { GoUp(); e.Handled = true; return; }
         if (typing) return;
         if (e.Key == Key.Back && Keyboard.Modifiers == ModifierKeys.None) { GoBack(); e.Handled = true; return; }
+        // selecting with the keys: Ctrl+Space the highlighted file, Ctrl+Shift+Space everything from the last one picked to it
+        if (ctrl && e.Key == Key.Space)
+        {
+            int at = View.SelectedIndex >= 0 && View.SelectedIndex < _order.Length ? View.SelectedIndex : View.HoverIndex;
+            if (at >= _firstFile) PickAt(at, range: (Keyboard.Modifiers & ModifierKeys.Shift) != 0);
+            e.Handled = true; return;
+        }
+        if (e.Key == Key.Delete && Keyboard.Modifiers == ModifierKeys.None) { DeleteKey(); e.Handled = true; return; }
         if (Keyboard.Modifiers != ModifierKeys.None && !ctrl) return;
         switch (e.Key)
         {
@@ -1387,6 +1397,7 @@ public partial class MainWindow : Window
         int row = _order[_vIndex];
         UpdateInfo(row);
         UpdateViewerStar();
+        UpdateViewerPick();
         Interlocked.Exchange(ref _engine.Pipe.LastUiActivity, Stopwatch.GetTimestamp());      // keep the drive free for the picture
         _ = LoadPicture(_vIndex, full: false);
     }
@@ -1599,6 +1610,9 @@ public partial class MainWindow : Window
     private void ViewerKey(KeyEventArgs e)
     {
         if (SlideKey(e)) { e.Handled = true; return; }
+        // X selects the open file; Delete sends it (or the selection it is in) to the Recycle Bin
+        if (Keyboard.Modifiers == ModifierKeys.None && e.Key == Key.X) { PickAt(_vIndex, range: false); e.Handled = true; return; }
+        if (Keyboard.Modifiers == ModifierKeys.None && e.Key == Key.Delete) { DeleteKey(); e.Handled = true; return; }
         if (VideoKey(e)) { e.Handled = true; return; }
         switch (e.Key)
         {

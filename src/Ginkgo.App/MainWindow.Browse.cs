@@ -30,6 +30,13 @@ public partial class MainWindow
         GridBtn.IsChecked = _settings.BrowseCoverGrid;
         View.ItemClicked += i =>
         {
+            // Ctrl+click selects (with Shift, everything from the last one picked); Shift+click alone does the range too
+            var mods = Keyboard.Modifiers;
+            if ((mods & ModifierKeys.Control) != 0 || ((mods & ModifierKeys.Shift) != 0 && _pickAnchor >= 0))
+            {
+                if (!IsFolderTile(i)) PickAt(i, range: (mods & ModifierKeys.Shift) != 0);
+                return;
+            }
             if (RecentlyNavigated()) return;
             if (CollapsedSetAt(i) is not null) { ToggleSet(i); return; }        // a stacked set opens with a click
             if (IsFolderTile(i)) OpenFolder(_page!.Tiles[i].Path);
@@ -345,6 +352,7 @@ public partial class MainWindow
                 if (own.Length > 0 && !own.Equals(_folder, StringComparison.OrdinalIgnoreCase))
                     Item($"Use as the cover of “{FolderPaths.Name(own)}”", () => { _covers.Pin(own, _model.Id[row]); _covers.Save(); StatusText.Text = $"Cover of {FolderPaths.Name(own)} set."; });
             }
+            if (row >= 0) AddFileOps(menu, index);
             if (row >= 0)
             {
                 menu.Items.Add(new Separator());
