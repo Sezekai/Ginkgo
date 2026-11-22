@@ -74,7 +74,7 @@ public sealed class ConflictWindow : Window
         card.SetResourceReference(Border.BackgroundProperty, "Surface2");
         var st = new StackPanel();
         st.Children.Add(new TextBlock { Text = head, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 8) });
-        var img = new Image { Height = 240, Stretch = Stretch.Uniform, Source = ShellThumb.Get(path, 320) };
+        var img = new Image { Height = 240, Stretch = Stretch.Uniform, Source = Picture(path) ?? ShellThumb.Get(path, 320) };
         st.Children.Add(new Border { Height = 240, Background = new SolidColorBrush(Color.FromArgb(40, 0, 0, 0)), Child = img });
         string info = "";
         try
@@ -88,7 +88,26 @@ public sealed class ConflictWindow : Window
         return card;
     }
 
-    private static string Size(long b) => b >= 1 << 20 ? $"{b / 1048576.0:0.0} MB" : $"{b / 1024.0:0} KB";
+    private static string Size(long b) => b >= 1 << 20 ? $"{b / 1048576.0:0.0} MB" : b >= 1024 ? $"{b / 1024.0:0} KB" : $"{b:N0} bytes";
+
+    /// <summary>A picture read straight from the file (small, for the comparison); null for videos and anything Windows can't read.</summary>
+    private static ImageSource? Picture(string path)
+    {
+        try
+        {
+            if (Ginkgo.Core.MediaTypes.TryGetKind(Path.GetExtension(path), out var k) && k == Ginkgo.Core.MediaKind.Video) return null;
+            var b = new BitmapImage();
+            b.BeginInit();
+            b.CacheOption = BitmapCacheOption.OnLoad;              // the file isn't kept open (it may be moved next)
+            b.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
+            b.DecodePixelHeight = 480;
+            b.UriSource = new Uri(path);
+            b.EndInit();
+            b.Freeze();
+            return b;
+        }
+        catch { return null; }
+    }
 
     private static string Dims(string path)
     {
